@@ -1,12 +1,15 @@
 # Roadmap
 
-Every card in this folder was **inherited from OpenOutreach on 2026-08-19**, when that project
-stopped sending email and its sending half was ported here (see [`../cold_outreach/`](../cold_outreach/)).
+**Seven of these cards were inherited from OpenOutreach on 2026-08-19**, when that project stopped
+sending email and its sending half was ported here (see [`../cold_outreach/`](../cold_outreach/)).
 
 They are not a wishlist someone wrote for this repo. They are **open work that followed its subject
 matter across the boundary** — each one describes code that now lives in `cold_outreach/`, and each was
 filed against a running system by someone who had hit the problem. Three of them describe defects that
 are still live.
+
+**The eighth is new**, written in openoutreach-docs and filed here for the same reason the seven came:
+the subject is here. It is the only card in the folder designed *after* the port rather than before it.
 
 ## The cards
 
@@ -19,12 +22,15 @@ are still live.
 | `p3-e2-mailbox-oauth-authentication` | What mailbox OAuth would cost | Its trigger (Google restricting app passwords) now breaks *this* project and nothing else |
 | `p3-e2-resend-opt-in-send-transport` | Resend as an alternative transport | Sending lives here |
 | `p2-e3-inbound-agentic-email` | Hosted reply capture + agent autopilot, as a paid tier | The only *product* idea in the folder, and a sender's product |
+| `p1-e2-sender-message-generation` | Plays as files, fragments as the database, a learner over observed replies | **Not inherited — written after the port.** It reshapes `core/agents/outreach.py` and its prompt template, and it is what the low reply rate on the first version actually needs |
 
 ## Reading them
 
-Each card opens with an inheritance note saying what changed on the way over. **Read that note before
-the card body** — several were written against assumptions the port invalidated, and the note is the
-only place that says so. A card whose body contradicts its header is not a puzzle: the header is newer.
+Each card opens with a header note saying where it came from and what changed on the way over. **Read
+that note before the card body** — several of the seven were written against assumptions the port
+invalidated, and the note is the only place that says so. A card whose body contradicts its header is
+not a puzzle: the header is newer. The eighth card's header says the opposite, and that is the point of
+having one: nothing in it predates the code it describes.
 
 Two conventions came with them and are worth keeping:
 
