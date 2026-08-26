@@ -26,11 +26,7 @@ from cold_outreach.core.conf import (
     SEND_INTERVAL_JITTER_MIN_SECONDS,
 )
 
-# `DealState`, the profile-summary extraction and the suppression writer are the
-# ingest model's, and this repo has not built it yet — see
-# `roadmap/p1-e2-outsend-ingest-and-packaging.md`. Until it exists these names
-# resolve to nothing and this module cannot run.
-from openoutreach.crm.models import DealState
+from cold_outreach.leads.models import DealState
 
 logger = logging.getLogger(__name__)
 
@@ -46,24 +42,23 @@ def send_first_email(deal, mailbox) -> DealState | None:
     from cold_outreach.core.agents.outreach import run_outreach_agent
     from cold_outreach.core.operator import get_active_user
     from cold_outreach.emails.sender import operator_bcc, send_email, suppressed
-    from openoutreach.core.db.summaries import materialize_profile_summary_if_missing
+    from cold_outreach.leads.summaries import materialize_profile_summary_if_missing
 
     logger.info("[%s] %s %s via %s", deal.campaign,
                 colored("▶ first email", "blue", attrs=["bold"]),
-                deal.lead.profile_url, mailbox.from_address)
+                deal.lead.public_id, mailbox.from_address)
 
-    materialize_profile_summary_if_missing(deal)
+    materialize_profile_summary_if_missing(deal.lead)
     opener = run_outreach_agent(deal)
 
     if suppressed(deal.lead):
         logger.warning("[%s] %s was suppressed mid-run — not sending",
-                       deal.campaign, deal.lead.profile_url)
+                       deal.campaign, deal.lead.public_id)
         return None
 
     sent = send_email(
         mailbox, deal.lead.email, opener.subject, opener.message,
-        campaign=deal.campaign,
-        bcc=operator_bcc(get_active_user(), deal.campaign),
+        bcc=operator_bcc(get_active_user()),
     )
 
     # The send wrote itself into the mail log and opened a thread; the deal just

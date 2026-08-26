@@ -8,9 +8,9 @@ docs/_build/
 .idea/
 
 sqlite.db
-settings.py
 
 env*
+.venv/
 
 __pycache__
 

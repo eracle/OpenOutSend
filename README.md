@@ -19,29 +19,53 @@ The pipe is **one-way by design**. Every consumer sees the same bytes, so a file
 or Smartlead gets exactly what this receiver gets, and "our own sender has no privileged path" is held
 by construction rather than by discipline.
 
-## Status: parked code, not yet a program
+## Status: the pipe works; nothing sends yet
 
-Everything in `cold_outreach/` came from OpenOutreach whole, so it would be integrated deliberately
-rather than rewritten from memory. **The transport exists** — SMTP, IMAP sync and the unsubscribe scan,
-the mail pass, thread tracking, delivery policy, sending windows, the outreach agent and its prompt
-template, and eight migrations. What does not exist yet is the program around it:
+**`outsend` is a command and the store is its own.** Install it, pipe leads in, and they land as rows:
 
-- no console script, so there is no `outsend` on the PATH;
-- no standalone settings — the app expects a host project's `INSTALLED_APPS`;
-- no default store, where the finder has its own `state_dir()`;
-- no ingest: nothing yet reads stdin.
+```bash
+pip install -e .
+openoutreach find 50 --json | outsend --campaign devtools
+```
 
-Until those land this repo is a library of working parts and a roadmap, and `pip install openoutsend`
-is not yet a thing you can type.
+It reads JSON Lines on stdin, upserts on `(lead_id, campaign)`, checks every address against the
+suppression list at the door, skips and counts a malformed line, prints the campaign it resolved and
+the counts to **stderr**, and exits 0 when every line became a row. Its database is
+`~/.openoutsend/data/db.sqlite3` (`OUTSEND_HOME` / `OUTSEND_DB` override it) and it migrates itself on
+first run, so a fresh install is an ingest that works rather than a traceback.
+
+**What is missing is the other half of the clock.** The transport all exists — SMTP, IMAP sync and the
+unsubscribe scan, the mail pass, thread tracking, delivery policy, the sending window, the outreach
+agent — but nothing drives it: there is no verb that picks the next deal and sends. Until that lands,
+leads arrive and wait.
+
+Also still open: `pip install openoutreach[send]` (the extra can only be declared once this
+distribution is published), and four inherited test files that still reach into the finder for the
+send-pass pool queries — they are listed by name in `conftest.py` so the list shrinks visibly.
 
 ## Layout
 
 | Path | What it is |
 | --- | --- |
+| `cold_outreach/leads/` | what comes through the pipe — the models, ingest, suppression, the facts extraction |
 | `cold_outreach/emails/` | the transport — SMTP, IMAP sync, the mail pass, threads, delivery policy, warmth |
 | `cold_outreach/core/` | the outreach agent, its templates, and the sending window |
 | `cold_outreach/docs/` | how the agent and its templating work |
+| `cold_outreach/settings.py` | this repo's own Django settings and the state dir |
+| `cold_outreach/__main__.py` | the `outsend` console script |
 | `roadmap/` | open work, mostly inherited from OpenOutreach along with the code it describes |
+
+## Configuration
+
+The environment is the operator seam — the only way in a timer has:
+
+| | |
+| --- | --- |
+| `OUTSEND_OPERATOR_COUNTRY` | ISO 3166 alpha-2; resolves the local clock the sending window is measured in |
+| `OUTSEND_AI_MODEL` | a pydantic-ai `provider:model` id, e.g. `anthropic:claude-sonnet-4-5-20250929` |
+| `OUTSEND_LLM_API_KEY` / `OUTSEND_LLM_API_BASE` | credentials for it |
+| `OUTSEND_PRODUCT_DOCS` / `OUTSEND_CAMPAIGN_TARGET` / `OUTSEND_BOOKING_LINK` | what a campaign writes from; `outsend init` also asks for these on a terminal |
+| `OUTSEND_HOME` / `OUTSEND_DB` | where the store lives |
 
 ## The contract it has to implement
 

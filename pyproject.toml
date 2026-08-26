@@ -1,3 +1,88 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openoutsend"
+# The base, not the released version — major and minor bumped by hand. The finder
+# derives its patch from the commit count at publish time; this side will do the same
+# when it has a release workflow.
+version = "0.1.0"
+description = "The sending half of OpenOutreach: reads qualified leads on stdin and mails them from your own box."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "OpenOutreach", email = "hello@openoutreach.app" }]
+keywords = [
+    "cold-email",
+    "outreach",
+    "b2b",
+    "sales-automation",
+    "self-hosted",
+    "open-source",
+    "smtp",
+    "imap",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Framework :: Django",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business",
+]
+
+# The transport, the agent and the ORM — and nothing the finder needs for the half of
+# the work that stays on its side. No fastembed, no scikit-learn, no pandas: ranking
+# and discovery never crossed the pipe, and a sender that pulled 65 MB of ONNX weights
+# to send an email would be paying for a model it does not run.
+#
+# **Every spec shared with OpenOutreach is copied from it verbatim, and must stay
+# that way.** `pip install openoutreach[send]` puts both distributions in one
+# environment, so a pin that drifts on one side is resolved against the other's —
+# either the resolver refuses the install the extra exists to simplify, or one half
+# silently runs on a version it was never tested against.
+dependencies = [
+    # 5.2 for the SQLite `init_command` / `transaction_mode` options the store uses —
+    # WAL is what lets `outsend` ingest while a send pass holds a write lock.
+    "Django>=5.2,<7.0",
+    "pydantic>=2.9,<3",
+    "pydantic-ai-slim[openai,anthropic,google,groq,mistral,cohere,bedrock]>=2,<3",
+    # pydantic-ai 1.96 imports `from griffe import ...`, but griffe 2.x split into an
+    # empty `griffelib` meta-package and reorganized symbols. Pin until upstream fixes.
+    "griffe>=1,<2",
+    "jinja2>=3.1,<4",
+    "termcolor>=2.4,<4",
+    "pytz>=2024.1",
+    "imapclient>=3,<4",
+    "tenacity>=8,<10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-django>=4.8",
+    "pytest-mock>=3.14",
+    "pytest-cov>=5",
+    "factory-boy>=3.3",
+]
+
+[project.scripts]
+# The brand minus the family prefix, exactly as `openoutreach` is — and no verb: the
+# program *is* the send step, and things on the right of a pipe take none.
+outsend = "cold_outreach.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/eracle/OpenOutSend"
+Finder = "https://github.com/eracle/OpenOutreach"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cold_outreach"]
+
 [tool.black]
 skip_string_normalization = false
 line-length = 120

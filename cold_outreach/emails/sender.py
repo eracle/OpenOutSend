@@ -25,7 +25,6 @@ def send_email(
     subject: str,
     body: str,
     *,
-    campaign=None,
     bcc: str | None = None,
     in_reply_to: str | None = None,
     references: str | None = None,
@@ -54,11 +53,6 @@ def send_email(
     ``in_reply_to``/``references`` thread a reply onto an existing email thread
     (both are prior Message-IDs); ``thread`` puts the row in that conversation
     directly, rather than making the log re-derive what the caller already knows.
-
-    ``campaign`` decides whether the message *text* is logged as well as its
-    metadata — see ``_sent_block``. It is passed rather than inferred from ``bcc``,
-    which is ``None`` both on freemium campaigns and on an operator who never set
-    an address; keying off it would silently drop the log for the second.
     """
     email_message = _build_message(
         mailbox, to_address, subject, body, bcc, in_reply_to, references)
@@ -66,24 +60,21 @@ def send_email(
     _deliver(mailbox, email_message, row)
     logger.info("email sent from %s to %s: %s [%s]",
                 mailbox.from_address, to_address, subject, email_message["Message-ID"])
-    if campaign is not None and not campaign.is_freemium:
-        logger.info("%s", _sent_block(subject, body))
+    logger.info("%s", _sent_block(subject, body))
     return row
 
 
 def suppressed(lead) -> bool:
     """True when *lead* may not be emailed — re-read from the DB at send time.
 
-    The eleven candidate queries that filter ``disqualified`` are convention, not
-    a DB constraint (``core/pipeline/qualify.py``), and an unsubscribe can land
-    between the pool query and the send: the outreach agent runs for seconds and
-    reads the inbox on its way past. This is the last gate before a message is
-    built, so the answer has to come from the row, not the in-memory copy the
-    caller selected earlier.
+    Ingest checks the same list at the door, but an unsubscribe can land in the
+    seconds an LLM call takes, and a row that arrived without an address was never
+    checkable on the way in at all. So this is the gate that has to be asked last,
+    and it asks the table rather than the in-memory copy the caller selected earlier.
     """
-    from openoutreach.crm.models import Lead
+    from cold_outreach.leads.suppression import is_suppressed
 
-    return Lead.objects.filter(pk=lead.pk, disqualified=True).exists()
+    return is_suppressed(lead.email)
 
 
 def unsubscribe_address(from_address: str) -> str:
@@ -105,17 +96,15 @@ def unsubscribe_address(from_address: str) -> str:
     return f"{local}+unsub@{domain}"
 
 
-def operator_bcc(user, campaign) -> str | None:
-    """The address to blind-copy on this campaign's sends, or None for no copy.
+def operator_bcc(user) -> str | None:
+    """The operator's own address, to blind-copy on every send, or None if they set none.
 
-    The operator gets a private copy of every send on **their own** campaigns —
-    it is their outreach, from their mailbox, and they need the thread in their
-    inbox. On a **freemium** campaign the outreach is OpenOutreach's own, so
-    there is no copy to give: the operator is not a party to that conversation
-    and their inbox is not a log for it.
+    Self-hosted means every campaign is theirs: it is their outreach, from their
+    mailbox, and they want the thread in their own inbox. (There used to be a second
+    answer here — the finder's freemium campaigns sent OpenOutreach's own outreach
+    from the operator's box, and got no copy. That campaign is gone and so is the
+    branch.)
     """
-    if campaign.is_freemium:
-        return None
     return user.email or None
 
 
@@ -127,10 +116,8 @@ def _sent_block(subject: str, body: str) -> str:
     them repeats what the operator already knows on every line and buries the one
     part that differs: what the agent actually composed for this lead.
 
-    **The operator's own campaigns only.** They already receive every one of these
-    in full by BCC, so the log discloses nothing they do not already hold. Freemium
-    outreach is OpenOutreach's own conversation with someone who is not their
-    contact, and it stays metadata-only for the same reason it gets no BCC.
+    The operator already receives every one of these in full by BCC, so the log
+    discloses nothing they do not already hold.
     """
     indented = "\n".join(f"    {line}" for line in body.rstrip().splitlines())
     return f"    Subject: {subject}\n\n{indented}"

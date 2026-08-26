@@ -11,7 +11,7 @@ from cold_outreach.emails.delivery_policy import (
     record_failure,
 )
 from cold_outreach.emails.models import DeliveryEvent, Mailbox
-from tests.emails import maillog
+from cold_outreach.tests.emails import maillog
 
 
 def _box() -> Mailbox:

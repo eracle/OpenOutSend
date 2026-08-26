@@ -15,6 +15,10 @@ the subject is here. It is the only card in the folder designed *after* the port
 console script, no settings module and no database, and the send path still reaches into OpenOutreach's
 CRM for the row it acts on. `p1-e2-outsend-ingest-and-packaging` is what makes the rest buildable.
 
+**The tenth is a hypothesis rather than a design**, filed so the reasoning behind it is not lost:
+whether the reply rate answers to how the message *looks* — a face, a chat shape, somewhere to reply
+that is not an inbox. It is gated on being able to count a reply rate at all.
+
 ## The cards
 
 | Card | What it is | Why it came here |
@@ -28,6 +32,7 @@ CRM for the row it acts on. `p1-e2-outsend-ingest-and-packaging` is what makes t
 | `p2-e3-inbound-agentic-email` | Hosted reply capture + agent autopilot, as a paid tier | The only *product* idea in the folder, and a sender's product |
 | `p1-e2-outsend-ingest-and-packaging` | Ingest on stdin, the lead model behind it, and `outsend` as a command | **Written here, and the prerequisite for every row above.** Nothing in this repo runs until it lands |
 | `p1-e2-sender-message-generation` | Plays as files, fragments as the database, a learner over observed replies | **Not inherited — written after the port.** It reshapes `core/agents/outreach.py` and its prompt template, and it is what the low reply rate on the first version actually needs |
+| `p2-e2-message-carries-a-face` | Whether presentation moves the reply rate — an avatar, a chat shape, a hosted thread | **Written here, from a live complaint.** A hypothesis with a cheaper rival already on the table, so it is gated on measuring a reply rate rather than on effort |
 
 ## Reading them
 

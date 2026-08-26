@@ -6,22 +6,27 @@ from unittest.mock import MagicMock
 import pytest
 
 from cold_outreach.emails.models import Thread
-from tests.emails import maillog
-from tests.factories import LeadFactory, DealFactory
+from cold_outreach.tests.emails import maillog
+from cold_outreach.tests.factories import DealFactory, LeadFactory
 
 
 @pytest.fixture
 def deal_with_summaries(db, campaign):
-    lead = LeadFactory()
+    """A deal whose lead has facts and whose thread has learned some.
+
+    The profile facts sit on the **lead** — they describe the person, not the campaign
+    they are being written to about — while the chat facts sit on the deal, because a
+    conversation is per campaign.
+    """
+    lead = LeadFactory(profile_summary={"facts": [
+        "Senior engineer at Acme Corp.",
+        "Based in Berlin, Germany.",
+        "Speaks English and German.",
+    ]})
     return DealFactory(
         lead=lead,
         campaign=campaign,
         thread=Thread.objects.create(mailbox=maillog.mailbox()),
-        profile_summary={"facts": [
-            "Senior engineer at Acme Corp.",
-            "Based in Berlin, Germany.",
-            "Speaks English and German.",
-        ]},
         chat_summary={"facts": [
             "Lead is curious about pricing.",
             "Lead has a small team budget.",
@@ -37,16 +42,9 @@ def _msg(content, is_outgoing):
     return m
 
 
-def _self_profile(session):
-    """Stub session.self_profile so the prompt builder works without a browser."""
-    session.self_profile = {"first_name": "Bob", "last_name": "Builder", "urn": "urn:li:fsd_profile:SELF"}
-
-
 class TestRenderSystemPrompt:
     def test_in_thread_includes_three_summary_blocks(self, db, campaign, deal_with_summaries):
         from cold_outreach.core.agents.outreach import _render_system_prompt
-
-        _self_profile(campaign)
 
         recent = [_msg("Hi, what do you do?", is_outgoing=True), _msg("Sales tooling.", is_outgoing=False)]
         prompt = _render_system_prompt(deal_with_summaries, recent, is_first_touch=False)
@@ -69,7 +67,6 @@ class TestRenderSystemPrompt:
         silence is the absence of work rather than a decision."""
         from cold_outreach.core.agents.outreach import _render_system_prompt
 
-        _self_profile(campaign)
         prompt = _render_system_prompt(deal_with_summaries, [], is_first_touch=False)
 
         assert "**send_message**" in prompt
@@ -82,7 +79,6 @@ class TestRenderSystemPrompt:
         """No thread yet — no chat summary, no transcript, and no complete/suppress choice."""
         from cold_outreach.core.agents.outreach import _render_system_prompt
 
-        _self_profile(campaign)
         prompt = _render_system_prompt(deal_with_summaries, [], is_first_touch=True)
 
         # Lead facts still there; conversation facts are not.
@@ -97,7 +93,6 @@ class TestRenderSystemPrompt:
     def test_both_ends_carry_the_research_framing(self, db, campaign, deal_with_summaries):
         from cold_outreach.core.agents.outreach import _render_system_prompt
 
-        _self_profile(campaign)
         for first_touch in (True, False):
             prompt = _render_system_prompt(
                 deal_with_summaries, [], is_first_touch=first_touch,
@@ -108,19 +103,33 @@ class TestRenderSystemPrompt:
             assert "### Pitching (only when the lead pulls you there)" in prompt
             assert "Never volunteer the product" in prompt
 
-    def test_handles_missing_summaries_gracefully(self, db, campaign):
+    def test_an_unextracted_lead_falls_back_to_the_raw_profile_text(self, db, campaign):
+        """The facts are a cache over ``profile_text``; until it is built, the text itself goes in.
+
+        A lead is never described to the agent as *(none yet)* while the sentences the
+        finder qualified them on are sitting in the row.
+        """
         from cold_outreach.core.agents.outreach import _render_system_prompt
 
-        lead = LeadFactory()
+        lead = LeadFactory(profile_text="cto at acme, milan, 50 employees")
         deal = DealFactory(lead=lead, campaign=campaign,
                            thread=Thread.objects.create(mailbox=maillog.mailbox()))
-        _self_profile(campaign)
 
         prompt = _render_system_prompt(deal, [], is_first_touch=False)
 
-        # Renders without crashing and shows the empty placeholders.
+        assert "cto at acme, milan, 50 employees" in prompt
+        # The conversation has taught us nothing yet, and says so.
         assert "(none yet)" in prompt
         assert "No recent messages." in prompt
+
+    def test_a_lead_with_nothing_on_file_still_renders(self, db, campaign):
+        from cold_outreach.core.agents.outreach import _render_system_prompt
+
+        deal = DealFactory(lead=LeadFactory(profile_text=""), campaign=campaign)
+
+        prompt = _render_system_prompt(deal, [], is_first_touch=True)
+
+        assert "(nothing on file)" in prompt
 
 
 class TestValidateOpener:

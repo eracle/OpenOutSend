@@ -16,7 +16,7 @@ from cold_outreach.emails.warmth import (
     measurement_due,
     refresh_capacity,
 )
-from tests.emails import maillog
+from cold_outreach.tests.emails import maillog
 
 
 def _history(*daily_counts: int) -> Counter:

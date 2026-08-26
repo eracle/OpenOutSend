@@ -84,7 +84,7 @@ def _merge(source_id: int, target: Thread) -> None:
     Deals move first: a thread is deleted only once nothing points at it, so a
     merge can never null a deal's conversation on its way past.
     """
-    from openoutreach.crm.models import Deal
+    from cold_outreach.leads.models import Deal
 
     Deal.objects.filter(thread_id=source_id).update(thread=target)
     moved = Message.objects.filter(thread_id=source_id).update(thread=target)

@@ -91,11 +91,8 @@ def run_outreach_agent(deal) -> OutreachDecision:
     mailbox — no IMAP here. On a first touch there is nothing to read, and the
     decision is validated to be a sendable opener with a subject.
     """
-    public_id = deal.lead.profile_url
+    public_id = deal.lead.public_id
     is_first_touch = not deal.thread_id
-
-    if not is_first_touch:
-        _log_chat_facts(public_id, deal)
 
     recent = [] if is_first_touch else _load_recent_messages(deal)
     system_prompt = _render_system_prompt(deal, recent, is_first_touch)
@@ -191,13 +188,3 @@ def _business_days_since_last_outgoing(messages: list, now: datetime) -> int | N
     if not timestamps:
         return None
     return business_days_between(max(timestamps), now)
-
-
-def _log_chat_facts(public_id: str, deal) -> None:
-    """Log the mem0 chat facts the agent is working with."""
-    chat_facts = (deal.chat_summary or {}).get("facts", [])
-    if not chat_facts:
-        return
-    lines = [f"chat facts for {public_id}:"]
-    lines.extend(f"  • {f}" for f in chat_facts)
-    logger.info("\n".join(lines))

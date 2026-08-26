@@ -14,9 +14,11 @@ from cold_outreach.emails.classify import classify_pending
 from cold_outreach.emails.models import DeliveryEvent, Kind, Message
 from cold_outreach.emails.project import project_pending
 from cold_outreach.emails.sync import mirror
-from tests.emails import maillog
-from tests.emails.fake_imap import FakeIMAP, bounce, message
-from tests.factories import LeadFactory
+from cold_outreach.leads.models import Deal, DealState
+from cold_outreach.leads.suppression import is_suppressed
+from cold_outreach.tests.emails import maillog
+from cold_outreach.tests.emails.fake_imap import FakeIMAP, bounce, message
+from cold_outreach.tests.factories import DealFactory, LeadFactory
 
 SENDER = "s@infra.com"
 
@@ -70,14 +72,16 @@ class TestBounces:
 class TestOptOuts:
     def test_the_alias_suppresses_everyone_holding_the_address(self):
         box = _box()
-        first = LeadFactory(email="p@corp.com")
-        second = LeadFactory(email="P@Corp.com")   # same person, different casing
+        first = DealFactory(lead=LeadFactory(email="p@corp.com"))
+        second = DealFactory(lead=LeadFactory(email="P@Corp.com"))   # same person, different casing
 
         _pass(box, message(7, to="s+unsub@infra.com", sender="p@corp.com"))
 
-        for lead in (first, second):
-            lead.refresh_from_db()
-            assert lead.disqualified
+        assert is_suppressed("p@corp.com")
+        for deal in (first, second):
+            deal.refresh_from_db()
+            assert deal.state == DealState.UNSUBSCRIBED
+        assert Deal.objects.exclude(state=DealState.UNSUBSCRIBED).count() == 0
 
 
 @pytest.mark.django_db

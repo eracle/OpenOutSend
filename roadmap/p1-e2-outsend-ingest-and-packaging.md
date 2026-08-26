@@ -1,11 +1,12 @@
 # `outsend` Becomes a Program — Ingest on stdin, and a Command on the PATH
 
-- **Status:** To Do. **This is the ninth card, and the only one about making the other eight
-  runnable.** `cold_outreach/` now imports itself rather than its old home — the transport, the send
-  guards, the outreach agent and the mail log all resolve — but nine imports still point at
-  OpenOutreach's CRM, and there is no console script, no settings module and no database. Until this
-  lands the repo is a library of working parts, and `openoutreach find 50 --json | outsend` is a
-  design, not a command.
+- **Status:** In Progress — **`openoutreach find 50 --json | outsend` is a command now.** The lead
+  model exists (`cold_outreach/leads/`), the nine foreign imports are gone, ingest reads stdin and
+  upserts idempotently with the door closed behind it, and the program around it is here: a console
+  script, this repo's own settings, a SQLite store under `~/.openoutsend/` that migrates itself, and a
+  test suite where there was none. **What is left is the other half of the clock** — nothing yet picks
+  a deal and sends it, so leads arrive and wait — plus the `openoutreach[send]` extra, which cannot be
+  declared until this distribution is published.
 - **Priority:** High — every other card here describes code that cannot run yet.
 - **Effort:** Medium
 - **Area:** Packaging + ingest — the receiving end of
@@ -15,30 +16,30 @@
 
 Three things, in this order, because each one unblocks the next:
 
-1. **The lead model** — the nine remaining foreign imports name it. Ingest writes it; the send path
-   reads it.
+1. **The lead model** — the nine foreign imports named it. Ingest writes it; the send path reads it.
 2. **Ingest** — read JSON Lines on stdin, upsert, exit.
 3. **The program** — a console script, a settings module, and a default store, so `pip install
    openoutsend` puts `outsend` on the PATH.
 
-## Why the lead model comes first
+## Why the lead model came first
 
 The port carried the transport across whole but left it reaching back into the finder's CRM for the
-row it acts on. Those imports are not a rename anybody forgot — **they are the model this repo has
-not designed yet**, and two of them point at code the finder has since deleted:
+row it acts on. Those imports were not a rename anybody forgot — **they were the model this repo had
+not designed yet**, and two of them pointed at code the finder had already deleted. What each one
+became:
 
-| Import | Used by | What it has to become here |
+| Import it was | Used by | What it is now |
 |---|---|---|
-| `openoutreach.crm.models.DealState` | `steps/send.py`, `steps/reply.py` | the ingested row's own state. The finder's FSM ends at `RESOLVED`; sending starts after that, so the states are this side's to name |
-| `openoutreach.crm.models.Deal` | `threads.py`, `models/mailbox.py` | the `(lead_id, campaign)` row ingest writes — the send-cap ledger counts distinct ones |
-| `openoutreach.crm.models.Lead` | `sender.py` | the person: address, name, `profile_text` |
-| `openoutreach.core.db.leads.suppress_email` | `project.py`, `steps/reply.py` | **the suppression list**, which the contract makes terminal and this side now owns outright |
-| `openoutreach.core.db.summaries.materialize_profile_summary_if_missing` | `steps/send.py` | **deleted from the finder.** The extraction from `profile_text` is this repo's, and its own card ([`p1-e2-sender-message-generation`](p1-e2-sender-message-generation.md)) already covers it |
-| `openoutreach.core.db.summaries.update_chat_summary` | `steps/reply.py` | same module, same answer |
+| `openoutreach.crm.models.DealState` | `steps/send.py`, `steps/reply.py` | `leads.models.DealState` — `READY → EMAILED → COMPLETED / UNSUBSCRIBED`. Named here, and no state is a copy of a finder state: the finder's FSM ends where this one starts |
+| `openoutreach.crm.models.Deal` | `threads.py`, `models/mailbox.py` | `leads.models.Deal`, unique on `(lead, campaign)` — a constraint, not a convention, because idempotency is what makes the pipe safe to re-run |
+| `openoutreach.crm.models.Lead` | `sender.py` | `leads.models.Lead` — the record's own ten fields plus `profile_text`, keyed on the producer's opaque `lead_id` |
+| `openoutreach.core.db.leads.suppress_email` | `project.py`, `steps/reply.py` | `leads.suppression` — an address-keyed table this side owns outright, terminal, and the one thing an erasure must not remove |
+| `openoutreach.core.db.summaries.materialize_profile_summary_if_missing` | `steps/send.py` | `leads.summaries` — rebuilt here rather than ported: one structured call, no vendored mem0, and **no campaign conditioning**, which is what made the finder's version tuned for a verdict instead of an opener |
+| `openoutreach.core.db.summaries.update_chat_summary` | `steps/reply.py` | same module. The merged fact list comes back whole rather than as mem0's ADD/UPDATE/DELETE events — those existed to address a vector store, and the store here is a JSON list on one row |
 
-`openoutreach/emails/` is an **empty directory** in the finder now, and `core/db/summaries.py` is
-gone. So these are not imports that would work if the finder were installed — there is nothing on the
-other end. Nothing here can be tested until they resolve locally.
+Two things that came with the model and were not on the list: `Campaign` (the three pieces of text a
+message is written from, which never cross the pipe) and the deletion of `emails/migrations/0008`,
+a backfill from the finder's `chat` and `crm` tables that no database on this side has ever had.
 
 ## What ingest owes the contract
 
@@ -103,23 +104,41 @@ in a cron line rather than a tool I have to drive.
 
 ## Done when
 
-- [ ] `cold_outreach/` imports nothing from `openoutreach`, and a grep proves it.
-- [ ] Ingest reads JSON Lines on stdin, upserts on `(lead_id, campaign)`, skips-and-counts malformed
+- [x] `cold_outreach/` imports nothing from `openoutreach`, and a grep proves it. *(The only
+      occurrence left in the package is the word in a docstring.)*
+- [x] Ingest reads JSON Lines on stdin, upserts on `(lead_id, campaign)`, skips-and-counts malformed
       lines with a non-zero exit, resolves conflicts latest-wins, and re-checks suppression on an
-      address change.
-- [ ] Suppression is enforced at the door **and** again at send, since a blank-address row has nothing
-      to check on the way in.
-- [ ] `outsend` takes no verb, resolves `--campaign` by `find`'s rule, and narrates the resolution to
-      stderr. stdout stays clean.
+      address change. *(`leads/ingest.py`. An empty value never overwrites a stored one — `null` in a
+      record means "never told", which is not a correction of anything.)*
+- [x] Suppression is enforced at the door **and** again at send, since a blank-address row has nothing
+      to check on the way in. *(`leads/suppression.py` is the list; `emails/sender.suppressed` asks it
+      again after the agent has written.)*
+- [x] `outsend` takes no verb, resolves `--campaign` by `find`'s rule, and narrates the resolution to
+      stderr. stdout stays clean. *(A fresh install with no campaigns resolves to a default rather
+      than stopping — ingest on day one cannot fail on a step nobody knew about.)*
 - [ ] `outsend init` exists, collects `product_docs` / `campaign_target` / `booking_link`, and runs
       implicitly at first send — completing without a human on a timer, or stopping with an error that
       names what is missing. An interactive wizard blocking a headless run is the one outcome to avoid.
-- [ ] `pip install openoutsend` puts `outsend` on the PATH with its own default SQLite store under
+      *(**Half done.** The verb exists, reads `OUTSEND_*` first, prompts only on a TTY, and errors
+      naming the variables when headless. "Implicitly at first send" has nothing to hang off yet,
+      because nothing sends.)*
+- [x] `pip install openoutsend` puts `outsend` on the PATH with its own default SQLite store under
       `~/.openoutsend/`, and the settings module is this repo's rather than a host project's.
+      *(Installable and running from a checkout; publishing to PyPI is what the extra below waits on.)*
 - [ ] The send path runs against this repo's own tests — there is no harness at all right now.
+      *(**Harness built** — pytest-django, factories for this side's models, 132 tests green. Four
+      inherited files still reach into the finder for the send-pass pool queries and are ignored by
+      name in `conftest.py`; they come back with the send verb.)*
 - [ ] Only then: `openoutreach[send]` is declared on the finder's side, and nothing under
       `openoutreach/` imports `openoutsend`. An extra naming a distribution that does not exist breaks
       the install it exists to simplify.
+
+## What the next slice is
+
+**The send verb** — one bounded pass that picks the deals a box may write to right now, runs the
+agent, sends, and exits, the way `find` does its own work and stops. It is what brings back
+`get_emailable_deals` and `unanswered_replies` (the two pool queries the ignored tests still import
+from the finder), and it is where `outsend init` gets its implicit trigger.
 
 ## Open questions
 

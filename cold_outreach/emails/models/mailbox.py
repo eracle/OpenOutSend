@@ -189,8 +189,8 @@ class Mailbox(models.Model):
         """
         from django.db.models import Min
 
-        from openoutreach.crm.models import Deal
         from cold_outreach.emails.models.maillog import Direction, Message
+        from cold_outreach.leads.models import Deal
 
         opened_today = (
             Message.objects

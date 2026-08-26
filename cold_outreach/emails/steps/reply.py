@@ -27,11 +27,7 @@ import logging
 
 from termcolor import colored
 
-# `DealState`, the chat-summary update and the suppression writer are the ingest
-# model's, and this repo has not built it yet — see
-# `roadmap/p1-e2-outsend-ingest-and-packaging.md`. Until it exists these names
-# resolve to nothing and this module cannot run.
-from openoutreach.crm.models import DealState
+from cold_outreach.leads.models import DealState
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +37,7 @@ def answer_reply(deal) -> DealState | None:
     from cold_outreach.core.agents.outreach import run_outreach_agent
 
     logger.info("[%s] %s %s", deal.campaign,
-                colored("▶ reply", "green", attrs=["bold"]), deal.lead.profile_url)
+                colored("▶ reply", "green", attrs=["bold"]), deal.lead.public_id)
 
     _fold_new_messages_into_summary(deal)
     decision = run_outreach_agent(deal)
@@ -50,7 +46,7 @@ def answer_reply(deal) -> DealState | None:
         return _send_reply(deal, decision)
     if decision.action == "mark_completed":
         logger.info("[%s] thread completed for %s: outcome=%s",
-                    deal.campaign, deal.lead.profile_url, decision.outcome)
+                    deal.campaign, deal.lead.public_id, decision.outcome)
         deal.outcome = decision.outcome
         return DealState.COMPLETED
     if decision.action == "suppress":
@@ -62,22 +58,22 @@ def _fold_new_messages_into_summary(deal) -> None:
     """Roll every unanswered inbound turn into ``deal.chat_summary``.
 
     "Unanswered" is exactly the set that made this deal actionable — inbound turns
-    newer than our newest outgoing one — so nothing needs to remember which
-    messages have already been folded.
+    newer than our newest outgoing one — so nothing needs to remember which messages
+    have already been folded.
 
-    **Turns only.** A non-delivery report is in the thread and is not one, so it
-    can never reach the summary, the agent's context, or a second apology to a
-    dead address. That is closed here by the schema rather than by a filter each
-    read site has to remember.
+    **Turns only.** A non-delivery report is in the thread and is not one, so it can
+    never reach the summary, the agent's context, or a second apology to a dead
+    address. That is closed here by the schema rather than by a filter each read site
+    has to remember.
     """
     from cold_outreach.core.operator import seller_name
     from cold_outreach.emails.models import Direction
-    from openoutreach.core.db.summaries import update_chat_summary
+    from cold_outreach.leads.summaries import update_chat_summary
 
-    turns = deal.thread.turns() if deal.thread_id else None
-    if turns is None:
+    if not deal.thread_id:
         return
 
+    turns = deal.thread.turns()
     last_outgoing = (
         turns.filter(direction=Direction.OUTBOUND)
         .order_by("-sent_at", "-pk")
@@ -87,12 +83,8 @@ def _fold_new_messages_into_summary(deal) -> None:
     unanswered = turns.filter(direction=Direction.INBOUND)
     if last_outgoing:
         unanswered = unanswered.filter(sent_at__gt=last_outgoing)
-    new_messages = list(unanswered)
-    if not new_messages:
-        return
 
-    update_chat_summary(deal, new_messages, seller_name=seller_name())
-    deal.refresh_from_db(fields=["chat_summary", "profile_summary"])
+    update_chat_summary(deal, list(unanswered), seller_name=seller_name())
 
 
 # ── Decision execution ────────────────────────────────────────────
@@ -109,19 +101,18 @@ def _send_reply(deal, decision) -> DealState | None:
 
     if suppressed(deal.lead):
         logger.warning("[%s] %s was suppressed mid-run — not replying",
-                       deal.campaign, deal.lead.profile_url)
+                       deal.campaign, deal.lead.public_id)
         return None
 
     logger.info("[%s] reply to %s: %s",
-                deal.campaign, deal.lead.profile_url, decision.message)
+                deal.campaign, deal.lead.public_id, decision.message)
     chain = _thread_ids(deal)
     send_email(
         deal.mailbox,
         deal.lead.email,
         _reply_subject(deal.email_subject),
         decision.message,
-        campaign=deal.campaign,
-        bcc=operator_bcc(get_active_user(), deal.campaign),
+        bcc=operator_bcc(get_active_user()),
         in_reply_to=chain[-1] if chain else None,
         references=" ".join(chain) or None,
         thread=deal.thread,
@@ -130,17 +121,18 @@ def _send_reply(deal, decision) -> DealState | None:
 
 
 def _suppress(deal) -> DealState:
-    """Honour a worded unsubscribe: suppress the person account-wide, send nothing.
+    """Honour a worded unsubscribe: suppress the address for good, send nothing.
 
-    Enforcement is account-level (``Lead.disqualified``), so it reaches every
-    campaign holding the address, not just this thread's. No reply goes out —
-    someone who asked to stop hearing from us is not owed one more email.
+    Enforcement is address-level, so it reaches every campaign holding that address,
+    not just this thread's — and it is terminal: no later ingest can walk this person
+    back into the sendable set. No reply goes out either; someone who asked to stop
+    hearing from us is not owed one more email.
     """
-    from openoutreach.core.db.leads import suppress_email
+    from cold_outreach.leads.suppression import suppress_email
 
-    suppress_email(deal.lead.email)
-    logger.info("[%s] %s asked to stop — suppressed account-wide",
-                deal.campaign, deal.lead.profile_url)
+    suppress_email(deal.lead.email, reason="worded unsubscribe in a reply")
+    logger.info("[%s] %s asked to stop — suppressed for good",
+                deal.campaign, deal.lead.public_id)
     return DealState.UNSUBSCRIBED
 
 

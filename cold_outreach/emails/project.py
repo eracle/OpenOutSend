@@ -134,15 +134,15 @@ def _dsn_status(ndr: Message) -> str:
 
 
 def _honour_opt_out(message: Message) -> None:
-    """Suppress everyone holding the address this opt-out came from.
+    """Suppress the address this opt-out came from, in every campaign holding it.
 
-    Enforcement is account-level (``Lead.disqualified``), so it reaches every
-    campaign holding the address rather than just this thread's.
+    Enforcement is address-level and terminal: the list outlives the deals it ends,
+    so no later ingest can resurrect somebody who asked to stop.
     """
-    from openoutreach.core.db.leads import suppress_email
+    from cold_outreach.leads.suppression import suppress_email
 
     if not message.from_address:
         return
-    suppressed = suppress_email(message.from_address)
-    logger.info("project: opt-out from %s — %d lead(s) suppressed",
-                message.from_address, suppressed)
+    ended = suppress_email(message.from_address, reason="opt-out to the unsubscribe alias")
+    logger.info("project: opt-out from %s — %d open deal(s) ended",
+                message.from_address, ended)

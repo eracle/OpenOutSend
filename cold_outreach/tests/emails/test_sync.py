@@ -12,8 +12,8 @@ import pytest
 
 from cold_outreach.emails.models import Direction, FolderCoverage, Message
 from cold_outreach.emails.sync import mirror
-from tests.emails import maillog
-from tests.emails.fake_imap import FakeIMAP, bounce, message
+from cold_outreach.tests.emails import maillog
+from cold_outreach.tests.emails.fake_imap import FakeIMAP, bounce, message
 
 SENDER = "s@infra.com"
 

@@ -13,8 +13,8 @@ from cold_outreach.emails import classify as classifier
 from cold_outreach.emails.classify import CLASSIFIER_VERSION, classify, classify_pending
 from cold_outreach.emails.models import Kind, Message
 from cold_outreach.emails.sync import mirror
-from tests.emails import maillog
-from tests.emails.fake_imap import FakeIMAP, auto_reply, bounce, message
+from cold_outreach.tests.emails import maillog
+from cold_outreach.tests.emails.fake_imap import FakeIMAP, auto_reply, bounce, message
 
 SENDER = "s@infra.com"
 
