@@ -1,4 +1,4 @@
-# tests/emails/test_unsubscribe.py
+# cold_outreach/tests/emails/test_unsubscribe.py
 """Opt-out: the advertised mechanism, both detection paths, and the enforcement.
 
 The three legs, and what each one locks down:
@@ -11,9 +11,11 @@ The three legs, and what each one locks down:
   * **Detected** — a client-generated unsubscribe (no threading headers, found
     box-wide by the ``+unsub`` alias during the mail pass) and a worded one
     (threads normally, read by the outreach agent) both reach the same suppression.
-  * **Enforced** — suppression binds to the person, so every lead holding the
-    address is disqualified and every open deal closes at UNSUBSCRIBED, while an
-    already-closed deal keeps the outcome that closed it.
+  * **Enforced** — the address is on the list before anything is written, and the
+    send path asks the list again after the agent has written.
+
+What the list itself does once an address reaches it — which deals close, what a
+second suppression changes — is ``tests/leads/test_suppression.py``.
 """
 from __future__ import annotations
 
@@ -23,8 +25,6 @@ import pytest
 from django.utils import timezone
 
 from cold_outreach.core.agents.outreach import OutreachDecision
-from openoutreach.core.db.leads import suppress_email
-from openoutreach.crm.models import DealState, Lead, Outcome
 from cold_outreach.emails.mail_pass import run_mail_pass
 from cold_outreach.emails.models import Mailbox
 from cold_outreach.emails.sender import (
@@ -36,9 +36,11 @@ from cold_outreach.emails.sender import (
 )
 from cold_outreach.emails.steps.reply import answer_reply
 from cold_outreach.emails.steps.send import send_first_email
-from tests.emails import maillog
-from tests.emails.fake_imap import FakeIMAP, message
-from tests.factories import DealFactory, LeadFactory
+from cold_outreach.leads.models import DealState, Lead, Suppression
+from cold_outreach.leads.suppression import suppress_email
+from cold_outreach.tests.emails import maillog
+from cold_outreach.tests.emails.fake_imap import FakeIMAP, message
+from cold_outreach.tests.factories import DealFactory, LeadFactory
 
 SENDER = "s@infra.com"
 ALIAS = "s+unsub@infra.com"
@@ -92,88 +94,15 @@ class TestUnsubscribeAddress:
         assert unsubscribe_address("s+out@infra.com") == "s+out+unsub@infra.com"
 
 
-# ── Enforcement ───────────────────────────────────────────────────
-
-
-@pytest.mark.django_db
-class TestSuppressEmail:
-    def test_suppresses_every_lead_holding_the_address(self, campaign):
-        """``Lead.email`` has no unique constraint — one address, many rows."""
-        first = LeadFactory(email="p@corp.com")
-        second = LeadFactory(email="p@corp.com")
-        assert suppress_email("p@corp.com") == 2
-        assert Lead.objects.filter(pk__in=[first.pk, second.pk], disqualified=True).count() == 2
-
-    def test_matches_case_insensitively(self, campaign):
-        """A client echoes back whatever casing it was given."""
-        lead = LeadFactory(email="p@corp.com")
-        suppress_email("P@Corp.Com")
-        lead.refresh_from_db()
-        assert lead.disqualified
-
-    def test_open_deal_closes_at_unsubscribed(self, campaign):
-        deal = DealFactory(
-            campaign=campaign,
-            lead=LeadFactory(email="p@corp.com"),
-            state=DealState.EMAILED,
-        )
-        suppress_email("p@corp.com")
-        deal.refresh_from_db()
-        assert deal.state == DealState.UNSUBSCRIBED
-
-    def test_unsubscribed_deal_leaves_outcome_blank(self, campaign):
-        """Reachability ended, not the offer — so the ML labeler keeps label=1."""
-        deal = DealFactory(
-            campaign=campaign,
-            lead=LeadFactory(email="p@corp.com"),
-            state=DealState.EMAILED,
-        )
-        suppress_email("p@corp.com")
-        deal.refresh_from_db()
-        assert deal.outcome == ""
-
-    def test_already_closed_deal_keeps_its_outcome(self, campaign):
-        """An opt-out weeks after a thread ended must not erase how it ended."""
-        deal = DealFactory(
-            campaign=campaign,
-            lead=LeadFactory(email="p@corp.com"),
-            state=DealState.COMPLETED,
-            outcome=Outcome.CONVERTED,
-        )
-        suppress_email("p@corp.com")
-        deal.refresh_from_db()
-        assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.CONVERTED)
-
-    def test_unknown_address_is_not_an_error(self, campaign):
-        assert suppress_email("stranger@corp.com") == 0
-
-    def test_blank_address_suppresses_nothing(self, campaign):
-        """A lead with no resolved email must not match every unemailed lead."""
-        LeadFactory(email=None)
-        assert suppress_email("") == 0
-
-    def test_is_idempotent(self, campaign):
-        deal = DealFactory(
-            campaign=campaign,
-            lead=LeadFactory(email="p@corp.com"),
-            state=DealState.EMAILED,
-        )
-        assert suppress_email("p@corp.com") == suppress_email("p@corp.com") == 1
-        deal.refresh_from_db()
-        assert deal.state == DealState.UNSUBSCRIBED
-
-
 # ── Detection: the client-generated unsubscribe (the mail pass) ───
 
 
 def _read(box, fake) -> int:
-    """Run one mail pass against *fake*; return the leads suppressed by it."""
-    from openoutreach.crm.models import Lead
-
-    before = Lead.objects.filter(disqualified=True).count()
+    """Run one mail pass against *fake*; return the addresses it suppressed."""
+    before = Suppression.objects.count()
     with patch("cold_outreach.emails.sync._connect", return_value=fake):
         run_mail_pass()
-    return Lead.objects.filter(disqualified=True).count() - before
+    return Suppression.objects.count() - before
 
 
 @pytest.mark.django_db
@@ -188,16 +117,14 @@ class TestAliasOptOut:
 
         assert _read(_box(), FakeIMAP([message(7, to=ALIAS, sender="p@corp.com")])) == 1
 
-        lead.refresh_from_db()
         deal.refresh_from_db()
-        assert lead.disqualified
+        assert suppressed(lead)
         assert deal.state == DealState.UNSUBSCRIBED
 
     def test_ordinary_inbox_mail_is_left_alone(self, campaign):
         lead = LeadFactory(email="p@corp.com")
         assert _read(_box(), FakeIMAP([message(7, to=SENDER, sender="p@corp.com")])) == 0
-        lead.refresh_from_db()
-        assert not lead.disqualified
+        assert not suppressed(lead)
 
     def test_a_display_name_around_the_alias_still_matches(self, campaign):
         LeadFactory(email="p@corp.com")
@@ -230,7 +157,7 @@ class TestAliasOptOut:
 
         deal.refresh_from_db()
         assert deal.state == DealState.UNSUBSCRIBED
-        assert Lead.objects.filter(disqualified=True).count() == 1
+        assert Suppression.objects.count() == 1
 
     def test_an_unreachable_box_keeps_its_coverage(self, campaign):
         """A network fault is not evidence that there was no mail to read."""
@@ -273,12 +200,12 @@ class TestWordedUnsubscribe:
     """A worded unsubscribe threads normally, so the alias scan can never see it —
     the agent reading every reply already can."""
 
-    def test_a_suppress_decision_disqualifies_and_closes_the_deal(self, campaign):
+    def test_a_suppress_decision_lists_the_address_and_closes_the_deal(self, campaign):
         deal = _replied_deal(campaign)
 
         with patch("cold_outreach.core.agents.outreach.run_outreach_agent",
                    return_value=_decision("suppress")), \
-             patch("openoutreach.core.db.summaries.update_chat_summary"), \
+             patch("cold_outreach.leads.summaries.update_chat_summary"), \
              patch("cold_outreach.emails.sender.send_email") as send:
             next_state = answer_reply(deal)
 
@@ -286,19 +213,19 @@ class TestWordedUnsubscribe:
         deal.save()
         deal.refresh_from_db()
         assert deal.state == DealState.UNSUBSCRIBED
-        assert deal.lead.disqualified
+        assert suppressed(deal.lead)
         send.assert_not_called()
 
     def test_the_deal_closes_even_when_the_address_matches_nothing(self, campaign):
         """``suppress_email`` is keyed on the address, the returned state on the
-        deal. A lead with no resolved email would otherwise stay EMAILED with an
-        unanswered reply — permanently actionable, re-decided every cycle."""
+        deal. A lead with no address would otherwise stay EMAILED with an unanswered
+        reply — permanently actionable, re-decided every pass."""
         deal = _replied_deal(campaign)
-        Lead.objects.filter(pk=deal.lead.pk).update(email=None)
+        Lead.objects.filter(pk=deal.lead.pk).update(email="")
 
         with patch("cold_outreach.core.agents.outreach.run_outreach_agent",
                    return_value=_decision("suppress")), \
-             patch("openoutreach.core.db.summaries.update_chat_summary"):
+             patch("cold_outreach.leads.summaries.update_chat_summary"):
             assert answer_reply(deal) == DealState.UNSUBSCRIBED
 
 
@@ -307,10 +234,10 @@ class TestWordedUnsubscribe:
 
 @pytest.mark.django_db
 class TestSendGuards:
-    def test_suppressed_reads_the_row_not_the_in_memory_copy(self, campaign):
+    def test_suppressed_reads_the_list_not_the_in_memory_copy(self, campaign):
         lead = LeadFactory(email="p@corp.com")
-        Lead.objects.filter(pk=lead.pk).update(disqualified=True)
-        assert suppressed(lead)  # the stale in-memory copy still says False
+        suppress_email("p@corp.com")
+        assert suppressed(lead)  # the copy selected before the opt-out landed
 
     def test_a_first_email_is_not_sent_to_a_lead_suppressed_mid_run(self, campaign):
         """The agent runs for seconds — the query that selected this deal is
@@ -319,36 +246,38 @@ class TestSendGuards:
         deal = DealFactory(
             campaign=campaign,
             lead=LeadFactory(email="p@corp.com"),
-            state=DealState.READY_TO_EMAIL,
+            state=DealState.READY,
         )
 
         def _suppress_then_decide(target):
-            Lead.objects.filter(pk=target.lead.pk).update(disqualified=True)
+            suppress_email(target.lead.email)
             return _decision("send_message", subject="Hi", message="Body")
 
         with patch("cold_outreach.core.agents.outreach.run_outreach_agent",
                    side_effect=_suppress_then_decide), \
-             patch("openoutreach.core.db.summaries.materialize_profile_summary_if_missing"), \
+             patch("cold_outreach.leads.summaries.materialize_profile_summary_if_missing"), \
              patch("cold_outreach.emails.sender.send_email") as send:
             assert send_first_email(deal, box) is None
 
         send.assert_not_called()
         deal.refresh_from_db()
-        assert deal.state == DealState.READY_TO_EMAIL
+        assert deal.state == DealState.UNSUBSCRIBED
 
     def test_a_reply_is_not_sent_to_a_lead_suppressed_mid_run(self, campaign):
         deal = _replied_deal(campaign)
 
         def _suppress_then_decide(target):
-            Lead.objects.filter(pk=target.lead.pk).update(disqualified=True)
+            suppress_email(target.lead.email)
             return _decision("send_message", message="Body")
 
         with patch("cold_outreach.core.agents.outreach.run_outreach_agent",
                    side_effect=_suppress_then_decide), \
-             patch("openoutreach.core.db.summaries.update_chat_summary"), \
+             patch("cold_outreach.leads.summaries.update_chat_summary"), \
              patch("cold_outreach.emails.sender.send_email") as send:
             assert answer_reply(deal) is None
 
+        # `None` is the step declining to move the deal — the suppression already
+        # closed it on its way onto the list, so there is nothing left to transition.
         send.assert_not_called()
         deal.refresh_from_db()
-        assert deal.state == DealState.EMAILED
+        assert deal.state == DealState.UNSUBSCRIBED

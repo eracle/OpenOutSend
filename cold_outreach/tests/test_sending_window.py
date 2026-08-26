@@ -85,11 +85,7 @@ class TestResolvingTheZone:
         assert _zone_for_country("") == UTC
         assert _zone_for_country(None) == UTC
 
-    @pytest.mark.django_db
-    def test_reads_the_operators_onboarding_country(self):
-        from openoutreach.core.models import SiteConfig
-
-        config = SiteConfig.load()
-        config.country_code = "de"
-        config.save(update_fields=["country_code"])
+    def test_reads_the_operators_configured_country(self, settings):
+        """The country is a setting on this side — there is no config table to load."""
+        settings.OUTSEND_OPERATOR_COUNTRY = "de"
         assert operator_timezone() == ZoneInfo("Europe/Berlin")

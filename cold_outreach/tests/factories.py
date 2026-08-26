@@ -16,6 +16,9 @@ class UserFactory(factory.django.DjangoModelFactory):
 
     username = factory.LazyFunction(fake.user_name)
     first_name = "Eracle"
+    # The address every send is blind-copied to. Set here because a copy of your own
+    # outreach is the normal case; a blank one is the exception a test states.
+    email = "operator@corp.com"
     is_staff = True
     is_active = True
 

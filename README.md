@@ -48,10 +48,8 @@ terminal**; headless, whatever is still missing is one error naming every variab
 answered it. The mailbox is stored only once its credentials pass an SMTP login, because the provider
 has no health API and that login is the only gate there is.
 
-Still open: `pip install openoutreach[send]` (the extra can only be declared once this
-distribution is published), and five inherited test files that still reach into the finder for
-factories, models and its config singleton — they are listed by name in `conftest.py` so the list
-shrinks visibly.
+Still open: `pip install openoutreach[send]`, which can only be declared once this distribution is
+published.
 
 ## Layout
 

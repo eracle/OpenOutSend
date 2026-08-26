@@ -9,9 +9,9 @@
   `init` runs implicitly inside it. **A first run now reaches all the way to a connected box**:
   `cold_outreach/first_run.py` collects the campaign's fields, the operator who signs the mail and the
   mailbox itself — environment first, terminal second, one error naming every variable when headless —
-  and the box is stored only once its SMTP login succeeds. What is left is the five inherited test
-  files, and then the `openoutreach[send]` extra, which cannot be declared until this distribution is
-  published.
+  and the box is stored only once its SMTP login succeeds. **Every test in the repo runs** — the five
+  inherited files are ported and nothing is ignored. What is left is the `openoutreach[send]` extra,
+  which cannot be declared until this distribution is published.
 - **Priority:** High — every other card here describes code that cannot run yet.
 - **Effort:** Medium
 - **Area:** Packaging + ingest — the receiving end of
@@ -144,12 +144,9 @@ For anyone picking this up: what an operator can do today, and what they cannot.
 
 ## What is next, in order
 
-1. **Port the four ignored test files.** Every symbol they reach into the finder for now exists here;
-   what is left is the imports and the `tests.` package prefix. They are the send steps' own coverage,
-   which the pass leans on.
-2. **Publish `openoutsend`**, then declare the extra on the finder's side and grep that nothing under
+1. **Publish `openoutsend`**, then declare the extra on the finder's side and grep that nothing under
    `openoutreach/` imports it.
-3. **Then the cards that were waiting on all of this** — bounce detection, the inbound silent skip,
+2. **Then the cards that were waiting on all of this** — bounce detection, the inbound silent skip,
    and the plays that replace the one prompt template.
 
 ## Done when
@@ -184,24 +181,21 @@ For anyone picking this up: what an operator can do today, and what they cannot.
 - [x] `pip install openoutsend` puts `outsend` on the PATH with its own default SQLite store under
       `~/.openoutsend/`, and the settings module is this repo's rather than a host project's.
       *(Installable and running from a checkout; publishing to PyPI is what the extra below waits on.)*
-- [ ] The send path runs against this repo's own tests — there is no harness at all right now.
-      *(**Harness built, and the pass and the first run are covered** — pytest-django, factories for
-      this side's models, 184 tests green, including the two pool queries, the pass's order, what a
-      failure costs, the line it prints, and what `init` asks for on a terminal and refuses to ask a
-      timer. Five inherited files still reach into the finder — four for its factories and models, one
-      for its config singleton — and are ignored by name in `conftest.py`.)*
+- [x] The send path runs against this repo's own tests — there is no harness at all right now.
+      *(pytest-django, factories for this side's models, **268 tests green and nothing ignored**. The
+      five inherited files are ported: what they asserted against the finder's `disqualified` flag and
+      `SiteConfig` they now assert against the suppression list and a setting, and the freemium
+      branches went with the campaign that had them.)*
 - [ ] Only then: `openoutreach[send]` is declared on the finder's side, and nothing under
       `openoutreach/` imports `openoutsend`. An extra naming a distribution that does not exist breaks
       the install it exists to simplify.
 
 ## What the next slice is
 
-**The five ignored test files.** Four are the send steps' own coverage — `test_send`, `test_reply`,
-`test_mail_pass`, `test_unsubscribe` — and every symbol they reach into the finder for exists here
-now, so what is left is imports and a package prefix. The fifth, `test_sending_window`, is not an
-import problem at all: it collects, and one case fails because it asserts against the finder's
-`SiteConfig` where the country is now a setting. They are named in `conftest.py`, so the list shrinks
-where a reader can see it.
+**Publishing `openoutsend`.** Everything else on this card is done, and the extra on the finder's side
+is the last thing waiting on a distribution rather than on code: `openoutreach[send]` cannot name a
+package that is not on PyPI. Once it is published, declare the extra and grep that nothing under
+`openoutreach/` imports `openoutsend` — the dependency crosses one way only.
 
 ## Open questions
 

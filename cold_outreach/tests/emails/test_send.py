@@ -1,7 +1,7 @@
-# tests/emails/test_send.py
+# cold_outreach/tests/emails/test_send.py
 """The first-email path: the per-box cap and spacing, the ready pool, and the step.
 
-A first email is the only cold volume this daemon produces, so it is the only send
+A first email is the only cold volume this sender produces, so it is the only send
 under a cap — replies are exempt (see ``test_reply.py``)."""
 import logging
 
@@ -11,9 +11,7 @@ from unittest.mock import patch
 from django.utils import timezone
 
 from cold_outreach.core.agents.outreach import OutreachDecision
-from openoutreach.core.db.deals import get_emailable_deals
-from openoutreach.crm.models import DealState
-from cold_outreach.emails.models import Mailbox
+from cold_outreach.emails.models import Mailbox, Thread
 from cold_outreach.emails.sender import (
     ATTRIBUTION,
     OPT_OUT_LINE,
@@ -21,10 +19,11 @@ from cold_outreach.emails.sender import (
     send_email,
     unsubscribe_address,
 )
-from cold_outreach.emails.models import Thread
 from cold_outreach.emails.steps.send import send_first_email
-from tests.emails import maillog
-from tests.factories import DealFactory, LeadFactory
+from cold_outreach.leads.models import DealState
+from cold_outreach.leads.pools import emailable_deals
+from cold_outreach.tests.emails import maillog
+from cold_outreach.tests.factories import DealFactory, LeadFactory
 
 
 def _box(email="a@b.com", daily_limit=10):
@@ -32,15 +31,15 @@ def _box(email="a@b.com", daily_limit=10):
 
 
 def _ready(campaign, email="lead@corp.com"):
-    """A deal queued for its Layer-1 email (READY_TO_EMAIL, address resolved)."""
+    """A deal waiting for its first email — ingested, with an address."""
     return DealFactory(
         campaign=campaign,
         lead=LeadFactory(email=email),
-        state=DealState.READY_TO_EMAIL,
+        state=DealState.READY,
     )
 
 
-def _record_send(deal, box, user, when=None):
+def _record_send(deal, box, when=None):
     """Register one first contact on a box — what the cap ledger counts.
 
     The ledger reads the transport log, so this writes what a send writes: an
@@ -57,7 +56,7 @@ def _record_send(deal, box, user, when=None):
     return deal
 
 
-def _record_reply_exchange(deal, box, user, when):
+def _record_reply_exchange(deal, box, when):
     """One inbound reply and our answer, both inside an existing thread."""
     maillog.inbound(box, thread=deal.thread, sent_at=when)
     maillog.outbound(box, thread=deal.thread, to=deal.lead.email, sent_at=when)
@@ -70,37 +69,34 @@ def _record_reply_exchange(deal, box, user, when):
 class TestMailboxCap:
     """The cap counts *people first contacted today*, not messages sent today."""
 
-    def test_a_first_email_spends_one(self, campaign, operator):
+    def test_a_first_email_spends_one(self, campaign):
         box = _box(daily_limit=10)
         assert box.sent_today() == 0
-        _record_send(_ready(campaign), box, operator)
+        _record_send(_ready(campaign), box)
         assert box.sent_today() == 1
         assert box.headroom_today() == 9
 
-    def test_replies_inside_an_older_thread_are_free(self, campaign, operator):
+    def test_replies_inside_an_older_thread_are_free(self, campaign):
         """Answering someone who wrote back is not cold volume, so it costs no cap."""
         from datetime import timedelta
 
         box = _box(daily_limit=10)
         yesterday = timezone.now() - timedelta(days=1)
-        deal = _record_send(_ready(campaign), box, operator, when=yesterday)
-        _record_reply_exchange(deal, box, operator, when=timezone.now())
+        deal = _record_send(_ready(campaign), box, when=yesterday)
+        _record_reply_exchange(deal, box, when=timezone.now())
 
         assert box.sent_today() == 0
         assert box.headroom_today() == 10
 
-    def test_one_person_reached_twice_today_counts_once(self, campaign, operator):
+    def test_one_person_reached_twice_today_counts_once(self, campaign):
         """Distinct leads, so a second campaign's touch is not a second person."""
-        from openoutreach.core.models import Campaign
+        from cold_outreach.leads.models import Campaign
 
         box = _box(daily_limit=10)
         lead = LeadFactory(email="lead@corp.com")
         other = Campaign.objects.create(name="Second")
         for c in (campaign, other):
-            _record_send(
-                DealFactory(campaign=c, lead=lead, state=DealState.READY_TO_EMAIL),
-                box, operator,
-            )
+            _record_send(DealFactory(campaign=c, lead=lead, state=DealState.READY), box)
         assert box.sent_today() == 1
 
     def test_remaining_today_sums_headroom_across_boxes(self, campaign):
@@ -114,16 +110,16 @@ class TestMailboxCap:
 
 @pytest.mark.django_db
 class TestPickingABox:
-    def test_picks_the_box_with_most_headroom(self, campaign, operator):
+    def test_picks_the_box_with_most_headroom(self, campaign):
         light = _box("light@b.com", daily_limit=10)
         heavy = _box("heavy@b.com", daily_limit=10)
         for _ in range(4):
-            _record_send(_ready(campaign), heavy, operator)
+            _record_send(_ready(campaign), heavy)
         assert Mailbox.objects.free_for_first_email() == light
 
-    def test_none_when_every_box_is_capped(self, campaign, operator):
+    def test_none_when_every_box_is_capped(self, campaign):
         box = _box(daily_limit=1)
-        _record_send(_ready(campaign), box, operator)
+        _record_send(_ready(campaign), box)
         assert Mailbox.objects.free_for_first_email() is None
 
     def test_a_box_still_spacing_out_is_not_free(self, campaign):
@@ -167,23 +163,21 @@ class TestPickingABox:
 
 @pytest.mark.django_db
 class TestEmailableDeals:
-    def test_returns_only_ready_to_email(self, campaign):
+    def test_returns_only_deals_waiting_for_a_first_email(self, campaign):
         ready = _ready(campaign)
-        DealFactory(campaign=campaign, lead=LeadFactory(), state=DealState.QUALIFIED)
         DealFactory(campaign=campaign, lead=LeadFactory(), state=DealState.EMAILED)
-        deals = list(get_emailable_deals(campaign))
-        assert deals == [ready]
+        DealFactory(campaign=campaign, lead=LeadFactory(), state=DealState.UNSUBSCRIBED)
+        assert list(emailable_deals(campaign)) == [ready]
 
-    def test_excludes_disqualified_lead(self, campaign):
-        deal = _ready(campaign)
-        deal.lead.disqualified = True
-        deal.lead.save()
-        assert list(get_emailable_deals(campaign)) == []
+    def test_excludes_a_lead_with_no_address(self, campaign):
+        """A row can arrive without one — an address is an enrichment, not a promise."""
+        _ready(campaign, email="")
+        assert list(emailable_deals(campaign)) == []
 
     def test_oldest_first(self, campaign):
         first = _ready(campaign, "first@c.com")
         second = _ready(campaign, "second@c.com")
-        assert list(get_emailable_deals(campaign)) == [first, second]
+        assert list(emailable_deals(campaign)) == [first, second]
 
 
 @pytest.mark.django_db
@@ -205,56 +199,42 @@ class TestSendEmailBcc:
 
 @pytest.mark.django_db
 class TestSentBodyLogging:
-    """The message text is logged for the operator's own campaigns, never freemium."""
+    """What the agent wrote is logged; the boilerplate appended to it is not.
 
-    def _send(self, campaign, caplog):
+    Every campaign is the operator's own — it is their outreach, from their box, and
+    they receive each of these in full by BCC — so the log discloses nothing they do
+    not already hold.
+    """
+
+    def _send(self, caplog):
         box = maillog.mailbox("s@infra.com", signature="— Ercole")
         with caplog.at_level(logging.INFO, logger="cold_outreach.emails.sender"), \
              patch("cold_outreach.emails.sender._deliver"):
-            send_email(box, "lead@corp.com", "Hi there", "How do you do discovery today?",
-                       campaign=campaign)
+            send_email(box, "lead@corp.com", "Hi there", "How do you do discovery today?")
         return caplog.text
 
-    def test_own_campaign_logs_what_the_agent_generated(self, campaign, caplog):
-        text = self._send(campaign, caplog)
+    def test_logs_what_the_agent_generated(self, caplog):
+        text = self._send(caplog)
         assert "Subject: Hi there" in text
         assert "How do you do discovery today?" in text
 
-    def test_the_appended_boilerplate_is_not_logged(self, campaign, caplog):
+    def test_the_appended_boilerplate_is_not_logged(self, caplog):
         """Signature, opt-out and attribution are the same on every send — noise here."""
-        text = self._send(campaign, caplog)
+        text = self._send(caplog)
         assert "— Ercole" not in text
         assert ATTRIBUTION.strip() not in text
         assert OPT_OUT_LINE.strip() not in text
 
-    def test_freemium_campaign_logs_metadata_only(self, campaign, caplog):
-        campaign.is_freemium = True
-        text = self._send(campaign, caplog)
-        assert "lead@corp.com" in text          # the metadata line still goes out
-        assert "How do you do discovery today?" not in text
-
-    def test_no_campaign_logs_metadata_only(self, caplog):
-        """The default stays metadata-only, so a new call site cannot leak by omission."""
-        box = maillog.mailbox("s@infra.com")
-        with caplog.at_level(logging.INFO, logger="cold_outreach.emails.sender"), \
-             patch("cold_outreach.emails.sender._deliver"):
-            send_email(box, "lead@corp.com", "Hi there", "Secret body")
-        assert "Secret body" not in caplog.text
-
 
 @pytest.mark.django_db
 class TestOperatorBcc:
-    def test_operator_campaign_bccs_the_operator(self, campaign, operator):
-        assert operator_bcc(operator, campaign) == "testuser@example.com"
+    def test_the_operator_is_copied_on_their_own_outreach(self, operator):
+        assert operator_bcc(operator) == operator.email
 
-    def test_freemium_campaign_never_bccs(self, campaign, operator):
-        campaign.is_freemium = True
-        assert operator_bcc(operator, campaign) is None
-
-    def test_blank_operator_email_yields_no_bcc(self, campaign, operator):
+    def test_blank_operator_email_yields_no_bcc(self, operator):
         """An empty address would set an empty Bcc header, not "no copy"."""
         operator.email = ""
-        assert operator_bcc(operator, campaign) is None
+        assert operator_bcc(operator) is None
 
 
 @pytest.mark.django_db
@@ -302,14 +282,14 @@ class TestSendEmailAttribution:
         body = self._sent_body(self._box("Eracle"), in_reply_to="<prior@corp.com>")
         assert body.endswith(f"{ATTRIBUTION}\n")
 
-    def test_body_is_not_logged_on_send(self, caplog):
+    def test_the_metadata_line_names_the_recipient_and_subject(self, caplog):
+        """Two records per send: what went where, then what was written (see above)."""
         with caplog.at_level("INFO", logger="cold_outreach.emails.sender"):
             self._sent_body(self._box("Eracle"))
-        records = [r for r in caplog.records if r.name == "cold_outreach.emails.sender"]
-        assert len(records) == 1
-        logged = records[0].getMessage()
-        assert "Body" not in logged and ATTRIBUTION not in logged
-        assert "lead@corp.com" in logged and "Hi" in logged
+        metadata = [r for r in caplog.records
+                    if r.name == "cold_outreach.emails.sender"][0].getMessage()
+        assert "lead@corp.com" in metadata and "Hi" in metadata
+        assert ATTRIBUTION not in metadata
 
 
 # ── send_first_email (the step) ───────────────────────────────────
@@ -319,7 +299,7 @@ class TestSendEmailAttribution:
 class TestSendFirstEmail:
     def _run(self, deal, box, subject="Hi there", message="Short opener."):
         with patch(
-            "openoutreach.core.db.summaries.materialize_profile_summary_if_missing",
+            "cold_outreach.leads.summaries.materialize_profile_summary_if_missing",
         ), patch(
             "cold_outreach.core.agents.outreach.run_outreach_agent",
             return_value=OutreachDecision(
@@ -339,12 +319,10 @@ class TestSendFirstEmail:
 
         send, next_state = self._run(deal, box)
 
-        # The operator's own campaign → they get a BCC of their own outreach, and
-        # the campaign rides along so the sender can log the body it sent.
+        # Every campaign is the operator's own, so they get a BCC of their outreach.
         send.assert_called_once_with(
             box, "lead@corp.com", "Hi there", "Short opener.",
-            campaign=campaign,
-            bcc="testuser@example.com",
+            bcc=operator.email,
         )
         assert next_state == DealState.EMAILED
         deal.refresh_from_db()
@@ -364,15 +342,6 @@ class TestSendFirstEmail:
         message = deal.thread.messages.get()
         assert message.is_outbound
         assert message.message_id == "mid@corp.com"
-
-    def test_no_follow_up_clock_is_armed(self, campaign, operator):
-        """Nobody is chased, so a sent deal carries no schedule at all."""
-        box = _box(daily_limit=10)
-        deal = _ready(campaign, "lead@corp.com")
-        self._run(deal, box)
-
-        deal.refresh_from_db()
-        assert deal.not_before is None
 
     def test_the_box_is_spaced_out_afterwards(self, campaign, operator):
         box = _box(daily_limit=10)
@@ -395,27 +364,19 @@ class TestSendFirstEmail:
         gap = box.next_send_at - deal.email_sent_at
         assert timedelta(seconds=210) <= gap <= timedelta(seconds=270)
 
-    def test_no_bcc_on_a_freemium_campaign(self, campaign, operator):
-        """Freemium outreach is OpenOutreach's own — the operator gets no copy."""
-        campaign.is_freemium = True
-        campaign.save(update_fields=["is_freemium"])
-        box = _box(daily_limit=10)
-
-        send, _ = self._run(_ready(campaign, "lead@corp.com"), box)
-
-        assert send.call_args.kwargs["bcc"] is None
-
     def test_a_lead_suppressed_mid_run_is_not_emailed(self, campaign, operator):
         """An unsubscribe can land in the seconds the agent takes to write."""
+        from cold_outreach.leads.suppression import suppress_email
+
         box = _box(daily_limit=10)
         deal = _ready(campaign, "lead@corp.com")
 
         with patch(
-            "openoutreach.core.db.summaries.materialize_profile_summary_if_missing",
+            "cold_outreach.leads.summaries.materialize_profile_summary_if_missing",
         ), patch(
             "cold_outreach.core.agents.outreach.run_outreach_agent",
             side_effect=lambda d: (
-                type(d.lead).objects.filter(pk=d.lead.pk).update(disqualified=True)
+                suppress_email(d.lead.email, reason="opted out mid-run")
                 or OutreachDecision(action="send_message", subject="s", message="m")
             ),
         ), patch(

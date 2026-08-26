@@ -1,4 +1,4 @@
-# tests/emails/test_mail_pass.py
+# cold_outreach/tests/emails/test_mail_pass.py
 """The three jobs end to end: a reply arrives and the deal becomes actionable.
 
 Everything here goes through ``run_mail_pass`` rather than the jobs individually,
@@ -10,13 +10,19 @@ from unittest.mock import patch
 
 import pytest
 
-from openoutreach.core.cycle import unanswered_replies
-from openoutreach.crm.models import DealState
 from cold_outreach.emails.mail_pass import run_mail_pass
 from cold_outreach.emails.models import Kind, Message
-from tests.emails import maillog
-from tests.emails.fake_imap import RECEIVED_AT, FakeIMAP, auto_reply, bounce, message
-from tests.factories import DealFactory, LeadFactory
+from cold_outreach.leads.models import DealState
+from cold_outreach.leads.pools import unanswered_replies
+from cold_outreach.tests.emails import maillog
+from cold_outreach.tests.emails.fake_imap import (
+    RECEIVED_AT,
+    FakeIMAP,
+    auto_reply,
+    bounce,
+    message,
+)
+from cold_outreach.tests.factories import DealFactory, LeadFactory
 
 SENDER = "s@infra.com"
 ROOT = "root@infra.com"

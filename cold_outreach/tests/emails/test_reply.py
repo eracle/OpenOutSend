@@ -1,4 +1,4 @@
-# tests/emails/test_reply.py
+# cold_outreach/tests/emails/test_reply.py
 """Answering a reply — and the invariant that there is no other reason to email.
 
 The first test here is the whole follow-up policy: a lead who does not write back
@@ -12,12 +12,12 @@ import pytest
 from django.utils import timezone
 
 from cold_outreach.core.agents.outreach import OutreachDecision
-from openoutreach.core.cycle import unanswered_replies
-from openoutreach.crm.models import DealState
 from cold_outreach.emails.models import Mailbox
 from cold_outreach.emails.steps.reply import answer_reply
-from tests.emails import maillog
-from tests.factories import DealFactory, LeadFactory
+from cold_outreach.leads.models import DealState
+from cold_outreach.leads.pools import unanswered_replies
+from cold_outreach.tests.emails import maillog
+from cold_outreach.tests.factories import DealFactory, LeadFactory
 
 SENDER = "s@infra.com"
 
@@ -127,7 +127,7 @@ class TestAnswerReply:
     def _run(self, deal, decision):
         with patch("cold_outreach.core.agents.outreach.run_outreach_agent",
                    return_value=decision), \
-                patch("openoutreach.core.db.summaries.update_chat_summary"), \
+                patch("cold_outreach.leads.summaries.update_chat_summary"), \
                 patch("cold_outreach.emails.sender.send_email",
                       side_effect=lambda box, *a, **kw: maillog.outbound(
                           box, thread=kw.get("thread"),
