@@ -4,9 +4,12 @@
   model exists (`cold_outreach/leads/`), the nine foreign imports are gone, ingest reads stdin and
   upserts idempotently with the door closed behind it, and the program around it is here: a console
   script, this repo's own settings, a SQLite store under `~/.openoutsend/` that migrates itself, and a
-  test suite where there was none. **What is left is the other half of the clock** — nothing yet picks
-  a deal and sends it, so leads arrive and wait — plus the `openoutreach[send]` extra, which cannot be
-  declared until this distribution is published.
+  test suite where there was none. **The other half of the clock now runs too**: `outsend send` is one
+  bounded pass — read the mail, answer every thread that replied, open what the guards allow — and
+  `init` runs implicitly inside it. **What is left is the mailbox**: nothing calls `create_verified`
+  and a fresh install has no operator identity to sign with, so a pass says *"no mailbox connected"*
+  and does nothing. Then the `openoutreach[send]` extra, which cannot be declared until this
+  distribution is published.
 - **Priority:** High — every other card here describes code that cannot run yet.
 - **Effort:** Medium
 - **Area:** Packaging + ingest — the receiving end of
@@ -70,10 +73,12 @@ tool's vocabulary.
 
 ---
 
-They install it the way the docs say, which is one line and not two:
+They install it, and today that is still two lines rather than one — the extra waits on this
+distribution being published:
 
 ```
-pip install openoutreach[send]
+pip install openoutreach            # the finder
+pip install -e path/to/OpenOutSend  # the sender
 ```
 
 Then they change their cron entry — the only edit they make all day:
@@ -83,24 +88,69 @@ openoutreach find 50 --json | outsend
 ```
 
 Nothing prompts them. `outsend` has never run before, so it creates `~/.openoutsend/`, migrates its
-own SQLite, and asks the environment for what a campaign needs; the timer has no terminal, so nothing
-could have asked a human anyway. It stores fifty rows, prints the campaign it resolved and the count
-to stderr, and exits 0.
-
-Their mail goes out later, on the sender's own clock, inside the sending window, paced, from their own
-box. Nothing about the finder changed. Nothing about the file they used to drop into Instantly is gone
-— `openoutreach find 50 > leads.csv` still prints exactly what it printed before, because the pipe
-never asked for a privileged path.
+own SQLite, resolves a campaign (a fresh install has none, so it makes one rather than stopping) and
+asks the environment for what that campaign needs; the timer has no terminal, so nothing could have
+asked a human anyway. It stores fifty rows, prints the campaign it resolved and the count to stderr,
+and exits 0.
 
 A week later they run it after a botched export and forty of the fifty rows are ones they already
-sent. Nothing is sent twice, nothing is duplicated, and the person who unsubscribed on Tuesday stays
-unsubscribed. They do not have to know why — that is the whole point of the door.
+have. Nothing is duplicated, and the person who unsubscribed on Tuesday stays unsubscribed — their
+row is stored and parked, and no re-run lifts it. They do not have to know why; that is the whole
+point of the door.
+
+Nothing about the finder changed. `openoutreach find 50 > leads.csv` still prints exactly what it
+printed before, because the pipe never asked for a privileged path.
+
+A second cron line, a few minutes later, is what actually mails them:
+
+```
+outsend send
+```
+
+It reads the mail first, so an opt-out that arrived overnight suppresses the person before anything is
+written to them. It answers every thread somebody replied in — no cap, because a reply is not cold
+volume. Then it opens as many first emails as the box has headroom, spacing and daylight for, and
+exits. **And then it says it did nothing**, because no mailbox is connected yet. That is the sentence
+this card still owes.
 
 ---
 
 **Single-sentence version:** As an operator, I want `outsend` to be a real command that reads my
 finder's output on stdin and stores it safely, so the handover between finding and sending is one pipe
 in a cron line rather than a tool I have to drive.
+
+## Where it stands, feature by feature
+
+For anyone picking this up: what an operator can do today, and what they cannot.
+
+| Feature | State | Where it lives |
+|---|---|---|
+| `outsend` on the PATH, no verb, reads stdin | **Works** | `cold_outreach/__main__.py` |
+| Its own store, migrated on first run | **Works** — `~/.openoutsend/data/db.sqlite3`, `OUTSEND_HOME`/`OUTSEND_DB` override | `cold_outreach/settings.py` |
+| Idempotent ingest, latest-wins, malformed lines skipped and counted | **Works** | `cold_outreach/leads/ingest.py` |
+| Suppression at the door, terminal, re-checked when an address changes | **Works** | `cold_outreach/leads/suppression.py` |
+| Campaign resolution by `find`'s rule, narrated to stderr | **Works** | `cold_outreach/leads/campaigns.py` |
+| The facts a message is written from | **Works** — extracted lazily on the first email, read by the prompt | `cold_outreach/leads/summaries.py` |
+| The transport: SMTP, IMAP sync, mail pass, threads, delivery policy, warmth | **Ported and tested** | `cold_outreach/emails/` |
+| `outsend send` — read, answer, open, exit | **Works** | `cold_outreach/send_pass.py` |
+| Who is waiting and who wrote back | **Works** — derived from deal state and the mail log's timestamps; no queue table | `cold_outreach/leads/pools.py` |
+| `outsend init` | **Half** — collects the campaign's three fields from env or a TTY, and runs implicitly at first send. Does not yet connect a mailbox or record who the operator is | `cold_outreach/__main__.py` |
+| **A mailbox** | **Missing.** `create_verified` exists and nothing calls it; `seller_full_name()` reads a Django `User` a fresh install has none of | — |
+| `pip install openoutreach[send]` | **Missing** — needs `openoutsend` published first | — |
+
+## What is next, in order
+
+1. **First run has to reach further than a campaign.** A send needs a mailbox (`create_verified`
+   exists; nothing calls it) and an operator identity — `seller_full_name()` reads a Django `User`,
+   and a fresh install has none, so the agent cannot sign a message. Both belong in `init`, from the
+   environment first and a TTY second.
+2. **Port the four ignored test files.** Every symbol they reach into the finder for now exists here;
+   what is left is the imports and the `tests.` package prefix. They are the send steps' own coverage,
+   which the pass leans on.
+3. **Publish `openoutsend`**, then declare the extra on the finder's side and grep that nothing under
+   `openoutreach/` imports it.
+4. **Then the cards that were waiting on all of this** — bounce detection, the inbound silent skip,
+   and the plays that replace the one prompt template.
 
 ## Done when
 
@@ -119,26 +169,29 @@ in a cron line rather than a tool I have to drive.
 - [ ] `outsend init` exists, collects `product_docs` / `campaign_target` / `booking_link`, and runs
       implicitly at first send — completing without a human on a timer, or stopping with an error that
       names what is missing. An interactive wizard blocking a headless run is the one outcome to avoid.
-      *(**Half done.** The verb exists, reads `OUTSEND_*` first, prompts only on a TTY, and errors
-      naming the variables when headless. "Implicitly at first send" has nothing to hang off yet,
-      because nothing sends.)*
+      *(**Half done.** The verb exists, reads `OUTSEND_*` first, prompts only on a TTY, errors naming
+      the variables when headless, and `outsend send` calls the same thing before any mail moves. What
+      it still does not collect is the mailbox and the operator identity — the two things a send needs
+      that a campaign does not.)*
 - [x] `pip install openoutsend` puts `outsend` on the PATH with its own default SQLite store under
       `~/.openoutsend/`, and the settings module is this repo's rather than a host project's.
       *(Installable and running from a checkout; publishing to PyPI is what the extra below waits on.)*
 - [ ] The send path runs against this repo's own tests — there is no harness at all right now.
-      *(**Harness built** — pytest-django, factories for this side's models, 132 tests green. Four
-      inherited files still reach into the finder for the send-pass pool queries and are ignored by
-      name in `conftest.py`; they come back with the send verb.)*
+      *(**Harness built and the pass is covered** — pytest-django, factories for this side's models,
+      169 tests green, including the two pool queries, the pass's order, what a failure costs and the
+      line it prints. Four inherited files still reach into the finder for its factories and models
+      and are ignored by name in `conftest.py`.)*
 - [ ] Only then: `openoutreach[send]` is declared on the finder's side, and nothing under
       `openoutreach/` imports `openoutsend`. An extra naming a distribution that does not exist breaks
       the install it exists to simplify.
 
 ## What the next slice is
 
-**The send verb** — one bounded pass that picks the deals a box may write to right now, runs the
-agent, sends, and exits, the way `find` does its own work and stops. It is what brings back
-`get_emailable_deals` and `unanswered_replies` (the two pool queries the ignored tests still import
-from the finder), and it is where `outsend init` gets its implicit trigger.
+**The mailbox and the operator.** `outsend send` runs and correctly does nothing, because the guards
+it obeys have nothing to be free: `Mailbox.objects.create_verified` verifies SMTP auth before storing
+a box and no code path calls it, and `seller_full_name()` reads a Django `User` a fresh install has
+none of, so the agent has no name to sign with. Both belong in `init`, from the environment first and
+a TTY second — the same rule the campaign's three fields already follow.
 
 ## Open questions
 

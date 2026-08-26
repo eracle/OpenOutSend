@@ -1,0 +1,148 @@
+"""One pass: read the mail, answer what came back, open what there is room to open.
+
+**Bounded, like the finder's `find`.** It does what the guards allow *right now* and
+exits — no daemon, no per-recipient timers, no loop waiting for a clock. Cadence is a
+timer's job, and the cadence a mailbox needs is minutes, not residency. This project's
+parent ran the other experiment: it had a daemon, deleted it, and replaced it with one
+bounded verb behind a systemd timer.
+
+The order is the design, and each step feeds the next:
+
+    read      IMAP → rows → kinds → events, suppression   (`emails/mail_pass.py`)
+    answer    every thread the lead has replied in         (no cap, no spacing)
+    open      one first email per box that is free now     (capped, spaced, in-window)
+
+Reading first is what makes the other two honest: an opt-out that arrived overnight
+suppresses the person *before* anything is written to them, and a reply is visible in
+the pass that answers it.
+
+**Openers are the only cold volume**, so they are the only thing under a cap. A reply
+inside a thread somebody started is not cold volume, and answering within minutes is
+more human, not less — so replies ignore the daily ceiling, the spacing clock and the
+sending window alike.
+"""
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PassResult:
+    """What one pass did. The counts are what `outsend send` prints."""
+
+    mirrored: int = 0
+    classified: int = 0
+    projected: int = 0
+    answered: int = 0
+    opened: int = 0
+    failed: int = 0
+
+    @property
+    def ok(self) -> bool:
+        """True when nothing raised on its way out."""
+        return self.failed == 0
+
+
+def run_send_pass(campaign) -> PassResult:
+    """Read, answer, open — once — and report. Never raises for a failed send."""
+    from cold_outreach.emails.mail_pass import run_mail_pass
+
+    result = PassResult()
+    result.mirrored, result.classified, result.projected = run_mail_pass()
+    _answer_replies(campaign, result)
+    _open_conversations(campaign, result)
+    logger.info("%s", _what_is_holding(campaign))
+    return result
+
+
+def _answer_replies(campaign, result: PassResult) -> None:
+    """Answer every thread whose newest turn is theirs.
+
+    The pool is materialised before the loop rather than re-queried: a deal whose
+    reply *fails* to send keeps its state, so asking the database again would hand
+    back the same row forever. A failure costs that one conversation this pass, and
+    the next pass tries it again.
+    """
+    from cold_outreach.emails.steps.reply import answer_reply
+    from cold_outreach.leads.pools import unanswered_replies
+
+    for deal in list(unanswered_replies(campaign)):
+        try:
+            _apply(deal, answer_reply(deal))
+            result.answered += 1
+        except Exception:
+            logger.exception("reply to %s failed", deal.lead.public_id)
+            result.failed += 1
+
+
+def _open_conversations(campaign, result: PassResult) -> None:
+    """Send first emails while a box is free and somebody is waiting.
+
+    The loop's bound is the guards themselves: `free_for_first_email` answers `None`
+    outside the window, for a box at its ceiling, and for one whose spacing clock has
+    not elapsed — and a send rewrites that clock, so a box takes itself out of the
+    pool on its way past. The pass therefore ends on its own, usually after one send
+    per box.
+
+    A failed send **stops the openers for this pass** rather than moving to the next
+    lead. The spacing clock is written after a successful send, so a box that just
+    refused one is still "free" — retrying inside the same pass would hammer a box
+    that has already said no, and would not terminate.
+    """
+    from cold_outreach.emails.models import Mailbox
+    from cold_outreach.emails.steps.send import send_first_email
+    from cold_outreach.leads.pools import emailable_deals
+
+    waiting = emailable_deals(campaign).iterator()
+    while (mailbox := Mailbox.objects.free_for_first_email()) is not None:
+        deal = next(waiting, None)
+        if deal is None:
+            return
+        try:
+            _apply(deal, send_first_email(deal, mailbox))
+            result.opened += 1
+        except Exception:
+            logger.exception("first email to %s failed", deal.lead.public_id)
+            result.failed += 1
+            return
+
+
+def _apply(deal, next_state) -> None:
+    """Persist whatever the step did to *deal*, including its new state.
+
+    One save for the transition and the fields that justify it, so a deal can never be
+    recorded as sent without its thread and timestamp, or moved out of `READY` without
+    the send being recorded. A step returning `None` decided to stay put — a lead
+    suppressed while the agent was writing — and that is saved just the same.
+    """
+    if next_state is not None:
+        deal.state = next_state
+    deal.save()
+
+
+def _what_is_holding(campaign) -> str:
+    """One line of counts, and the gate holding them, said as its consequence.
+
+    *"No mailbox connected, so nothing can be sent"* tells the operator why a pass did
+    nothing. A boolean, or a silent zero, tells them nothing at all — and a pass that
+    does nothing looks exactly like a pass with nothing to do.
+    """
+    from cold_outreach.core.sending_window import within_sending_window
+    from cold_outreach.emails.models import Mailbox
+    from cold_outreach.leads.pools import emailable_deals, unanswered_replies
+
+    waiting = emailable_deals(campaign).count()
+    to_answer = unanswered_replies(campaign).count()
+    counts = f"{waiting} waiting to be emailed · {to_answer} reply(ies) to answer"
+
+    if not Mailbox.objects.exists():
+        return f"{counts} · no mailbox connected, so nothing can be sent — run `outsend init`"
+    headroom = Mailbox.objects.remaining_today()
+    if not headroom:
+        return f"{counts} · no send headroom left today, so no first emails"
+    if not within_sending_window():
+        return f"{counts} · outside sending hours, so no first emails"
+    return f"{counts} · {headroom} first email(s) left today"

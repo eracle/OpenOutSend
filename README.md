@@ -19,13 +19,15 @@ The pipe is **one-way by design**. Every consumer sees the same bytes, so a file
 or Smartlead gets exactly what this receiver gets, and "our own sender has no privileged path" is held
 by construction rather than by discipline.
 
-## Status: the pipe works; nothing sends yet
+## Status: the pipe works and mail moves; a mailbox is still connected by hand
 
-**`outsend` is a command and the store is its own.** Install it, pipe leads in, and they land as rows:
+**`outsend` is a command and the store is its own.** Install it, pipe leads in, and they land as rows;
+a second, separate invocation is what mails them:
 
 ```bash
 pip install -e .
-openoutreach find 50 --json | outsend --campaign devtools
+openoutreach find 50 --json | outsend --campaign devtools   # store
+outsend send --campaign devtools                            # read, answer, open
 ```
 
 It reads JSON Lines on stdin, upserts on `(lead_id, campaign)`, checks every address against the
@@ -34,14 +36,21 @@ the counts to **stderr**, and exits 0 when every line became a row. Its database
 `~/.openoutsend/data/db.sqlite3` (`OUTSEND_HOME` / `OUTSEND_DB` override it) and it migrates itself on
 first run, so a fresh install is an ingest that works rather than a traceback.
 
-**What is missing is the other half of the clock.** The transport all exists — SMTP, IMAP sync and the
-unsubscribe scan, the mail pass, thread tracking, delivery policy, the sending window, the outreach
-agent — but nothing drives it: there is no verb that picks the next deal and sends. Until that lands,
-leads arrive and wait.
+**`outsend send` is one bounded pass, not a daemon.** It reads the mail, answers every thread the lead
+has replied in, opens as many first emails as the guards allow, and exits — cadence is a timer's job.
+Reading first is what makes the other two honest: an opt-out that arrived overnight suppresses the
+person before anything is written to them. Openers are the only cold volume, so they are the only
+thing under a daily cap, a spacing clock and a sending window; a reply obeys none of the three.
+`outsend init` runs implicitly on the first send, from the environment and — only on a terminal —
+from prompts, so a timer is never blocked on a setup step.
+
+**What is missing is the mailbox.** `Mailbox.objects.create_verified` exists and nothing calls it, and
+the operator identity the agent signs with is a Django user a fresh install has none of. Both belong
+in `init`; until they are there, a send pass says *"no mailbox connected"* and does nothing.
 
 Also still open: `pip install openoutreach[send]` (the extra can only be declared once this
-distribution is published), and four inherited test files that still reach into the finder for the
-send-pass pool queries — they are listed by name in `conftest.py` so the list shrinks visibly.
+distribution is published), and four inherited test files that still reach into the finder for
+factories and models — they are listed by name in `conftest.py` so the list shrinks visibly.
 
 ## Layout
 
@@ -52,6 +61,7 @@ send-pass pool queries — they are listed by name in `conftest.py` so the list 
 | `cold_outreach/core/` | the outreach agent, its templates, and the sending window |
 | `cold_outreach/docs/` | how the agent and its templating work |
 | `cold_outreach/settings.py` | this repo's own Django settings and the state dir |
+| `cold_outreach/send_pass.py` | one pass — read, answer, open — and the line saying what held it |
 | `cold_outreach/__main__.py` | the `outsend` console script |
 | `roadmap/` | open work, mostly inherited from OpenOutreach along with the code it describes |
 

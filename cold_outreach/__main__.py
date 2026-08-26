@@ -2,10 +2,16 @@
 
     openoutreach find 50 --json | outsend
 
-**It takes no verb.** A program that is itself the send step does not need a `send`
-subcommand, and things on the right of a pipe conventionally take none: `| less`,
-`| jq`, `| tee`. The one argument it has is the campaign, and that one is usually
-absent too. `init` is the single exception, because it is not on the pipe at all.
+**On the pipe it takes no verb.** Things on the right of a pipe conventionally take
+none: `| less`, `| jq`, `| tee`. The one argument it has is the campaign, and that one
+is usually absent too. The two verbs it does have are the ones that are not on the pipe
+at all: `send`, which reads no stdin and mails what is already stored, and `init`,
+which asks for what a campaign needs before a message can mean anything.
+
+**Ingesting and sending are separate invocations on purpose.** A pipe's right-hand side
+must not block on the network while a producer is still writing, and the cadence the two
+want is different — leads arrive when `find` runs, mail moves on the mailbox's clock. So
+the cron line is two entries, not one command doing both.
 
 **stdout is reserved and stays clean**, so the stream composes and a receipt can
 never corrupt it. Everything narrated — the campaign resolved, the counts, a skipped
@@ -24,6 +30,7 @@ import os
 import sys
 
 USAGE = """outsend [--campaign NAME]        read JSON Lines on stdin, store them, exit
+outsend send [--campaign NAME]   read the mail, answer replies, open what the guards allow
 outsend init [--campaign NAME]   collect what a campaign needs to write with"""
 
 
@@ -36,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     from cold_outreach.errors import OutsendError
 
     try:
-        return _init(args) if args.command == "init" else _ingest(args)
+        return {"init": _init, "send": _send}.get(args.command, _ingest)(args)
     except OutsendError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -44,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="outsend", usage=USAGE)
-    parser.add_argument("command", nargs="?", choices=["init"])
+    parser.add_argument("command", nargs="?", choices=["init", "send"])
     parser.add_argument("--campaign", default=None,
                         help="which campaign these leads belong to; required only if there are several")
     parser.add_argument("--debug", action="store_true", help="log what each step decided")
@@ -82,16 +89,25 @@ def _boot() -> None:
 # ── The pipe ──────────────────────────────────────────────────────
 
 
-def _ingest(args: argparse.Namespace) -> int:
-    """Read stdin into the resolved campaign and report what happened."""
+def _campaign_for(args: argparse.Namespace):
+    """The campaign this invocation acts on, hydrated from the environment and narrated.
+
+    Every command starts here, so `--campaign` means the same thing to all of them and
+    the operator reads which one was chosen before anything else is printed.
+    """
     from cold_outreach.leads.campaigns import hydrate_from_environment, resolve_campaign
-    from cold_outreach.leads.ingest import ingest
 
     campaign = resolve_campaign(args.campaign)
     hydrate_from_environment(campaign)
     print(f"campaign: {campaign.name}", file=sys.stderr)
+    return campaign
 
-    result = ingest(sys.stdin, campaign)
+
+def _ingest(args: argparse.Namespace) -> int:
+    """Read stdin into the resolved campaign and report what happened."""
+    from cold_outreach.leads.ingest import ingest
+
+    result = ingest(sys.stdin, _campaign_for(args))
     print(f"stored {result.stored} lead(s)", file=sys.stderr)
     if result.suppressed:
         print(f"{result.suppressed} of them are suppressed and will not be emailed", file=sys.stderr)
@@ -100,23 +116,56 @@ def _ingest(args: argparse.Namespace) -> int:
     return 0 if result.ok else 1
 
 
+# ── The send pass ─────────────────────────────────────────────────
+
+
+def _send(args: argparse.Namespace) -> int:
+    """One bounded pass: read the mail, answer what came back, open what fits.
+
+    **`init` runs implicitly here**, because a send is the first moment the campaign's
+    fields actually have to be there — and an operator who wired the pipe into a timer
+    should not discover a setup step they never ran. On a TTY that is the same prompts;
+    headless it is the same error naming the variables, raised before any mail moves.
+
+    Exit code is the pass's own: non-zero when something failed on its way out, so a
+    timer's failure mail carries it.
+    """
+    from cold_outreach.send_pass import run_send_pass
+
+    campaign = _campaign_for(args)
+    _ensure_configured(campaign)
+
+    result = run_send_pass(campaign)
+    print(f"read {result.mirrored} new message(s) · answered {result.answered} · "
+          f"opened {result.opened}", file=sys.stderr)
+    if result.failed:
+        print(f"{result.failed} send(s) failed — see above; the next pass tries them again",
+              file=sys.stderr)
+    return 0 if result.ok else 1
+
+
 # ── First run ─────────────────────────────────────────────────────
 
 
 def _init(args: argparse.Namespace) -> int:
-    """Collect what a campaign needs before a message means anything.
+    """Collect what a campaign needs before a message means anything."""
+    campaign = _campaign_for(args)
+    _ensure_configured(campaign)
+    print(f"campaign {campaign.name} is ready to write with", file=sys.stderr)
+    return 0
 
-    The environment first, then the terminal — and **only** if there is one. The send
-    pass may be running from a timer, where nothing can be prompted, so a headless run
-    with something missing stops with an error naming the variables that would have
-    satisfied it. An interactive wizard blocking a timer is the one outcome to avoid.
+
+def _ensure_configured(campaign) -> None:
+    """Fill the campaign's empty fields, or stop with the variables that would.
+
+    The environment first (already read by `_campaign_for`), then the terminal — and
+    **only** if there is one. This runs from a timer as often as from a shell, where
+    nothing can be prompted, so a headless run with something missing raises an error
+    naming the variables that would have satisfied it. An interactive wizard blocking a
+    timer is the one outcome to avoid.
     """
     from cold_outreach.errors import OutsendError
-    from cold_outreach.leads.campaigns import CONFIG_ENV, hydrate_from_environment, missing_config, resolve_campaign
-
-    campaign = resolve_campaign(args.campaign)
-    hydrate_from_environment(campaign)
-    print(f"campaign: {campaign.name}", file=sys.stderr)
+    from cold_outreach.leads.campaigns import CONFIG_ENV, missing_config
 
     missing = missing_config(campaign)
     if missing and sys.stdin.isatty():
@@ -125,9 +174,6 @@ def _init(args: argparse.Namespace) -> int:
     if missing:
         variables = ", ".join(CONFIG_ENV[field] for field in missing)
         raise OutsendError(f"campaign {campaign.name} is missing {', '.join(missing)} — set {variables}")
-
-    print(f"campaign {campaign.name} is ready to write with", file=sys.stderr)
-    return 0
 
 
 _PROMPTS = {
