@@ -19,16 +19,21 @@ The pipe is **one-way by design**. Every consumer sees the same bytes, so a file
 or Smartlead gets exactly what this receiver gets, and "our own sender has no privileged path" is held
 by construction rather than by discipline.
 
-## Status: the pipe works and mail moves; a mailbox is still connected by hand
+## Status: it runs end to end — install, pipe, connect a box, send
 
 **`outsend` is a command and the store is its own.** Install it, pipe leads in, and they land as rows;
 a second, separate invocation is what mails them:
 
 ```bash
 pip install -e .
+outsend init --campaign devtools                            # once: what you sell, who you are, a box
 openoutreach find 50 --json | outsend --campaign devtools   # store
 outsend send --campaign devtools                            # read, answer, open
 ```
+
+The two invocations are separate on purpose: a pipe's right-hand side must not block on the network
+while a producer is still writing, and the cadences differ — leads arrive when `find` runs, mail moves
+on the mailbox's clock. So the cron line is two entries, not one command doing both.
 
 It reads JSON Lines on stdin, upserts on `(lead_id, campaign)`, checks every address against the
 suppression list at the door, skips and counts a malformed line, prints the campaign it resolved and
@@ -50,6 +55,16 @@ has no health API and that login is the only gate there is.
 
 Still open: `pip install openoutreach[send]`, which can only be declared once this distribution is
 published.
+
+## Tests
+
+```bash
+pytest
+```
+
+pytest-django against a throwaway state dir (`conftest.py` redirects `OUTSEND_HOME` before Django
+loads, so a test run never touches `~/.openoutsend`). Nothing is skipped or ignored: the files that
+came across with the transport now assert against this side's own models.
 
 ## Layout
 
