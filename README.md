@@ -53,8 +53,15 @@ terminal**; headless, whatever is still missing is one error naming every variab
 answered it. The mailbox is stored only once its credentials pass an SMTP login, because the provider
 has no health API and that login is the only gate there is.
 
-Still open: `pip install openoutreach[send]`, which can only be declared once this distribution is
-published.
+**Releases are every green push to `main`** (`.github/workflows/deploy.yml`): tests, then a build and a
+PyPI upload over trusted publishing, with the version derived from the commit count rather than
+committed — the finder's rule, for the reason it went there, since a release nobody has to remember
+cannot drift. No token is stored anywhere; the publisher is registered against the workflow filename
+and the `pypi` environment, so neither may be renamed.
+
+Still open: arming that (a PyPI pending publisher and the `pypi` environment are two browser steps),
+and then `pip install openoutreach[send]`, which can only be declared once this distribution is on
+PyPI.
 
 ## Tests
 

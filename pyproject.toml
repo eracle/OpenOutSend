@@ -82,6 +82,10 @@ Finder = "https://github.com/eracle/OpenOutreach"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cold_outreach"]
+# The suite lives *inside* the package (it imports `cold_outreach.tests.factories`), so
+# it ships with the wheel unless said otherwise. An installed sender has no use for it
+# and no dev extras to run it with; the sdist still carries it.
+exclude = ["cold_outreach/tests"]
 
 [tool.black]
 skip_string_normalization = false

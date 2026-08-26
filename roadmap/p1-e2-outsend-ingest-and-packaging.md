@@ -10,8 +10,11 @@
   `cold_outreach/first_run.py` collects the campaign's fields, the operator who signs the mail and the
   mailbox itself — environment first, terminal second, one error naming every variable when headless —
   and the box is stored only once its SMTP login succeeds. **Every test in the repo runs** — the five
-  inherited files are ported and nothing is ignored. What is left is the `openoutreach[send]` extra,
-  which cannot be declared until this distribution is published.
+  inherited files are ported and nothing is ignored. **The release path is built too**: `deploy.yml`
+  tests and then publishes on every green push to `main`, with the version derived from the commit
+  count, exactly as the finder does it. What is left is arming it — a PyPI pending publisher and the
+  `pypi` environment, two browser steps — and then the `openoutreach[send]` extra, which cannot be
+  declared until this distribution is on PyPI.
 - **Priority:** High — every other card here describes code that cannot run yet.
 - **Effort:** Medium
 - **Area:** Packaging + ingest — the receiving end of
@@ -140,13 +143,43 @@ For anyone picking this up: what an operator can do today, and what they cannot.
 | `outsend init` | **Works** — the campaign's three fields, the operator, and a mailbox, from env or a TTY; runs implicitly at first send | `cold_outreach/first_run.py` |
 | **A mailbox** | **Works** — `init` calls `create_verified`, so a stored box is one whose SMTP login succeeded; four transport variables cover a box that is not on Google | `cold_outreach/first_run.py` |
 | **The operator** | **Works** — the name that signs the mail and the BCC address, upserted onto the one active user `seller_full_name()` reads | `cold_outreach/core/operator.py` |
-| `pip install openoutreach[send]` | **Missing** — needs `openoutsend` published first | — |
+| The release path | **Built, not yet armed** — tests then publish on every green push to `main`, version derived from the commit count | `.github/workflows/deploy.yml` |
+| `pip install openoutsend` from PyPI | **Waiting on the trusted publisher** — the name is free, the wheel builds, installs and ingests from a clean venv | — |
+| `pip install openoutreach[send]` | **Missing** — needs `openoutsend` on PyPI first | — |
+
+## How this gets released — the finder's rule, on this side too
+
+**Every green push to `main` publishes.** The version is *derived at publish time*, never committed:
+`pyproject.toml`'s `version` is the base (major.minor, bumped by hand) and the patch is this repo's
+commit count. That is not a preference — the finder tagged `v0.1.0` by hand, twelve commits of work
+landed behind it, and `uvx openoutreach` kept serving the version from before all of them. **A release
+nobody has to remember cannot drift.** The cost is accepted and is the same one: `main` is the release
+branch, and `needs: test` is the whole gate.
+
+**No token exists anywhere.** Publishing is PyPI [trusted publishing](https://docs.pypi.org/trusted-publishers/)
+over GitHub's OIDC, so nothing is stored in the repo, in an Actions secret, or on a laptop. The
+trade-off is that the publisher is registered against a *workflow filename* and an *environment name*:
+`deploy.yml` and `pypi`. **Renaming either breaks the release**, and a required reviewer on the `pypi`
+environment would put every push behind a click, which is the thing this removes.
+
+**Two things have to be done by hand, once, in a browser** — they are the only reason this is not
+already published:
+
+1. **A pending publisher on PyPI** (Your projects → Publishing → *Add a pending publisher*, since the
+   project does not exist yet): PyPI project `openoutsend`, owner `eracle`, repository `OpenOutSend`,
+   workflow `deploy.yml`, environment `pypi`. The first successful run creates the project.
+2. **The `pypi` environment** in the repo's GitHub settings, with **no** required reviewer.
+
+Until both exist, the `publish-pypi` job fails at the OIDC exchange and the `test` job still passes —
+a re-run publishes once they do.
 
 ## What is next, in order
 
-1. **Publish `openoutsend`**, then declare the extra on the finder's side and grep that nothing under
-   `openoutreach/` imports it.
-2. **Then the cards that were waiting on all of this** — bounce detection, the inbound silent skip,
+1. **Arm the release** — the two browser steps above, then a push, then `pip install openoutsend`
+   from a clean environment to prove the artifact rather than the build.
+2. **Declare `openoutreach[send]`** on the finder's side, and grep that nothing under `openoutreach/`
+   imports `openoutsend` — the dependency crosses one way only.
+3. **Then the cards that were waiting on all of this** — bounce detection, the inbound silent skip,
    and the plays that replace the one prompt template.
 
 ## Done when
@@ -180,7 +213,14 @@ For anyone picking this up: what an operator can do today, and what they cannot.
       asked and `""` an operator who declined one.)*
 - [x] `pip install openoutsend` puts `outsend` on the PATH with its own default SQLite store under
       `~/.openoutsend/`, and the settings module is this repo's rather than a host project's.
-      *(Installable and running from a checkout; publishing to PyPI is what the extra below waits on.)*
+      *(Proven from the built wheel in a clean venv, not just from a checkout: `outsend` on the PATH,
+      the store migrated on first run, a piped record stored, exit 0. The wheel excludes
+      `cold_outreach/tests` — an installed sender has no dev extras to run it with — and the sdist
+      keeps it.)*
+- [ ] A push to `main` releases: tests, then a build and a trusted-publishing upload whose version
+      nobody has to remember. *(`deploy.yml` is written and mirrors the finder's, down to the derived
+      patch. **Not armed** — the PyPI pending publisher and the `pypi` environment are two browser
+      steps nobody has done yet, and the job fails at the OIDC exchange until they are.)*
 - [x] The send path runs against this repo's own tests — there is no harness at all right now.
       *(pytest-django, factories for this side's models, **268 tests green and nothing ignored**. The
       five inherited files are ported: what they asserted against the finder's `disqualified` flag and
@@ -192,10 +232,11 @@ For anyone picking this up: what an operator can do today, and what they cannot.
 
 ## What the next slice is
 
-**Publishing `openoutsend`.** Everything else on this card is done, and the extra on the finder's side
-is the last thing waiting on a distribution rather than on code: `openoutreach[send]` cannot name a
-package that is not on PyPI. Once it is published, declare the extra and grep that nothing under
-`openoutreach/` imports `openoutsend` — the dependency crosses one way only.
+**Arming the release.** Everything on this card that is code is done: the wheel builds, installs and
+ingests from a clean environment, and `deploy.yml` will publish it. What is left is not code at all —
+the pending publisher and the `pypi` environment, described above, which only a browser can create.
+Then the extra: `openoutreach[send]` cannot name a package that is not on PyPI, and once it can, the
+grep that nothing under `openoutreach/` imports `openoutsend` is what keeps the dependency one-way.
 
 ## Open questions
 
