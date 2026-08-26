@@ -1,6 +1,6 @@
 # cold_outreach — ported from OpenOutreach, not yet wired up
 
-This directory is **parked code**, not a working part of `email_sequences`. Nothing imports it,
+This directory is **parked code**, and it is now the whole of this repo. Nothing imports it,
 nothing runs it, and it is not on `INSTALLED_APPS`. It is the cold-outreach half of
 [OpenOutreach](https://github.com/eracle/OpenOutreach), moved here whole so it can be integrated
 deliberately rather than rewritten from memory.
@@ -14,7 +14,7 @@ where the whole job is the message.
 
 The boundary between the two is **one-way and public**: OpenOutreach exports leads, and nothing flows
 back. Whatever this code becomes, it must read that same export — no shared model, no direct import,
-no DB join. OpenEmailSequence gets no privileged path that Instantly or Smartlead would not get.
+no DB join. OpenOutSend gets no privileged path that Instantly or Smartlead would not get.
 
 The design decisions behind that split live in `roadmap/p1-e3-leadfinder-sequencer-boundary.md` in the
 `openoutreach-docs` repo. Read it before integrating; several decisions were reversed after the fact
@@ -55,7 +55,7 @@ work, and most of them are the boundary in disguise:
 | `openoutreach.core.conf` | `WARM_*`, `MIN_SEND_INTERVAL_SECONDS`, `SEND_WINDOW_*` | copy the constants across; `WARM_CEILING_SENDS` is **derived** from the window and the pacing, so keep the arithmetic rather than re-declaring a number. |
 | `openoutreach.core.business_time` | Mon–Fri, used by the sending window and by thread age | small and self-contained; copy it. |
 | `openoutreach.core.operator` | the operator `User` — the BCC target on their own campaigns | an account concept this app already has in some form. |
-| `openoutreach.core.cycle` | the daemon loop that called these steps | **do not port.** The loop is the finder's. Sending here is driven by whatever `email_sequences` already uses. |
+| `openoutreach.core.cycle` | the daemon loop that called these steps | **do not port.** The loop is the finder's, and it deleted its own daemon in favour of one bounded verb behind a timer. Sending here wants a cadence, not a resident process. |
 | `openoutreach.core.logblock` | log formatting | cosmetic; drop or replace. |
 
 ## Two things not to lose

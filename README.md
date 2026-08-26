@@ -1,108 +1,65 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-# OpenEmailSequence
+# OpenOutSend
 
-A Django app for **email drip sequences**. Write each email once, describe who should receive it as a queryset over your user model, and let a management command send it at the right moment. Sequences, campaigns, targeting rules, previews and unsubscribes are all managed from the Django admin — no code per campaign.
+The **sending half** of [OpenOutreach](https://github.com/eracle/OpenOutreach). OpenOutreach finds and
+qualifies B2B leads and prints them; it does not send email. This is what sends them.
 
-Built for Django 6 and Python 3.13. It powers the outreach follow-ups in [OpenOutreach](https://github.com/eracle/OpenOutreach), where it is vendored into the hub as a submodule.
+The boundary between the two is a pipe, and nothing else crosses it:
 
-## Concepts
+```bash
+openoutreach find 50 --json | outsend
+```
 
-| Object | What it is |
+`find` writes qualified leads as JSON Lines on stdout. `outsend` reads them, stores them in its own
+database, and exits — it transmits nothing at that moment. Delivery, pacing and whatever step
+structure it grows are its own business, on its own clock.
+
+The pipe is **one-way by design**. Every consumer sees the same bytes, so a file dropped into Instantly
+or Smartlead gets exactly what this receiver gets, and "our own sender has no privileged path" is held
+by construction rather than by discipline.
+
+## Status: parked code, not yet a program
+
+Everything in `cold_outreach/` came from OpenOutreach whole, so it would be integrated deliberately
+rather than rewritten from memory. **The transport exists** — SMTP, IMAP sync and the unsubscribe scan,
+the mail pass, thread tracking, delivery policy, sending windows, the outreach agent and its prompt
+template, and eight migrations. What does not exist yet is the program around it:
+
+- no console script, so there is no `outsend` on the PATH;
+- no standalone settings — the app expects a host project's `INSTALLED_APPS`;
+- no default store, where the finder has its own `state_dir()`;
+- no ingest: nothing yet reads stdin.
+
+Until those land this repo is a library of working parts and a roadmap, and `pip install openoutsend`
+is not yet a thing you can type.
+
+## Layout
+
+| Path | What it is |
 | --- | --- |
-| `Sequence` | One email in a drip: subject, body, and the rules that decide who receives it. |
-| `Campaign` | A group of sequences that belong together — a whole onboarding flow, for example. |
-| `QuerySetRule` | One filter on the user queryset: a field path, a lookup type, and a value. |
-| `SentEmail` | The record that a user already received a sequence, so nobody is mailed twice. |
-| `UserUnsubscribe*` | Opt-outs at three levels: one sequence, one campaign, or everything. |
+| `cold_outreach/emails/` | the transport — SMTP, IMAP sync, the mail pass, threads, delivery policy, warmth |
+| `cold_outreach/core/` | the outreach agent, its templates, and the sending window |
+| `cold_outreach/docs/` | how the agent and its templating work |
+| `roadmap/` | open work, mostly inherited from OpenOutreach along with the code it describes |
 
-## Install
+## The contract it has to implement
 
-```bash
-pip install git+https://github.com/eracle/OpenEmailSequence.git
-```
+The full design — what crosses, the record's field set, exit-code meaning, and why ingest is
+idempotent — lives in
+[`roadmap/p1-e2-find-send-boundary-contract.md`](https://github.com/eracle/openoutreach-docs/blob/main/roadmap/p1-e2-find-send-boundary-contract.md)
+in the `openoutreach-docs` repo. The parts this side owes:
 
-Or vendor it as a submodule and put its root on `sys.path` — this is what the OpenOutreach hub does.
-
-```python
-# settings.py
-INSTALLED_APPS = [
-    # ...
-    "email_sequences",
-]
-```
-
-```bash
-python manage.py migrate email_sequences
-```
-
-Optional settings:
-
-- `SEQUENCE_FROM_EMAIL` — From address for sent mail. A sequence's own `from_email` field wins; otherwise this, then `DEFAULT_FROM_EMAIL`.
-- `SEQUENCE_UNSUBSCRIBE_USERS` — set to `True` to enable the unsubscribe views.
-- `SEQUENCE_MESSAGE_CLASSES` — map a name to a custom message class, see *Custom messages*.
-
-To expose the unsubscribe pages, include the URLs:
-
-```python
-# urls.py
-path("unsubscribe/", include("email_sequences.urls")),
-```
-
-Email bodies can then contain `{{unsubscribe_link_sequence}}`, `{{unsubscribe_link_campaign}}` or `{{unsubscribe_link}}`, which render as signed, per-user links. The bundled templates are deliberately plain — override them in your own `templates/email_sequences/` directory.
-
-## Targeting
-
-A sequence picks its recipients through queryset rules over the user model: a field path (`last_login`, `date_joined`, `profile__credits`), a lookup type (`exact`, `gt`, `lt`, …) and a value. The admin autocompletes the available paths, including fields reachable through related models.
-
-Date values accept natural-language offsets from now:
-
-```
-now-1 week
-now+ 8days
-now-4hours
-```
-
-Units: `seconds`/`s`, `minutes`/`m`, `hours`/`h`, `days`/`d`, `weeks`/`w`. Singular forms work with `1`.
-
-Select a sequence in the admin and click **View timeline** to see exactly who would receive it, and when, before anything is sent.
-
-## Sending
-
-```bash
-python manage.py send_sequences
-```
-
-The command sends every enabled sequence to the users its rules match, skipping anyone already in `SentEmail` and anyone unsubscribed. It is idempotent, so running it more often than strictly needed is safe.
-
-Scheduling is deliberately left to the deployment — a cron entry, a systemd timer, whatever you already run:
-
-```cron
-0 9 * * 1-5  cd /app && python manage.py send_sequences
-```
-
-There is no in-process scheduler on purpose: a background thread inside the web process means one scheduler, and one send, per worker.
-
-## Custom messages
-
-Subclass `email_sequences.sequences.SequenceMessage` to change how a message is built — HTML, attachments, a different transport — and register it:
-
-```python
-SEQUENCE_MESSAGE_CLASSES = {
-    "html": "myapp.messages.HtmlSequenceMessage",
-}
-```
-
-The class can then be chosen per sequence in the admin.
-
-## Development
-
-```bash
-pip install -e ".[dev]"
-pytest
-```
-
-Tests run against `testsettings.py` on SQLite. `tests/testapp/` holds the throwaway models the suite needs.
+- **Ingest is idempotent**, keyed on `(lead_id, campaign)`, so the pipe is allowed to be lossy and
+  recovery is running it again.
+- **Suppression is checked at the door and is terminal** — the legal duty came here with `emails/`, and
+  a re-ingest must never resurrect somebody who opted out. An address that *changed* is re-checked,
+  because ingest is lead-keyed while suppression is address-keyed.
+- **Conflicts resolve latest-wins**, field by field: a re-ingest is a correction, not a duplicate.
+- **A malformed line is skipped and counted**, named on stderr, with a non-zero exit — `find` spent
+  real money on the rows behind it, so aborting the batch throws away paid work.
+- **A blank `email` is stored, not rejected.** An exportable row is not a mailable one; the address is
+  an enrichment that a later run fills in for free.
 
 ## License
 

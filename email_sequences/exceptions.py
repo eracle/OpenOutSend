@@ -1,2 +1,0 @@
-class MessageClassNotFound(Exception):
-    pass
