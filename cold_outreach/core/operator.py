@@ -26,6 +26,28 @@ def get_active_user():
     return User.objects.filter(is_active=True, is_staff=True).order_by("pk").first()
 
 
+def set_operator(*, full_name: str, email: str = ""):
+    """Record who this install sends as, and return them.
+
+    One operator means an upsert of a single row rather than a user table: the name
+    signs the mail and binds the agent's persona, the address is the blind copy on every
+    send. A first name alone is a complete answer — plenty of cold email is signed with
+    one.
+
+    ``username`` is Django's required handle and nothing authenticates with it; there is
+    no web surface to log into. It is written once, when the row is created, so renaming
+    the operator never has to move a key.
+    """
+    from django.contrib.auth.models import User
+
+    first, _, last = full_name.strip().partition(" ")
+    user = get_active_user() or User(
+        username=(email or full_name).strip()[:150], is_staff=True, is_active=True)
+    user.first_name, user.last_name, user.email = first, last.strip(), email
+    user.save()
+    return user
+
+
 def operator_country() -> str:
     """The operator's ISO 3166 alpha-2 country code, or ``""`` when unset."""
     from django.conf import settings

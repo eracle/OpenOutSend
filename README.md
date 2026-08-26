@@ -41,16 +41,17 @@ has replied in, opens as many first emails as the guards allow, and exits — ca
 Reading first is what makes the other two honest: an opt-out that arrived overnight suppresses the
 person before anything is written to them. Openers are the only cold volume, so they are the only
 thing under a daily cap, a spacing clock and a sending window; a reply obeys none of the three.
-`outsend init` runs implicitly on the first send, from the environment and — only on a terminal —
-from prompts, so a timer is never blocked on a setup step.
+**`outsend init` collects what a first run needs** — what the campaign sells and to whom, the name
+that signs the mail, and a mailbox to send it from — and it runs implicitly on the first send, so a
+setup step is never something a timer discovers. The environment first, prompts second and **only on a
+terminal**; headless, whatever is still missing is one error naming every variable that would have
+answered it. The mailbox is stored only once its credentials pass an SMTP login, because the provider
+has no health API and that login is the only gate there is.
 
-**What is missing is the mailbox.** `Mailbox.objects.create_verified` exists and nothing calls it, and
-the operator identity the agent signs with is a Django user a fresh install has none of. Both belong
-in `init`; until they are there, a send pass says *"no mailbox connected"* and does nothing.
-
-Also still open: `pip install openoutreach[send]` (the extra can only be declared once this
-distribution is published), and four inherited test files that still reach into the finder for
-factories and models — they are listed by name in `conftest.py` so the list shrinks visibly.
+Still open: `pip install openoutreach[send]` (the extra can only be declared once this
+distribution is published), and five inherited test files that still reach into the finder for
+factories, models and its config singleton — they are listed by name in `conftest.py` so the list
+shrinks visibly.
 
 ## Layout
 
@@ -62,6 +63,7 @@ factories and models — they are listed by name in `conftest.py` so the list sh
 | `cold_outreach/docs/` | how the agent and its templating work |
 | `cold_outreach/settings.py` | this repo's own Django settings and the state dir |
 | `cold_outreach/send_pass.py` | one pass — read, answer, open — and the line saying what held it |
+| `cold_outreach/first_run.py` | what `init` collects — the campaign's fields, the operator, the mailbox |
 | `cold_outreach/__main__.py` | the `outsend` console script |
 | `roadmap/` | open work, mostly inherited from OpenOutreach along with the code it describes |
 
@@ -75,6 +77,10 @@ The environment is the operator seam — the only way in a timer has:
 | `OUTSEND_AI_MODEL` | a pydantic-ai `provider:model` id, e.g. `anthropic:claude-sonnet-4-5-20250929` |
 | `OUTSEND_LLM_API_KEY` / `OUTSEND_LLM_API_BASE` | credentials for it |
 | `OUTSEND_PRODUCT_DOCS` / `OUTSEND_CAMPAIGN_TARGET` / `OUTSEND_BOOKING_LINK` | what a campaign writes from; `outsend init` also asks for these on a terminal |
+| `OUTSEND_OPERATOR_NAME` / `OUTSEND_OPERATOR_EMAIL` | who signs the mail, and the address every send is blind-copied to (blank for none) |
+| `OUTSEND_MAILBOX_ADDRESS` / `OUTSEND_MAILBOX_PASSWORD` | the box to send from, and its **app password** — a Google box rejects the login password |
+| `OUTSEND_SMTP_HOST` / `OUTSEND_SMTP_PORT` / `OUTSEND_IMAP_HOST` / `OUTSEND_IMAP_PORT` | only for a box that is not on Google Workspace; those four default to Gmail's and are never prompted for |
+| `OUTSEND_SIGNATURE` | the sign-off appended to every send from that box; empty declines one for good |
 | `OUTSEND_HOME` / `OUTSEND_DB` | where the store lives |
 
 ## The contract it has to implement

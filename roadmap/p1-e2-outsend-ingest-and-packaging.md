@@ -6,10 +6,12 @@
   script, this repo's own settings, a SQLite store under `~/.openoutsend/` that migrates itself, and a
   test suite where there was none. **The other half of the clock now runs too**: `outsend send` is one
   bounded pass — read the mail, answer every thread that replied, open what the guards allow — and
-  `init` runs implicitly inside it. **What is left is the mailbox**: nothing calls `create_verified`
-  and a fresh install has no operator identity to sign with, so a pass says *"no mailbox connected"*
-  and does nothing. Then the `openoutreach[send]` extra, which cannot be declared until this
-  distribution is published.
+  `init` runs implicitly inside it. **A first run now reaches all the way to a connected box**:
+  `cold_outreach/first_run.py` collects the campaign's fields, the operator who signs the mail and the
+  mailbox itself — environment first, terminal second, one error naming every variable when headless —
+  and the box is stored only once its SMTP login succeeds. What is left is the five inherited test
+  files, and then the `openoutreach[send]` extra, which cannot be declared until this distribution is
+  published.
 - **Priority:** High — every other card here describes code that cannot run yet.
 - **Effort:** Medium
 - **Area:** Packaging + ingest — the receiving end of
@@ -110,8 +112,9 @@ outsend send
 It reads the mail first, so an opt-out that arrived overnight suppresses the person before anything is
 written to them. It answers every thread somebody replied in — no cap, because a reply is not cold
 volume. Then it opens as many first emails as the box has headroom, spacing and daylight for, and
-exits. **And then it says it did nothing**, because no mailbox is connected yet. That is the sentence
-this card still owes.
+exits. On the very first run it collects what it is short of before any of that happens — the
+campaign's fields, the operator's name, and the mailbox itself — from the environment, or from the
+terminal if there is one.
 
 ---
 
@@ -134,22 +137,19 @@ For anyone picking this up: what an operator can do today, and what they cannot.
 | The transport: SMTP, IMAP sync, mail pass, threads, delivery policy, warmth | **Ported and tested** | `cold_outreach/emails/` |
 | `outsend send` — read, answer, open, exit | **Works** | `cold_outreach/send_pass.py` |
 | Who is waiting and who wrote back | **Works** — derived from deal state and the mail log's timestamps; no queue table | `cold_outreach/leads/pools.py` |
-| `outsend init` | **Half** — collects the campaign's three fields from env or a TTY, and runs implicitly at first send. Does not yet connect a mailbox or record who the operator is | `cold_outreach/__main__.py` |
-| **A mailbox** | **Missing.** `create_verified` exists and nothing calls it; `seller_full_name()` reads a Django `User` a fresh install has none of | — |
+| `outsend init` | **Works** — the campaign's three fields, the operator, and a mailbox, from env or a TTY; runs implicitly at first send | `cold_outreach/first_run.py` |
+| **A mailbox** | **Works** — `init` calls `create_verified`, so a stored box is one whose SMTP login succeeded; four transport variables cover a box that is not on Google | `cold_outreach/first_run.py` |
+| **The operator** | **Works** — the name that signs the mail and the BCC address, upserted onto the one active user `seller_full_name()` reads | `cold_outreach/core/operator.py` |
 | `pip install openoutreach[send]` | **Missing** — needs `openoutsend` published first | — |
 
 ## What is next, in order
 
-1. **First run has to reach further than a campaign.** A send needs a mailbox (`create_verified`
-   exists; nothing calls it) and an operator identity — `seller_full_name()` reads a Django `User`,
-   and a fresh install has none, so the agent cannot sign a message. Both belong in `init`, from the
-   environment first and a TTY second.
-2. **Port the four ignored test files.** Every symbol they reach into the finder for now exists here;
+1. **Port the four ignored test files.** Every symbol they reach into the finder for now exists here;
    what is left is the imports and the `tests.` package prefix. They are the send steps' own coverage,
    which the pass leans on.
-3. **Publish `openoutsend`**, then declare the extra on the finder's side and grep that nothing under
+2. **Publish `openoutsend`**, then declare the extra on the finder's side and grep that nothing under
    `openoutreach/` imports it.
-4. **Then the cards that were waiting on all of this** — bounce detection, the inbound silent skip,
+3. **Then the cards that were waiting on all of this** — bounce detection, the inbound silent skip,
    and the plays that replace the one prompt template.
 
 ## Done when
@@ -166,32 +166,42 @@ For anyone picking this up: what an operator can do today, and what they cannot.
 - [x] `outsend` takes no verb, resolves `--campaign` by `find`'s rule, and narrates the resolution to
       stderr. stdout stays clean. *(A fresh install with no campaigns resolves to a default rather
       than stopping — ingest on day one cannot fail on a step nobody knew about.)*
-- [ ] `outsend init` exists, collects `product_docs` / `campaign_target` / `booking_link`, and runs
+- [x] `outsend init` exists, collects `product_docs` / `campaign_target` / `booking_link`, and runs
       implicitly at first send — completing without a human on a timer, or stopping with an error that
       names what is missing. An interactive wizard blocking a headless run is the one outcome to avoid.
-      *(**Half done.** The verb exists, reads `OUTSEND_*` first, prompts only on a TTY, errors naming
-      the variables when headless, and `outsend send` calls the same thing before any mail moves. What
-      it still does not collect is the mailbox and the operator identity — the two things a send needs
-      that a campaign does not.)*
+      *(`first_run.py`, and it reaches past the campaign: the operator who signs the mail and the
+      mailbox it leaves from are collected by the same rule. Headless, the three are one error naming
+      every variable at once, because a timer's failure mail is the only report there is.)*
+- [x] A mailbox is connected by `init` and stored only once its SMTP login succeeds, so a row always
+      means working credentials. *(Rejected credentials store nothing and say why. The four transport
+      variables are the answer for a box that is not on Google Workspace, and they are not prompted
+      for: four questions at onboarding is the wizard this avoids, and a wrong host arrives as
+      rejected credentials, which the error names.)*
+- [x] The operator has a name to sign with. *(`core/operator.set_operator` upserts the single active
+      user `seller_full_name()` already read. The BCC address is optional — declining a copy of your
+      own outreach is not a misconfiguration — and the sign-off is asked once, with NULL meaning never
+      asked and `""` an operator who declined one.)*
 - [x] `pip install openoutsend` puts `outsend` on the PATH with its own default SQLite store under
       `~/.openoutsend/`, and the settings module is this repo's rather than a host project's.
       *(Installable and running from a checkout; publishing to PyPI is what the extra below waits on.)*
 - [ ] The send path runs against this repo's own tests — there is no harness at all right now.
-      *(**Harness built and the pass is covered** — pytest-django, factories for this side's models,
-      169 tests green, including the two pool queries, the pass's order, what a failure costs and the
-      line it prints. Four inherited files still reach into the finder for its factories and models
-      and are ignored by name in `conftest.py`.)*
+      *(**Harness built, and the pass and the first run are covered** — pytest-django, factories for
+      this side's models, 184 tests green, including the two pool queries, the pass's order, what a
+      failure costs, the line it prints, and what `init` asks for on a terminal and refuses to ask a
+      timer. Five inherited files still reach into the finder — four for its factories and models, one
+      for its config singleton — and are ignored by name in `conftest.py`.)*
 - [ ] Only then: `openoutreach[send]` is declared on the finder's side, and nothing under
       `openoutreach/` imports `openoutsend`. An extra naming a distribution that does not exist breaks
       the install it exists to simplify.
 
 ## What the next slice is
 
-**The mailbox and the operator.** `outsend send` runs and correctly does nothing, because the guards
-it obeys have nothing to be free: `Mailbox.objects.create_verified` verifies SMTP auth before storing
-a box and no code path calls it, and `seller_full_name()` reads a Django `User` a fresh install has
-none of, so the agent has no name to sign with. Both belong in `init`, from the environment first and
-a TTY second — the same rule the campaign's three fields already follow.
+**The five ignored test files.** Four are the send steps' own coverage — `test_send`, `test_reply`,
+`test_mail_pass`, `test_unsubscribe` — and every symbol they reach into the finder for exists here
+now, so what is left is imports and a package prefix. The fifth, `test_sending_window`, is not an
+import problem at all: it collects, and one case fails because it asserts against the finder's
+`SiteConfig` where the country is now a setting. They are named in `conftest.py`, so the list shrinks
+where a reader can see it.
 
 ## Open questions
 

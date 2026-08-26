@@ -6,7 +6,8 @@
 none: `| less`, `| jq`, `| tee`. The one argument it has is the campaign, and that one
 is usually absent too. The two verbs it does have are the ones that are not on the pipe
 at all: `send`, which reads no stdin and mails what is already stored, and `init`,
-which asks for what a campaign needs before a message can mean anything.
+which asks for what a first run needs — what the campaign sells and to whom, who is
+signing the mail, and the mailbox it leaves from.
 
 **Ingesting and sending are separate invocations on purpose.** A pipe's right-hand side
 must not block on the network while a producer is still writing, and the cadence the two
@@ -31,7 +32,8 @@ import sys
 
 USAGE = """outsend [--campaign NAME]        read JSON Lines on stdin, store them, exit
 outsend send [--campaign NAME]   read the mail, answer replies, open what the guards allow
-outsend init [--campaign NAME]   collect what a campaign needs to write with"""
+outsend init [--campaign NAME]   collect what a first run needs — the campaign, who you
+                                 are, and a mailbox to send from"""
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -123,17 +125,19 @@ def _send(args: argparse.Namespace) -> int:
     """One bounded pass: read the mail, answer what came back, open what fits.
 
     **`init` runs implicitly here**, because a send is the first moment the campaign's
-    fields actually have to be there — and an operator who wired the pipe into a timer
-    should not discover a setup step they never ran. On a TTY that is the same prompts;
-    headless it is the same error naming the variables, raised before any mail moves.
+    fields, the operator's name and a mailbox actually have to be there — and an operator
+    who wired the pipe into a timer should not discover a setup step they never ran. On a
+    TTY that is the same prompts; headless it is the same error naming the variables,
+    raised before any mail moves.
 
     Exit code is the pass's own: non-zero when something failed on its way out, so a
     timer's failure mail carries it.
     """
+    from cold_outreach.first_run import ensure_ready
     from cold_outreach.send_pass import run_send_pass
 
     campaign = _campaign_for(args)
-    _ensure_configured(campaign)
+    ensure_ready(campaign)
 
     result = run_send_pass(campaign)
     print(f"read {result.mirrored} new message(s) · answered {result.answered} · "
@@ -148,55 +152,20 @@ def _send(args: argparse.Namespace) -> int:
 
 
 def _init(args: argparse.Namespace) -> int:
-    """Collect what a campaign needs before a message means anything."""
+    """Collect the three things a send needs, and say what it ended up with.
+
+    The collecting itself lives in `first_run.py`, because `send` does exactly the same
+    thing before any mail moves and the two must not drift.
+    """
+    from cold_outreach.core.operator import seller_full_name
+    from cold_outreach.emails.models import Mailbox
+    from cold_outreach.first_run import ensure_ready
+
     campaign = _campaign_for(args)
-    _ensure_configured(campaign)
-    print(f"campaign {campaign.name} is ready to write with", file=sys.stderr)
+    ensure_ready(campaign)
+    print(f"campaign {campaign.name} is ready: signed by {seller_full_name()}, "
+          f"sending from {Mailbox.objects.first()}", file=sys.stderr)
     return 0
-
-
-def _ensure_configured(campaign) -> None:
-    """Fill the campaign's empty fields, or stop with the variables that would.
-
-    The environment first (already read by `_campaign_for`), then the terminal — and
-    **only** if there is one. This runs from a timer as often as from a shell, where
-    nothing can be prompted, so a headless run with something missing raises an error
-    naming the variables that would have satisfied it. An interactive wizard blocking a
-    timer is the one outcome to avoid.
-    """
-    from cold_outreach.errors import OutsendError
-    from cold_outreach.leads.campaigns import CONFIG_ENV, missing_config
-
-    missing = missing_config(campaign)
-    if missing and sys.stdin.isatty():
-        _prompt_for(campaign, missing)
-        missing = missing_config(campaign)
-    if missing:
-        variables = ", ".join(CONFIG_ENV[field] for field in missing)
-        raise OutsendError(f"campaign {campaign.name} is missing {', '.join(missing)} — set {variables}")
-
-
-_PROMPTS = {
-    "product_docs": "What do you sell? Paste anything that explains it — a page, notes, a pitch.",
-    "campaign_target": "Who is this campaign for?",
-    "booking_link": "A link to book a call, if you have one (blank to skip).",
-}
-
-
-def _prompt_for(campaign, missing: list[str]) -> None:
-    """Ask the operator for the fields that are still empty, and save what they answer.
-
-    Written to stderr like every other narration, so a `2>` capture holds the whole
-    conversation and stdout is still the pipe's.
-    """
-    for field in [*missing, "booking_link"]:
-        if getattr(campaign, field):
-            continue
-        print(f"\n{_PROMPTS[field]}", file=sys.stderr)
-        answer = input("> ").strip()
-        if answer:
-            setattr(campaign, field, answer)
-    campaign.save()
 
 
 if __name__ == "__main__":
