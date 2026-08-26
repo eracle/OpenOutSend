@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import patch
 
-from openoutreach.emails.models import Mailbox
+from cold_outreach.emails.models import Mailbox
 
 _FIELDS = dict(
     from_address="joe@acme.com",
@@ -17,7 +17,7 @@ _FIELDS = dict(
 
 @pytest.mark.django_db
 def test_create_verified_stores_box_when_auth_succeeds():
-    with patch("openoutreach.emails.smtp.verify_auth", return_value=(True, "")) as auth:
+    with patch("cold_outreach.emails.smtp.verify_auth", return_value=(True, "")) as auth:
         box, reason = Mailbox.objects.create_verified(**_FIELDS)
 
     auth.assert_called_once_with("smtp.acme.com", 465, "joe@acme.com", "app-pw")
@@ -34,7 +34,7 @@ def test_create_verified_stores_box_when_auth_succeeds():
 
 @pytest.mark.django_db
 def test_create_verified_stores_nothing_when_auth_rejected():
-    with patch("openoutreach.emails.smtp.verify_auth", return_value=(False, "auth rejected (535)")):
+    with patch("cold_outreach.emails.smtp.verify_auth", return_value=(False, "auth rejected (535)")):
         box, reason = Mailbox.objects.create_verified(**_FIELDS)
 
     assert box is None
@@ -44,7 +44,7 @@ def test_create_verified_stores_nothing_when_auth_rejected():
 
 @pytest.mark.django_db
 def test_create_verified_repairs_existing_box_in_place():
-    with patch("openoutreach.emails.smtp.verify_auth", return_value=(True, "")):
+    with patch("cold_outreach.emails.smtp.verify_auth", return_value=(True, "")):
         Mailbox.objects.create_verified(**_FIELDS)
         box, _ = Mailbox.objects.create_verified(**{**_FIELDS, "password": "new-pw"})
 

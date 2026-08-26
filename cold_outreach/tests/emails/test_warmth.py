@@ -6,11 +6,11 @@ from unittest.mock import patch
 
 import pytest
 
-from openoutreach.core.conf import WARM_CEILING_SENDS, WARM_FLOOR_SENDS
-from openoutreach.emails.delivery_policy import Response
-from openoutreach.emails import warmth
-from openoutreach.emails.models import DeliveryEvent, Mailbox
-from openoutreach.emails.warmth import (
+from cold_outreach.core.conf import WARM_CEILING_SENDS, WARM_FLOOR_SENDS
+from cold_outreach.emails.delivery_policy import Response
+from cold_outreach.emails import warmth
+from cold_outreach.emails.models import DeliveryEvent, Mailbox
+from cold_outreach.emails.warmth import (
     capacity_from,
     mark_measured,
     measurement_due,
@@ -87,7 +87,7 @@ class TestCapacityFrom:
 class TestRefreshCapacity:
     def test_persists_the_measurement(self):
         box = _box()
-        with patch("openoutreach.emails.warmth.read_sent_history",
+        with patch("cold_outreach.emails.warmth.read_sent_history",
                    return_value=_history(20, 20, 20)):
             assert refresh_capacity(box) == 30
         box.refresh_from_db()
@@ -95,7 +95,7 @@ class TestRefreshCapacity:
 
     def test_unreachable_box_keeps_its_last_measurement(self):
         box = _box(daily_limit=30)
-        with patch("openoutreach.emails.warmth.read_sent_history",
+        with patch("cold_outreach.emails.warmth.read_sent_history",
                    side_effect=OSError("connection reset")):
             assert refresh_capacity(box) == 30
         box.refresh_from_db()
@@ -104,7 +104,7 @@ class TestRefreshCapacity:
     def test_receiver_pushback_holds_capacity_at_demonstrated_volume(self):
         box = _box()
         _verdict(box, Response.DEFERRED, 421)
-        with patch("openoutreach.emails.warmth.read_sent_history",
+        with patch("cold_outreach.emails.warmth.read_sent_history",
                    return_value=_history(20, 20, 20)):
             assert refresh_capacity(box) == 20
 
@@ -113,7 +113,7 @@ class TestRefreshCapacity:
         # a flaky network must not cost it capacity.
         box = _box()
         _verdict(box, Response.TRANSPORT, None)
-        with patch("openoutreach.emails.warmth.read_sent_history",
+        with patch("cold_outreach.emails.warmth.read_sent_history",
                    return_value=_history(20, 20, 20)):
             assert refresh_capacity(box) == 30
 
@@ -121,7 +121,7 @@ class TestRefreshCapacity:
         box = _box()
         other = maillog.mailbox("c@d.com")
         _verdict(other, Response.DEFERRED, 421)
-        with patch("openoutreach.emails.warmth.read_sent_history",
+        with patch("cold_outreach.emails.warmth.read_sent_history",
                    return_value=_history(20, 20, 20)):
             assert refresh_capacity(box) == 30
 
@@ -147,13 +147,13 @@ class TestBouncingBoxSendsLess:
 
     def test_a_clean_box_still_grows(self):
         box = self._box_with_bounces(sends=20, bounces=0)
-        with patch("openoutreach.emails.warmth.read_sent_history",
+        with patch("cold_outreach.emails.warmth.read_sent_history",
                    return_value=_history(20, 20, 20)):
             assert refresh_capacity(box) == 30
 
     def test_a_bouncing_box_is_cut_below_what_it_sustained(self):
         box = self._box_with_bounces(sends=20, bounces=4)   # 20% — far over tolerance
-        with patch("openoutreach.emails.warmth.read_sent_history",
+        with patch("cold_outreach.emails.warmth.read_sent_history",
                    return_value=_history(20, 20, 20)):
             # Not 30 (growth), not even 20 (hold): a bouncing box goes down.
             assert refresh_capacity(box) == 10
@@ -161,7 +161,7 @@ class TestBouncingBoxSendsLess:
     def test_a_bounce_is_receiver_pushback(self):
         """Asynchronous failure reaches the growth gate, not just the cut."""
         box = self._box_with_bounces(sends=100, bounces=1)  # 1% — under tolerance
-        with patch("openoutreach.emails.warmth.read_sent_history",
+        with patch("cold_outreach.emails.warmth.read_sent_history",
                    return_value=_history(20, 20, 20)):
             assert refresh_capacity(box) == 20
 
@@ -176,6 +176,6 @@ class TestMeasurementCadence:
 
     def test_due_again_the_next_day(self):
         mark_measured()
-        with patch("openoutreach.emails.warmth.timezone.localdate",
+        with patch("cold_outreach.emails.warmth.timezone.localdate",
                    return_value=date(2099, 1, 1)):
             assert measurement_due()

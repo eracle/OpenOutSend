@@ -10,19 +10,19 @@ from unittest.mock import patch
 
 from django.utils import timezone
 
-from openoutreach.core.agents.outreach import OutreachDecision
+from cold_outreach.core.agents.outreach import OutreachDecision
 from openoutreach.core.db.deals import get_emailable_deals
 from openoutreach.crm.models import DealState
-from openoutreach.emails.models import Mailbox
-from openoutreach.emails.sender import (
+from cold_outreach.emails.models import Mailbox
+from cold_outreach.emails.sender import (
     ATTRIBUTION,
     OPT_OUT_LINE,
     operator_bcc,
     send_email,
     unsubscribe_address,
 )
-from openoutreach.emails.models import Thread
-from openoutreach.emails.steps.send import send_first_email
+from cold_outreach.emails.models import Thread
+from cold_outreach.emails.steps.send import send_first_email
 from tests.emails import maillog
 from tests.factories import DealFactory, LeadFactory
 
@@ -148,17 +148,17 @@ class TestPickingABox:
         inside the window, so the cap would reset an hour before the day ends."""
         from zoneinfo import ZoneInfo
 
-        from openoutreach.emails.models.mailbox import _local_midnight
+        from cold_outreach.emails.models.mailbox import _local_midnight
 
         zone = ZoneInfo("America/New_York")
-        with patch("openoutreach.emails.models.mailbox.operator_timezone", return_value=zone):
+        with patch("cold_outreach.emails.models.mailbox.operator_timezone", return_value=zone):
             midnight = _local_midnight()
         assert midnight.astimezone(zone).hour == 0
 
     def test_no_box_is_free_outside_the_sending_window(self, campaign):
         """Out of hours nothing opens a conversation, however much headroom is left."""
         _box(daily_limit=10)
-        with patch("openoutreach.emails.models.mailbox.within_sending_window", return_value=False):
+        with patch("cold_outreach.emails.models.mailbox.within_sending_window", return_value=False):
             assert Mailbox.objects.free_for_first_email() is None
 
 
@@ -190,14 +190,14 @@ class TestEmailableDeals:
 class TestSendEmailBcc:
     def test_bcc_header_set_when_address_given(self):
         box = maillog.mailbox("s@infra.com")
-        with patch("openoutreach.emails.sender._deliver") as deliver:
+        with patch("cold_outreach.emails.sender._deliver") as deliver:
             send_email(box, "lead@corp.com", "Hi", "Body", bcc="me@mine.com")
         message = deliver.call_args.args[1]
         assert message["Bcc"] == "me@mine.com"
 
     def test_no_bcc_header_when_address_blank(self):
         box = maillog.mailbox("s@infra.com")
-        with patch("openoutreach.emails.sender._deliver") as deliver:
+        with patch("cold_outreach.emails.sender._deliver") as deliver:
             send_email(box, "lead@corp.com", "Hi", "Body", bcc="")
         message = deliver.call_args.args[1]
         assert message["Bcc"] is None
@@ -209,8 +209,8 @@ class TestSentBodyLogging:
 
     def _send(self, campaign, caplog):
         box = maillog.mailbox("s@infra.com", signature="— Ercole")
-        with caplog.at_level(logging.INFO, logger="openoutreach.emails.sender"), \
-             patch("openoutreach.emails.sender._deliver"):
+        with caplog.at_level(logging.INFO, logger="cold_outreach.emails.sender"), \
+             patch("cold_outreach.emails.sender._deliver"):
             send_email(box, "lead@corp.com", "Hi there", "How do you do discovery today?",
                        campaign=campaign)
         return caplog.text
@@ -236,8 +236,8 @@ class TestSentBodyLogging:
     def test_no_campaign_logs_metadata_only(self, caplog):
         """The default stays metadata-only, so a new call site cannot leak by omission."""
         box = maillog.mailbox("s@infra.com")
-        with caplog.at_level(logging.INFO, logger="openoutreach.emails.sender"), \
-             patch("openoutreach.emails.sender._deliver"):
+        with caplog.at_level(logging.INFO, logger="cold_outreach.emails.sender"), \
+             patch("cold_outreach.emails.sender._deliver"):
             send_email(box, "lead@corp.com", "Hi there", "Secret body")
         assert "Secret body" not in caplog.text
 
@@ -261,7 +261,7 @@ class TestOperatorBcc:
 class TestSendEmailSignature:
     def _sent_body(self, signature: str | None) -> str:
         box = maillog.mailbox("s@infra.com", signature=signature)
-        with patch("openoutreach.emails.sender._deliver") as deliver:
+        with patch("cold_outreach.emails.sender._deliver") as deliver:
             send_email(box, "lead@corp.com", "Hi", "Body")
         return deliver.call_args.args[1].get_content()
 
@@ -285,7 +285,7 @@ class TestSendEmailAttribution:
         return maillog.mailbox("s@infra.com", signature=signature)
 
     def _sent_body(self, box, **kwargs) -> str:
-        with patch("openoutreach.emails.sender._deliver") as deliver:
+        with patch("cold_outreach.emails.sender._deliver") as deliver:
             send_email(box, "lead@corp.com", "Hi", "Body", **kwargs)
         return deliver.call_args.args[1].get_content()
 
@@ -303,9 +303,9 @@ class TestSendEmailAttribution:
         assert body.endswith(f"{ATTRIBUTION}\n")
 
     def test_body_is_not_logged_on_send(self, caplog):
-        with caplog.at_level("INFO", logger="openoutreach.emails.sender"):
+        with caplog.at_level("INFO", logger="cold_outreach.emails.sender"):
             self._sent_body(self._box("Eracle"))
-        records = [r for r in caplog.records if r.name == "openoutreach.emails.sender"]
+        records = [r for r in caplog.records if r.name == "cold_outreach.emails.sender"]
         assert len(records) == 1
         logged = records[0].getMessage()
         assert "Body" not in logged and ATTRIBUTION not in logged
@@ -321,11 +321,11 @@ class TestSendFirstEmail:
         with patch(
             "openoutreach.core.db.summaries.materialize_profile_summary_if_missing",
         ), patch(
-            "openoutreach.core.agents.outreach.run_outreach_agent",
+            "cold_outreach.core.agents.outreach.run_outreach_agent",
             return_value=OutreachDecision(
                 action="send_message", subject=subject, message=message),
         ), patch(
-            "openoutreach.emails.sender.send_email",
+            "cold_outreach.emails.sender.send_email",
             side_effect=lambda mailbox, *a, **kw: maillog.outbound(
                 mailbox, message_id="mid@corp.com"),
         ) as send:
@@ -413,13 +413,13 @@ class TestSendFirstEmail:
         with patch(
             "openoutreach.core.db.summaries.materialize_profile_summary_if_missing",
         ), patch(
-            "openoutreach.core.agents.outreach.run_outreach_agent",
+            "cold_outreach.core.agents.outreach.run_outreach_agent",
             side_effect=lambda d: (
                 type(d.lead).objects.filter(pk=d.lead.pk).update(disqualified=True)
                 or OutreachDecision(action="send_message", subject="s", message="m")
             ),
         ), patch(
-            "openoutreach.emails.sender.send_email",
+            "cold_outreach.emails.sender.send_email",
         ) as send:
             next_state = send_first_email(deal, box)
 

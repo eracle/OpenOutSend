@@ -1,4 +1,4 @@
-# openoutreach/emails/mail_pass.py
+# cold_outreach/emails/mail_pass.py
 """The mail pass: sync, then classify, then project — in that order, every time.
 
 The order is the design. While one pass read and decided at once, a message that
@@ -22,10 +22,10 @@ logger = logging.getLogger(__name__)
 
 def run_mail_pass() -> tuple[int, int, int]:
     """One full pass over every mailbox. Returns ``(mirrored, classified, projected)``."""
-    from openoutreach.emails.classify import classify_pending
-    from openoutreach.emails.models import Mailbox
-    from openoutreach.emails.project import project_pending
-    from openoutreach.emails.sync import mirror
+    from cold_outreach.emails.classify import classify_pending
+    from cold_outreach.emails.models import Mailbox
+    from cold_outreach.emails.project import project_pending
+    from cold_outreach.emails.sync import mirror
 
     boxes = list(Mailbox.objects.all())
     logger.info("mail pass: reading %d mailbox(es)", len(boxes))

@@ -1,4 +1,4 @@
-# openoutreach/emails/smtp.py
+# cold_outreach/emails/smtp.py
 """Auth-only SMTP check, run when a mailbox is connected.
 
 No test send — boxes are mid-warmup; we only confirm the credentials log in.

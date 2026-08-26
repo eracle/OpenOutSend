@@ -11,6 +11,10 @@ are still live.
 **The eighth is new**, written in openoutreach-docs and filed here for the same reason the seven came:
 the subject is here. It is the only card in the folder designed *after* the port rather than before it.
 
+**The ninth is the one to read first.** Every other card describes code that cannot run yet: there is no
+console script, no settings module and no database, and the send path still reaches into OpenOutreach's
+CRM for the row it acts on. `p1-e2-outsend-ingest-and-packaging` is what makes the rest buildable.
+
 ## The cards
 
 | Card | What it is | Why it came here |
@@ -22,6 +26,7 @@ the subject is here. It is the only card in the folder designed *after* the port
 | `p3-e2-mailbox-oauth-authentication` | What mailbox OAuth would cost | Its trigger (Google restricting app passwords) now breaks *this* project and nothing else |
 | `p3-e2-resend-opt-in-send-transport` | Resend as an alternative transport | Sending lives here |
 | `p2-e3-inbound-agentic-email` | Hosted reply capture + agent autopilot, as a paid tier | The only *product* idea in the folder, and a sender's product |
+| `p1-e2-outsend-ingest-and-packaging` | Ingest on stdin, the lead model behind it, and `outsend` as a command | **Written here, and the prerequisite for every row above.** Nothing in this repo runs until it lands |
 | `p1-e2-sender-message-generation` | Plays as files, fragments as the database, a learner over observed replies | **Not inherited — written after the port.** It reshapes `core/agents/outreach.py` and its prompt template, and it is what the low reply rate on the first version actually needs |
 
 ## Reading them

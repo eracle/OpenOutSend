@@ -1,4 +1,4 @@
-# openoutreach/core/agents/prompt.py
+# cold_outreach/core/agents/prompt.py
 """Jinja plumbing + the shared context for the outreach prompt.
 
 One template renders both the cold open and every in-thread reply
@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import jinja2
 
-from openoutreach.core.conf import PROMPTS_DIR
-from openoutreach.core.operator import seller_full_name
+from cold_outreach.core.conf import PROMPTS_DIR
+from cold_outreach.core.operator import seller_full_name
 
 _ENV = jinja2.Environment(loader=jinja2.FileSystemLoader(str(PROMPTS_DIR)))
 

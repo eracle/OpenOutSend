@@ -10,10 +10,10 @@ from unittest.mock import patch
 
 import pytest
 
-from openoutreach.emails.classify import classify_pending
-from openoutreach.emails.models import DeliveryEvent, Kind, Message
-from openoutreach.emails.project import project_pending
-from openoutreach.emails.sync import mirror
+from cold_outreach.emails.classify import classify_pending
+from cold_outreach.emails.models import DeliveryEvent, Kind, Message
+from cold_outreach.emails.project import project_pending
+from cold_outreach.emails.sync import mirror
 from tests.emails import maillog
 from tests.emails.fake_imap import FakeIMAP, bounce, message
 from tests.factories import LeadFactory
@@ -27,7 +27,7 @@ def _box():
 
 def _pass(box, *rows):
     """One full mail pass over *rows*."""
-    with patch("openoutreach.emails.sync._connect", return_value=FakeIMAP(list(rows))):
+    with patch("cold_outreach.emails.sync._connect", return_value=FakeIMAP(list(rows))):
         mirror(box)
     classify_pending()
     return project_pending()
@@ -86,7 +86,7 @@ class TestPendingIsAState:
         box = _box()
         maillog.outbound(box, to="p@corp.com")
 
-        with patch("openoutreach.emails.sync._connect",
+        with patch("cold_outreach.emails.sync._connect",
                    return_value=FakeIMAP([message(7, to=SENDER, sender="p@corp.com")])):
             mirror(box)
 
@@ -109,7 +109,7 @@ class TestReporting:
     """The delivery question that was previously answerable only over live IMAP."""
 
     def test_bounce_rate_is_bounces_over_accepted_sends(self):
-        from openoutreach.emails.report import bounce_rate
+        from cold_outreach.emails.report import bounce_rate
 
         box = _box()
         for i in range(10):
@@ -121,6 +121,6 @@ class TestReporting:
         assert bounce_rate(box) == pytest.approx(0.2)
 
     def test_bounce_rate_of_a_box_that_never_sent_is_zero(self):
-        from openoutreach.emails.report import bounce_rate
+        from cold_outreach.emails.report import bounce_rate
 
         assert bounce_rate(_box()) == 0.0

@@ -1,4 +1,4 @@
-# openoutreach/core/sending_window.py
+# cold_outreach/core/sending_window.py
 """When a cold email may leave — the operator's working day, in their own time.
 
 One question, asked at the last gate before a first email is written: is it a
@@ -24,8 +24,8 @@ from zoneinfo import ZoneInfo
 
 from django.utils import timezone
 
-from openoutreach.core.business_time import is_business_day
-from openoutreach.core.conf import SEND_WINDOW_END_HOUR, SEND_WINDOW_START_HOUR
+from cold_outreach.core.business_time import is_business_day
+from cold_outreach.core.conf import SEND_WINDOW_END_HOUR, SEND_WINDOW_START_HOUR
 
 logger = logging.getLogger(__name__)
 
@@ -42,18 +42,18 @@ def within_sending_window(now: datetime | None = None) -> bool:
 
 
 def operator_timezone() -> ZoneInfo:
-    """The operator's timezone, from their onboarding country code; UTC if unset."""
-    from openoutreach.core.models import SiteConfig
+    """The operator's timezone, from their configured country code; UTC if unset."""
+    from cold_outreach.core.operator import operator_country
 
-    return _zone_for_country(SiteConfig.load().country_code)
+    return _zone_for_country(operator_country())
 
 
 def _zone_for_country(country_code: str | None) -> ZoneInfo:
     """First zone ``pytz`` lists for an ISO 3166 alpha-2 code, or UTC if unknown.
 
-    UTC is the honest fallback for a missing code, not a guess dressed as one:
-    onboarding validates the code against this same table, so an empty value means
-    no operator has been created yet rather than that we failed to resolve one.
+    UTC is the honest fallback for a missing code, not a guess dressed as one: an
+    empty value means nobody has configured a country yet rather than that we failed
+    to resolve one.
     """
     import pytz
 

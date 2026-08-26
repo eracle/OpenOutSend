@@ -9,10 +9,10 @@ from unittest.mock import patch
 
 import pytest
 
-from openoutreach.emails import classify as classifier
-from openoutreach.emails.classify import CLASSIFIER_VERSION, classify, classify_pending
-from openoutreach.emails.models import Kind, Message
-from openoutreach.emails.sync import mirror
+from cold_outreach.emails import classify as classifier
+from cold_outreach.emails.classify import CLASSIFIER_VERSION, classify, classify_pending
+from cold_outreach.emails.models import Kind, Message
+from cold_outreach.emails.sync import mirror
 from tests.emails import maillog
 from tests.emails.fake_imap import FakeIMAP, auto_reply, bounce, message
 
@@ -24,7 +24,7 @@ def _box():
 
 
 def _mirror(box, *rows):
-    with patch("openoutreach.emails.sync._connect", return_value=FakeIMAP(list(rows))):
+    with patch("cold_outreach.emails.sync._connect", return_value=FakeIMAP(list(rows))):
         mirror(box)
 
 

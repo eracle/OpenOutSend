@@ -1,4 +1,4 @@
-# openoutreach/emails/parsing.py
+# cold_outreach/emails/parsing.py
 """Reading an RFC-5322 message. No database, no network, no opinions.
 
 Everything here is a pure function of bytes, which is what makes the classifier

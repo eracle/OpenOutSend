@@ -12,8 +12,8 @@ import pytest
 
 from openoutreach.core.cycle import unanswered_replies
 from openoutreach.crm.models import DealState
-from openoutreach.emails.mail_pass import run_mail_pass
-from openoutreach.emails.models import Kind, Message
+from cold_outreach.emails.mail_pass import run_mail_pass
+from cold_outreach.emails.models import Kind, Message
 from tests.emails import maillog
 from tests.emails.fake_imap import RECEIVED_AT, FakeIMAP, auto_reply, bounce, message
 from tests.factories import DealFactory, LeadFactory
@@ -41,7 +41,7 @@ def _emailed(campaign, box, email="p@corp.com", root=ROOT):
 
 
 def _pass(box, *rows):
-    with patch("openoutreach.emails.sync._connect", return_value=FakeIMAP(list(rows))):
+    with patch("cold_outreach.emails.sync._connect", return_value=FakeIMAP(list(rows))):
         return run_mail_pass()
 
 
@@ -85,9 +85,9 @@ class TestAReplyReachesItsDeal:
 
     def test_a_thread_from_another_box_is_not_folded_in(self, campaign):
         """An id we sent from a different box cannot attach a reply to that thread."""
-        from openoutreach.emails.classify import classify_pending
-        from openoutreach.emails.project import project_pending
-        from openoutreach.emails.sync import mirror
+        from cold_outreach.emails.classify import classify_pending
+        from cold_outreach.emails.project import project_pending
+        from cold_outreach.emails.sync import mirror
 
         box = maillog.mailbox(SENDER)
         other = maillog.mailbox("o@infra.com")
@@ -95,7 +95,7 @@ class TestAReplyReachesItsDeal:
 
         reply = FakeIMAP([message(7, to=SENDER, sender="p@corp.com",
                                   references=f"<{ROOT}>")])
-        with patch("openoutreach.emails.sync._connect", return_value=reply):
+        with patch("cold_outreach.emails.sync._connect", return_value=reply):
             mirror(box)          # only this box sees the message
         classify_pending()
         project_pending()
@@ -146,7 +146,7 @@ class TestTheJobsAreIndependent:
 
         Message.objects.filter(direction="in").update(
             kind="", classifier_version=0, processed_at=None)
-        with patch("openoutreach.emails.sync._connect", side_effect=OSError("no route")):
+        with patch("cold_outreach.emails.sync._connect", side_effect=OSError("no route")):
             mirrored, classified, projected = run_mail_pass()
 
         assert (mirrored, classified, projected) == (0, 1, 1)

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from django.utils import timezone
 
-from openoutreach.emails.models import (
+from cold_outreach.emails.models import (
     DeliveryEvent,
     Direction,
     FolderCoverage,

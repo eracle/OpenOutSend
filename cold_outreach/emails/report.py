@@ -1,4 +1,4 @@
-# openoutreach/emails/report.py
+# cold_outreach/emails/report.py
 """What the receivers said, counted off the log.
 
 *What is my bounce rate?* was unanswerable while delivery was recorded only inside
@@ -12,7 +12,7 @@ from datetime import timedelta
 
 from django.utils import timezone
 
-from openoutreach.emails.models import DeliveryEvent
+from cold_outreach.emails.models import DeliveryEvent
 
 # The window a rate is quoted over. A month: long enough that one bad afternoon
 # does not dominate, short enough that a repaired domain is not judged by its worst

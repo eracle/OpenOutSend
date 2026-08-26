@@ -10,8 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
-from openoutreach.emails.models import Direction, FolderCoverage, Message
-from openoutreach.emails.sync import mirror
+from cold_outreach.emails.models import Direction, FolderCoverage, Message
+from cold_outreach.emails.sync import mirror
 from tests.emails import maillog
 from tests.emails.fake_imap import FakeIMAP, bounce, message
 
@@ -23,7 +23,7 @@ def _box():
 
 
 def _mirror(box, fake) -> int:
-    with patch("openoutreach.emails.sync._connect", return_value=fake):
+    with patch("cold_outreach.emails.sync._connect", return_value=fake):
         return mirror(box)
 
 
@@ -219,7 +219,7 @@ class TestAnUnfetchableMessageIsNotSteppedOver:
         maillog.outbound(box, to="x@y.com")
         _mirror(box, FakeIMAP([message(7, to=SENDER, sender="x@y.com")]))
 
-        with patch("openoutreach.emails.sync._connect", side_effect=OSError("no route")):
+        with patch("cold_outreach.emails.sync._connect", side_effect=OSError("no route")):
             assert mirror(box) == 0
 
         assert _coverage(box).last_uid == 7

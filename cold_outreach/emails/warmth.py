@@ -1,4 +1,4 @@
-# openoutreach/emails/warmth.py
+# cold_outreach/emails/warmth.py
 """Measure a mailbox's warm capacity from its own send history.
 
 The per-box daily ceiling is not declared, it is read off the box: IMAP the Sent
@@ -33,7 +33,7 @@ from email.utils import parsedate_to_datetime
 
 from django.utils import timezone
 
-from openoutreach.core.conf import (
+from cold_outreach.core.conf import (
     WARM_BOUNCE_TOLERANCE,
     WARM_CEILING_SENDS,
     WARM_FLOOR_SENDS,
@@ -145,8 +145,8 @@ def _receiver_pushed_back(mailbox) -> bool:
     while delivery was recorded only from inside an exception handler the ramp
     was blind to exactly the failure that matters most.
     """
-    from openoutreach.emails.delivery_policy import RECEIVER_RESPONSES
-    from openoutreach.emails.models import DeliveryEvent
+    from cold_outreach.emails.delivery_policy import RECEIVER_RESPONSES
+    from cold_outreach.emails.models import DeliveryEvent
 
     return DeliveryEvent.objects.filter(
         message__mailbox=mailbox,
@@ -157,7 +157,7 @@ def _receiver_pushed_back(mailbox) -> bool:
 
 def _is_bouncing(mailbox) -> bool:
     """True when this box's bounce rate is above what a healthy sender runs at."""
-    from openoutreach.emails.report import bounce_rate
+    from cold_outreach.emails.report import bounce_rate
 
     rate = bounce_rate(mailbox)
     if rate <= WARM_BOUNCE_TOLERANCE:

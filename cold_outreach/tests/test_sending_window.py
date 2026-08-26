@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from openoutreach.core.sending_window import (
+from cold_outreach.core.sending_window import (
     UTC,
     _zone_for_country,
     operator_timezone,
@@ -25,7 +25,7 @@ SUN = 22
 
 def _in_rome(now: datetime) -> bool:
     """Ask the window as an operator sitting in Italy (UTC+1 on this date)."""
-    with patch("openoutreach.core.sending_window.operator_timezone",
+    with patch("cold_outreach.core.sending_window.operator_timezone",
                return_value=ZoneInfo("Europe/Rome")):
         return within_sending_window(now)
 

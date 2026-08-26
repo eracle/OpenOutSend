@@ -1,4 +1,4 @@
-# openoutreach/emails/delivery_policy.py
+# cold_outreach/emails/delivery_policy.py
 """Read the receiver's answer to a send, and decide what it means.
 
 Every send ends in a verdict from the receiving server, and until now that
@@ -203,7 +203,7 @@ def record_acceptance(message, smtp_code: int | None, response):
     left nothing to count. Recording it is what makes a rate a rate: bounces over
     accepted sends, rather than bounces over a number nobody kept.
     """
-    from openoutreach.emails.models import DeliveryEvent
+    from cold_outreach.emails.models import DeliveryEvent
 
     text = _detail(response)
     return DeliveryEvent.objects.create(
@@ -221,7 +221,7 @@ def record_failure(message, exc: Exception):
     The single entry point: callers hand over the exception and act on the
     policy, rather than each deciding for itself what a code means.
     """
-    from openoutreach.emails.models import DeliveryEvent
+    from cold_outreach.emails.models import DeliveryEvent
 
     verdict = classify(exc)
     DeliveryEvent.objects.create(

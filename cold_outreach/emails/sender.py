@@ -1,4 +1,4 @@
-# openoutreach/emails/sender.py
+# cold_outreach/emails/sender.py
 """Send one outbound email through a Mailbox's SMTP credentials.
 
 No error handling by design: a failed send raises and the EMAIL task is marked
@@ -233,10 +233,10 @@ def _record_send(mailbox, email_message: EmailMessage, body: str, thread):
     as bytes. It is stored classified and processed — there is nothing to work out
     later about a message we wrote ourselves.
     """
-    from openoutreach.core.operator import get_active_user
-    from openoutreach.emails import parsing, threads
-    from openoutreach.emails.classify import CLASSIFIER_VERSION
-    from openoutreach.emails.models import Direction, Kind, Message
+    from cold_outreach.core.operator import get_active_user
+    from cold_outreach.emails import parsing, threads
+    from cold_outreach.emails.classify import CLASSIFIER_VERSION
+    from cold_outreach.emails.models import Direction, Kind, Message
 
     now = timezone.now()
     row = Message.objects.create(
@@ -279,7 +279,7 @@ def _deliver(mailbox, email_message: EmailMessage, row) -> None:
     way past, before it is re-raised unchanged. The step still fails and is still
     retried; what changes is that the receiver's word survives the traceback.
     """
-    from openoutreach.emails.delivery_policy import record_acceptance, record_failure
+    from cold_outreach.emails.delivery_policy import record_acceptance, record_failure
 
     try:
         with _SMTP(mailbox.host, mailbox.port, timeout=SMTP_TIMEOUT_SECONDS) as smtp:

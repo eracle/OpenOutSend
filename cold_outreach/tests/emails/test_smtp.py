@@ -3,7 +3,7 @@
 import smtplib
 from unittest.mock import patch
 
-from openoutreach.emails.smtp import verify_auth
+from cold_outreach.emails.smtp import verify_auth
 
 
 def test_auth_ok_starttls_on_587():

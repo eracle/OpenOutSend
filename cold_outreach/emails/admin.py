@@ -1,7 +1,7 @@
-# openoutreach/emails/admin.py
+# cold_outreach/emails/admin.py
 from django.contrib import admin
 
-from openoutreach.emails.models import (
+from cold_outreach.emails.models import (
     DeliveryEvent,
     FolderCoverage,
     Mailbox,

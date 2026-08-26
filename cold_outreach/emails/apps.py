@@ -1,8 +1,8 @@
-# openoutreach/emails/apps.py
+# cold_outreach/emails/apps.py
 from django.apps import AppConfig
 
 
 class EmailsConfig(AppConfig):
-    name = "openoutreach.emails"
+    name = "cold_outreach.emails"
     label = "emails"
     default_auto_field = "django.db.models.BigAutoField"

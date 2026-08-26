@@ -1,4 +1,4 @@
-# openoutreach/core/agents/outreach.py
+# cold_outreach/core/agents/outreach.py
 """The outreach agent: one prompt, one decision type, both ends of the thread.
 
 There is a single conversational agent. The cold open and every later reply are
@@ -33,9 +33,9 @@ from django.utils import timezone
 from pydantic import BaseModel, Field, model_validator
 from pydantic_ai import Agent
 
-from openoutreach.core.agents.prompt import _format_facts, base_context, render
-from openoutreach.core.business_time import business_days_between
-from openoutreach.core.llm import get_llm_model, run_agent_sync
+from cold_outreach.core.agents.prompt import _format_facts, base_context, render
+from cold_outreach.core.business_time import business_days_between
+from cold_outreach.core.llm import get_llm_model, run_agent_sync
 
 logger = logging.getLogger(__name__)
 

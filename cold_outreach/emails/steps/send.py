@@ -1,4 +1,4 @@
-# openoutreach/emails/steps/send.py
+# cold_outreach/emails/steps/send.py
 """The first email — the only cold message this person will ever get.
 
 The outreach agent opens the conversation, SMTP sends it, and the send is recorded
@@ -20,11 +20,16 @@ from datetime import timedelta
 from django.utils import timezone
 from termcolor import colored
 
-from openoutreach.core.conf import (
+from cold_outreach.core.conf import (
     MIN_SEND_INTERVAL_SECONDS,
     SEND_INTERVAL_JITTER_MAX_SECONDS,
     SEND_INTERVAL_JITTER_MIN_SECONDS,
 )
+
+# `DealState`, the profile-summary extraction and the suppression writer are the
+# ingest model's, and this repo has not built it yet — see
+# `roadmap/p1-e2-outsend-ingest-and-packaging.md`. Until it exists these names
+# resolve to nothing and this module cannot run.
 from openoutreach.crm.models import DealState
 
 logger = logging.getLogger(__name__)
@@ -38,10 +43,10 @@ def send_first_email(deal, mailbox) -> DealState | None:
     the lead was suppressed while the agent was writing — an unsubscribe can land in
     the seconds an LLM call takes, and this is the last gate before the message goes.
     """
-    from openoutreach.core.agents.outreach import run_outreach_agent
+    from cold_outreach.core.agents.outreach import run_outreach_agent
+    from cold_outreach.core.operator import get_active_user
+    from cold_outreach.emails.sender import operator_bcc, send_email, suppressed
     from openoutreach.core.db.summaries import materialize_profile_summary_if_missing
-    from openoutreach.core.operator import get_active_user
-    from openoutreach.emails.sender import operator_bcc, send_email, suppressed
 
     logger.info("[%s] %s %s via %s", deal.campaign,
                 colored("▶ first email", "blue", attrs=["bold"]),

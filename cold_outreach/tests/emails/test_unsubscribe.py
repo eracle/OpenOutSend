@@ -22,20 +22,20 @@ from unittest.mock import MagicMock, patch
 import pytest
 from django.utils import timezone
 
-from openoutreach.core.agents.outreach import OutreachDecision
+from cold_outreach.core.agents.outreach import OutreachDecision
 from openoutreach.core.db.leads import suppress_email
 from openoutreach.crm.models import DealState, Lead, Outcome
-from openoutreach.emails.mail_pass import run_mail_pass
-from openoutreach.emails.models import Mailbox
-from openoutreach.emails.sender import (
+from cold_outreach.emails.mail_pass import run_mail_pass
+from cold_outreach.emails.models import Mailbox
+from cold_outreach.emails.sender import (
     ATTRIBUTION,
     OPT_OUT_LINE,
     send_email,
     suppressed,
     unsubscribe_address,
 )
-from openoutreach.emails.steps.reply import answer_reply
-from openoutreach.emails.steps.send import send_first_email
+from cold_outreach.emails.steps.reply import answer_reply
+from cold_outreach.emails.steps.send import send_first_email
 from tests.emails import maillog
 from tests.emails.fake_imap import FakeIMAP, message
 from tests.factories import DealFactory, LeadFactory
@@ -51,7 +51,7 @@ def _box(**kwargs) -> Mailbox:
 def _sent_message(**kwargs):
     """The assembled EmailMessage for one send, without touching SMTP."""
     box = maillog.mailbox(SENDER, signature="Eracle")
-    with patch("openoutreach.emails.sender._deliver") as deliver:
+    with patch("cold_outreach.emails.sender._deliver") as deliver:
         send_email(box, "lead@corp.com", "Hi", "Body", **kwargs)
     return deliver.call_args.args[1]
 
@@ -171,7 +171,7 @@ def _read(box, fake) -> int:
     from openoutreach.crm.models import Lead
 
     before = Lead.objects.filter(disqualified=True).count()
-    with patch("openoutreach.emails.sync._connect", return_value=fake):
+    with patch("cold_outreach.emails.sync._connect", return_value=fake):
         run_mail_pass()
     return Lead.objects.filter(disqualified=True).count() - before
 
@@ -206,7 +206,7 @@ class TestAliasOptOut:
 
     def test_the_opt_out_is_recorded_as_a_message_of_its_own(self, campaign):
         """It is a fact about the box before it is a decision about a person."""
-        from openoutreach.emails.models import Kind, Message
+        from cold_outreach.emails.models import Kind, Message
 
         LeadFactory(email="p@corp.com")
         _read(_box(), FakeIMAP([message(7, to=ALIAS, sender="p@corp.com")]))
@@ -276,10 +276,10 @@ class TestWordedUnsubscribe:
     def test_a_suppress_decision_disqualifies_and_closes_the_deal(self, campaign):
         deal = _replied_deal(campaign)
 
-        with patch("openoutreach.core.agents.outreach.run_outreach_agent",
+        with patch("cold_outreach.core.agents.outreach.run_outreach_agent",
                    return_value=_decision("suppress")), \
              patch("openoutreach.core.db.summaries.update_chat_summary"), \
-             patch("openoutreach.emails.sender.send_email") as send:
+             patch("cold_outreach.emails.sender.send_email") as send:
             next_state = answer_reply(deal)
 
         deal.state = next_state
@@ -296,7 +296,7 @@ class TestWordedUnsubscribe:
         deal = _replied_deal(campaign)
         Lead.objects.filter(pk=deal.lead.pk).update(email=None)
 
-        with patch("openoutreach.core.agents.outreach.run_outreach_agent",
+        with patch("cold_outreach.core.agents.outreach.run_outreach_agent",
                    return_value=_decision("suppress")), \
              patch("openoutreach.core.db.summaries.update_chat_summary"):
             assert answer_reply(deal) == DealState.UNSUBSCRIBED
@@ -326,10 +326,10 @@ class TestSendGuards:
             Lead.objects.filter(pk=target.lead.pk).update(disqualified=True)
             return _decision("send_message", subject="Hi", message="Body")
 
-        with patch("openoutreach.core.agents.outreach.run_outreach_agent",
+        with patch("cold_outreach.core.agents.outreach.run_outreach_agent",
                    side_effect=_suppress_then_decide), \
              patch("openoutreach.core.db.summaries.materialize_profile_summary_if_missing"), \
-             patch("openoutreach.emails.sender.send_email") as send:
+             patch("cold_outreach.emails.sender.send_email") as send:
             assert send_first_email(deal, box) is None
 
         send.assert_not_called()
@@ -343,10 +343,10 @@ class TestSendGuards:
             Lead.objects.filter(pk=target.lead.pk).update(disqualified=True)
             return _decision("send_message", message="Body")
 
-        with patch("openoutreach.core.agents.outreach.run_outreach_agent",
+        with patch("cold_outreach.core.agents.outreach.run_outreach_agent",
                    side_effect=_suppress_then_decide), \
              patch("openoutreach.core.db.summaries.update_chat_summary"), \
-             patch("openoutreach.emails.sender.send_email") as send:
+             patch("cold_outreach.emails.sender.send_email") as send:
             assert answer_reply(deal) is None
 
         send.assert_not_called()

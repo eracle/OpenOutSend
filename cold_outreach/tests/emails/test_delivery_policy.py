@@ -4,13 +4,13 @@ import smtplib
 
 import pytest
 
-from openoutreach.emails.delivery_policy import (
+from cold_outreach.emails.delivery_policy import (
     Response,
     classify,
     policy_for,
     record_failure,
 )
-from openoutreach.emails.models import DeliveryEvent, Mailbox
+from cold_outreach.emails.models import DeliveryEvent, Mailbox
 from tests.emails import maillog
 
 
@@ -119,7 +119,7 @@ class TestRecordFailure:
 
     def test_an_accepted_send_is_recorded_with_its_queue_id(self):
         """590 sends left no rows at all, which is why no rate was computable."""
-        from openoutreach.emails.delivery_policy import record_acceptance
+        from cold_outreach.emails.delivery_policy import record_acceptance
 
         send = maillog.outbound(_box())
         record_acceptance(send, 250, b"2.0.0 OK  1758000000 d9443c01a7336-1f2 - gsmtp")

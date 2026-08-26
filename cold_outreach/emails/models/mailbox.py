@@ -1,12 +1,12 @@
-# openoutreach/emails/models/mailbox.py
+# cold_outreach/emails/models/mailbox.py
 """Mailbox: one SMTP sending inbox, imported from the provider's creds export."""
 from __future__ import annotations
 
 from django.db import models
 from django.utils import timezone
 
-from openoutreach.core.conf import WARM_FLOOR_SENDS
-from openoutreach.core.sending_window import operator_timezone, within_sending_window
+from cold_outreach.core.conf import WARM_FLOOR_SENDS
+from cold_outreach.core.sending_window import operator_timezone, within_sending_window
 
 
 def _local_midnight():
@@ -80,7 +80,7 @@ class MailboxManager(models.Manager):
         box has actually sustained. A box with real history is therefore throttled
         for at most one reconcile cycle, not for a warmup calendar.
         """
-        from openoutreach.emails.smtp import verify_auth
+        from cold_outreach.emails.smtp import verify_auth
 
         ok, reason = verify_auth(host, port, from_address, password)
         if not ok:
@@ -162,8 +162,8 @@ class Mailbox(models.Model):
         have discovered. Resets at midnight because that is the horizon the
         verdicts describe.
         """
-        from openoutreach.emails.delivery_policy import PAUSING_RESPONSES
-        from openoutreach.emails.models.maillog import DeliveryEvent
+        from cold_outreach.emails.delivery_policy import PAUSING_RESPONSES
+        from cold_outreach.emails.models.maillog import DeliveryEvent
 
         return DeliveryEvent.objects.filter(
             message__mailbox=self,
@@ -190,7 +190,7 @@ class Mailbox(models.Model):
         from django.db.models import Min
 
         from openoutreach.crm.models import Deal
-        from openoutreach.emails.models.maillog import Direction, Message
+        from cold_outreach.emails.models.maillog import Direction, Message
 
         opened_today = (
             Message.objects

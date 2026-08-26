@@ -1,4 +1,4 @@
-# openoutreach/emails/threads.py
+# cold_outreach/emails/threads.py
 """Threading — union-find over Message-IDs, which is how every mail client does it.
 
 A conversation is a graph, not a root pointer. Each message names the ids it is
@@ -20,7 +20,7 @@ import logging
 from django.db import transaction
 from django.db.models import Q
 
-from openoutreach.emails.models import Message, Thread
+from cold_outreach.emails.models import Message, Thread
 
 logger = logging.getLogger(__name__)
 

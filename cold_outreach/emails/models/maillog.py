@@ -1,4 +1,4 @@
-# openoutreach/emails/models/maillog.py
+# cold_outreach/emails/models/maillog.py
 """The mail log — what happened, kept apart from what it meant.
 
 Every message our mailboxes emit or receive gets a row **before** anything

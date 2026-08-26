@@ -11,11 +11,11 @@ from unittest.mock import patch
 import pytest
 from django.utils import timezone
 
-from openoutreach.core.agents.outreach import OutreachDecision
+from cold_outreach.core.agents.outreach import OutreachDecision
 from openoutreach.core.cycle import unanswered_replies
 from openoutreach.crm.models import DealState
-from openoutreach.emails.models import Mailbox
-from openoutreach.emails.steps.reply import answer_reply
+from cold_outreach.emails.models import Mailbox
+from cold_outreach.emails.steps.reply import answer_reply
 from tests.emails import maillog
 from tests.factories import DealFactory, LeadFactory
 
@@ -125,10 +125,10 @@ class TestUnansweredReplies:
 @pytest.mark.django_db
 class TestAnswerReply:
     def _run(self, deal, decision):
-        with patch("openoutreach.core.agents.outreach.run_outreach_agent",
+        with patch("cold_outreach.core.agents.outreach.run_outreach_agent",
                    return_value=decision), \
                 patch("openoutreach.core.db.summaries.update_chat_summary"), \
-                patch("openoutreach.emails.sender.send_email",
+                patch("cold_outreach.emails.sender.send_email",
                       side_effect=lambda box, *a, **kw: maillog.outbound(
                           box, thread=kw.get("thread"),
                           message_id="sent@infra.com")) as send:

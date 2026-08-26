@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from openoutreach.emails.models import Thread
+from cold_outreach.emails.models import Thread
 from tests.emails import maillog
 from tests.factories import LeadFactory, DealFactory
 
@@ -44,7 +44,7 @@ def _self_profile(session):
 
 class TestRenderSystemPrompt:
     def test_in_thread_includes_three_summary_blocks(self, db, campaign, deal_with_summaries):
-        from openoutreach.core.agents.outreach import _render_system_prompt
+        from cold_outreach.core.agents.outreach import _render_system_prompt
 
         _self_profile(campaign)
 
@@ -67,7 +67,7 @@ class TestRenderSystemPrompt:
         """In-thread choices are reply / suppress / complete. There is no `wait`:
         the agent only ever runs on a thread that has an unanswered reply, and
         silence is the absence of work rather than a decision."""
-        from openoutreach.core.agents.outreach import _render_system_prompt
+        from cold_outreach.core.agents.outreach import _render_system_prompt
 
         _self_profile(campaign)
         prompt = _render_system_prompt(deal_with_summaries, [], is_first_touch=False)
@@ -80,7 +80,7 @@ class TestRenderSystemPrompt:
 
     def test_first_touch_drops_the_conversation_blocks(self, db, campaign, deal_with_summaries):
         """No thread yet — no chat summary, no transcript, and no complete/suppress choice."""
-        from openoutreach.core.agents.outreach import _render_system_prompt
+        from cold_outreach.core.agents.outreach import _render_system_prompt
 
         _self_profile(campaign)
         prompt = _render_system_prompt(deal_with_summaries, [], is_first_touch=True)
@@ -95,7 +95,7 @@ class TestRenderSystemPrompt:
         assert "**mark_completed**" not in prompt
 
     def test_both_ends_carry_the_research_framing(self, db, campaign, deal_with_summaries):
-        from openoutreach.core.agents.outreach import _render_system_prompt
+        from cold_outreach.core.agents.outreach import _render_system_prompt
 
         _self_profile(campaign)
         for first_touch in (True, False):
@@ -109,7 +109,7 @@ class TestRenderSystemPrompt:
             assert "Never volunteer the product" in prompt
 
     def test_handles_missing_summaries_gracefully(self, db, campaign):
-        from openoutreach.core.agents.outreach import _render_system_prompt
+        from cold_outreach.core.agents.outreach import _render_system_prompt
 
         lead = LeadFactory()
         deal = DealFactory(lead=lead, campaign=campaign,
@@ -125,21 +125,21 @@ class TestRenderSystemPrompt:
 
 class TestValidateOpener:
     def test_rejects_an_opener_without_a_subject(self):
-        from openoutreach.core.agents.outreach import OutreachDecision, _validate_opener
+        from cold_outreach.core.agents.outreach import OutreachDecision, _validate_opener
 
         decision = OutreachDecision(action="send_message", message="Hi.")
         with pytest.raises(ValueError, match="no subject"):
             _validate_opener(decision, "lead@corp.com")
 
     def test_rejects_an_opener_that_does_not_send(self):
-        from openoutreach.core.agents.outreach import OutreachDecision, _validate_opener
+        from cold_outreach.core.agents.outreach import OutreachDecision, _validate_opener
 
         decision = OutreachDecision(action="mark_completed", outcome="not_interested")
         with pytest.raises(ValueError, match="must send_message"):
             _validate_opener(decision, "lead@corp.com")
 
     def test_accepts_a_well_formed_opener(self):
-        from openoutreach.core.agents.outreach import OutreachDecision, _validate_opener
+        from cold_outreach.core.agents.outreach import OutreachDecision, _validate_opener
 
         decision = OutreachDecision(
             action="send_message", subject="quick question", message="Hi.",
@@ -152,7 +152,7 @@ class TestLoadRecentMessages:
         from django.utils import timezone
         from datetime import timedelta
 
-        from openoutreach.core.agents.outreach import _load_recent_messages, RECENT_MESSAGES_WINDOW
+        from cold_outreach.core.agents.outreach import _load_recent_messages, RECENT_MESSAGES_WINDOW
 
         box = maillog.mailbox()
         thread = Thread.objects.create(mailbox=box)

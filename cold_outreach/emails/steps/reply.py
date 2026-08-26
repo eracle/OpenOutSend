@@ -1,4 +1,4 @@
-# openoutreach/emails/steps/reply.py
+# cold_outreach/emails/steps/reply.py
 """Answering someone who wrote back — the only outbound mail after the first email.
 
 This step runs on a deal whose newest inbound message is newer than its newest
@@ -27,6 +27,10 @@ import logging
 
 from termcolor import colored
 
+# `DealState`, the chat-summary update and the suppression writer are the ingest
+# model's, and this repo has not built it yet — see
+# `roadmap/p1-e2-outsend-ingest-and-packaging.md`. Until it exists these names
+# resolve to nothing and this module cannot run.
 from openoutreach.crm.models import DealState
 
 logger = logging.getLogger(__name__)
@@ -34,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 def answer_reply(deal) -> DealState | None:
     """Read the new inbound messages, let the agent decide, execute. Returns next state."""
-    from openoutreach.core.agents.outreach import run_outreach_agent
+    from cold_outreach.core.agents.outreach import run_outreach_agent
 
     logger.info("[%s] %s %s", deal.campaign,
                 colored("▶ reply", "green", attrs=["bold"]), deal.lead.profile_url)
@@ -66,9 +70,9 @@ def _fold_new_messages_into_summary(deal) -> None:
     dead address. That is closed here by the schema rather than by a filter each
     read site has to remember.
     """
+    from cold_outreach.core.operator import seller_name
+    from cold_outreach.emails.models import Direction
     from openoutreach.core.db.summaries import update_chat_summary
-    from openoutreach.core.operator import seller_name
-    from openoutreach.emails.models import Direction
 
     turns = deal.thread.turns() if deal.thread_id else None
     if turns is None:
@@ -100,8 +104,8 @@ def _send_reply(deal, decision) -> DealState | None:
     No state change and no timer: writing the outgoing message is itself what makes
     the deal stop being actionable, because its newest message is ours again.
     """
-    from openoutreach.core.operator import get_active_user
-    from openoutreach.emails.sender import operator_bcc, send_email, suppressed
+    from cold_outreach.core.operator import get_active_user
+    from cold_outreach.emails.sender import operator_bcc, send_email, suppressed
 
     if suppressed(deal.lead):
         logger.warning("[%s] %s was suppressed mid-run — not replying",

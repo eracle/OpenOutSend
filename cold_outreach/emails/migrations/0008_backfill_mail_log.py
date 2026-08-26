@@ -1,4 +1,4 @@
-# openoutreach/emails/migrations/0008_backfill_mail_log.py
+# cold_outreach/emails/migrations/0008_backfill_mail_log.py
 """Rebuild the mail log from the conversation it is replacing.
 
 Every id needed is already stored — the opener's Message-ID on the deal and each

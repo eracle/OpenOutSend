@@ -1,4 +1,4 @@
-# openoutreach/emails/project.py
+# cold_outreach/emails/project.py
 """**project** — act on what a classified message means. No network, no bytes.
 
 The third job, and the only one allowed to change anything outside the log: a
@@ -25,7 +25,7 @@ import re
 
 from django.utils import timezone
 
-from openoutreach.emails.models import DeliveryEvent, Direction, Kind, Message
+from cold_outreach.emails.models import DeliveryEvent, Direction, Kind, Message
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ def _record_bounce(ndr: Message) -> None:
     and is still counted as a bounce for the box; it just has no send to attach
     to. Losing the link is a gap in the arithmetic, not a reason to drop the fact.
     """
-    from openoutreach.emails.delivery_policy import Response
+    from cold_outreach.emails.delivery_policy import Response
 
     original = _bounced_send(ndr)
     status = _dsn_status(ndr)

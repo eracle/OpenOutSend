@@ -1,4 +1,4 @@
-# openoutreach/emails/classify.py
+# cold_outreach/emails/classify.py
 """**classify** — decide what a stored message is. Pure, versioned, no network.
 
 Reads the bytes ``sync`` kept and our own tables, and writes ``kind``, the derived
@@ -25,8 +25,8 @@ import re
 
 from django.utils import timezone
 
-from openoutreach.emails import parsing, threads
-from openoutreach.emails.models import Direction, Kind, Message
+from cold_outreach.emails import parsing, threads
+from cold_outreach.emails.models import Direction, Kind, Message
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +155,7 @@ def _is_opt_out(message: Message, msg) -> bool:
     at all, so the alias is the only thing that identifies it. A *worded*
     unsubscribe threads normally, reaches the agent, and is honoured there.
     """
-    from openoutreach.emails.sender import unsubscribe_address
+    from cold_outreach.emails.sender import unsubscribe_address
 
     return parsing.addressed_to(msg, unsubscribe_address(message.mailbox.from_address))
 

@@ -1,4 +1,4 @@
-# openoutreach/emails/sync.py
+# cold_outreach/emails/sync.py
 """**sync** — mirror a mailbox's inbound mail into the log. Transport only.
 
 The one job that touches the network, and the only one that does. It stores bytes
@@ -50,8 +50,8 @@ from django.utils import timezone
 from imapclient import IMAPClient
 from imapclient.exceptions import IMAPClientError
 
-from openoutreach.emails import parsing, threads
-from openoutreach.emails.models import Direction, FolderCoverage, Message
+from cold_outreach.emails import parsing, threads
+from cold_outreach.emails.models import Direction, FolderCoverage, Message
 
 logger = logging.getLogger(__name__)
 
@@ -163,8 +163,8 @@ def _is_our_conversation(mailbox, msg) -> bool:
     answered from headers alone, so a message we are not keeping never costs a
     body fetch — and a stranger's mail costs one header read and nothing else.
     """
-    from openoutreach.emails.classify import is_bounce
-    from openoutreach.emails.sender import unsubscribe_address
+    from cold_outreach.emails.classify import is_bounce
+    from cold_outreach.emails.sender import unsubscribe_address
 
     if parsing.addressed_to(msg, unsubscribe_address(mailbox.from_address)):
         return True
