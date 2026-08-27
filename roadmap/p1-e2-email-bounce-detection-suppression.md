@@ -26,17 +26,17 @@
 > halt itself — none of which the epic decides. It also keeps the measured
 > evidence, which is not reproducible.
 
-- **Status:** In Progress — **the suppression half is built.** A bounce naming a dead
-  address now ends the pursuit: the address joins the suppression list, its open deals
-  reach `UNDELIVERABLE`, and a refusal at the SMTP door does the same thing through
-  the same function. The policy is in *What the policy turned out to be* below, and
-  every open question in this card is answered there except one. **What is left is
-  the second half of one criterion — the operator cannot ask the system whether the
-  domain is listed on a DNSBL.** That is the whole remainder.
-- **Priority:** Medium — was Critical while addresses were mailed forever; the failure
-  mode that earned that rating is closed.
-- **Effort:** Small — DNSBL lookups against the sending domain, surfaced somewhere an
-  operator reads.
+- **Status:** Done — **a bounce naming a dead address now ends the pursuit.** The address
+  joins the suppression list, its open deals reach `UNDELIVERABLE`, and a refusal at the
+  SMTP door does the same thing through the same function. The policy is in *What the
+  policy turned out to be* below, and every open question this card raised is answered
+  there. **The one criterion it could not close — "is my domain listed?" — moved to
+  [`p1-e2-sending-domain-reputation-check`](p1-e2-sending-domain-reputation-check.md)**,
+  which is a reputation read rather than a bounce mechanism and had no business staying
+  here.
+- **Priority:** Medium — was Critical while dead addresses were mailed forever; the
+  failure mode that earned that rating is closed.
+- **Effort:** Small
 - **Area:** Pipeline
 
 > **This card states a problem, not a solution.** It is written for someone
@@ -249,8 +249,11 @@ Stated as outcomes; how they are achieved is open.
       intervening. *(Already true — `warmth.py` halves capacity above tolerance; a
       suppressing bounce still records its `DeliveryEvent`, so this keeps working
       for the statuses that now also end the pursuit.)*
-- [ ] An operator can answer "what is my bounce rate?" and "is my domain listed?"
-      from the system, not from a third-party website. *(The rate is arithmetic the
+- [→] An operator can answer "what is my bounce rate?" and "is my domain listed?"
+      from the system, not from a third-party website. **Moved to
+      [`p1-e2-sending-domain-reputation-check`](p1-e2-sending-domain-reputation-check.md)**
+      — it is a reputation read, not a bounce mechanism.
+      *(Superseded text: the rate is arithmetic the
       log can already answer; **DNSBL listing is not built**, and it is the honest
       remainder of this card.)*
 - [x] A replacement address found later for the same person is still sendable.
