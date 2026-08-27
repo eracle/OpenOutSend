@@ -10,7 +10,7 @@ The order is the design, and each step feeds the next:
 
     read      IMAP → rows → kinds → events, suppression   (`emails/mail_pass.py`)
     answer    every thread the lead has replied in         (no cap, no spacing)
-    open      one first email per box that is free now     (capped, spaced, in-window)
+    open      up to `goal` first emails, spaced             (capped, spaced, in-window)
 
 Reading first is what makes the other two honest: an opt-out that arrived overnight
 suppresses the person *before* anything is written to them, and a reply is visible in
@@ -20,10 +20,25 @@ the pass that answers it.
 inside a thread somebody started is not cold volume, and answering within minutes is
 more human, not less — so replies ignore the daily ceiling, the spacing clock and the
 sending window alike.
+
+**`goal` is the finder's `job.py` lesson applied here, not a daemon reintroduced.**
+Without it, a pass opens at most one conversation per box and stops — the per-box
+spacing clock (~3.5–4.5 min, `core/conf.py`) takes the box "not free" again before a
+second send could land in the same call. That gap is a *short* bound, the same class
+as the finder's provider-retry backoff, and just as safe to sleep through inside one
+process (`_wait_for_spacing`). The sending window (hours) and the daily headroom
+(until tomorrow) are not — sleeping through *those* is exactly the "residency" this
+module's docstring already rejects for the daemon it replaced. So a goal-bounded pass
+loops and sleeps only on spacing, and stops the moment the wall it hits is the window
+or the headroom, reporting how far it got and why — the same shape as the finder's
+`goal_unreached`. For a goal inside one day's headroom this needs no external timer at
+all; for anything past it, the next invocation (however it is triggered) picks up
+where this one stopped, because nothing here is state a lost process would strand.
 """
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -48,12 +63,19 @@ class PassResult:
         return self.failed == 0
 
 
-def run_send_pass(campaign, prompt_line_name: str | None = None) -> PassResult:
-    """Read, answer, open — once — and report. Never raises for a failed send.
+def run_send_pass(campaign, prompt_line_name: str | None = None, goal: int | None = None) -> PassResult:
+    """Read, answer, open — and report. Never raises for a failed send.
 
     ``prompt_line_name`` pins every opener in this pass to one move
     (``core/prompt_lines.py``); left unset, each opener draws its own at random, which
     is what makes the log a comparison rather than a run of whatever was pinned.
+
+    ``goal`` is how many first emails *this call* should open — a delta, in the
+    finder's `Goal` sense, not a running total to reach. Left unset, the pass opens
+    at most one per free box and returns, exactly as before this existed. Given a
+    number, it keeps opening — sleeping through the spacing clock between sends —
+    until ``goal`` is met or a wall it cannot sleep through (the window, the day's
+    headroom) is the thing actually holding it up.
     """
     from cold_outreach.emails.mail_pass import run_mail_pass
 
@@ -61,7 +83,7 @@ def run_send_pass(campaign, prompt_line_name: str | None = None) -> PassResult:
     result.mirrored, result.classified, result.projected = run_mail_pass()
     _answer_replies(campaign, result)
     _follow_up(campaign, result)
-    _open_conversations(campaign, result, prompt_line_name)
+    _open_conversations(campaign, result, prompt_line_name, goal)
     logger.info("%s", _what_is_holding(campaign))
     return result
 
@@ -127,14 +149,23 @@ def _follow_up(campaign, result: PassResult) -> None:
             return
 
 
-def _open_conversations(campaign, result: PassResult, prompt_line_name: str | None = None) -> None:
+def _open_conversations(campaign, result: PassResult, prompt_line_name: str | None = None,
+                        goal: int | None = None) -> None:
     """Send first emails while a box is free and somebody is waiting.
 
-    The loop's bound is the guards themselves: `free_for_first_email` answers `None`
-    outside the window, for a box at its ceiling, and for one whose spacing clock has
-    not elapsed — and a send rewrites that clock, so a box takes itself out of the
-    pool on its way past. The pass therefore ends on its own, usually after one send
-    per box.
+    With no ``goal`` this is exactly what it always was: the loop's bound is the
+    guards themselves, `free_for_first_email` answers `None` outside the window, for
+    a box at its ceiling, and for one whose spacing clock has not elapsed — and a
+    send rewrites that clock, so a box takes itself out of the pool on its way past.
+    The pass ends on its own, usually after one send per box.
+
+    **With a `goal`, a closed pool is not always the end.** If every box that could
+    still send is only waiting on its own spacing clock — the window is open and
+    somebody has headroom — that is a wait of minutes, and `_wait_for_spacing` sleeps
+    through it and the loop tries again. If instead nothing is waiting *only* on
+    spacing (the window is shut, or the day's headroom is spent), `_wait_for_spacing`
+    returns `None` and the loop stops there — that wall does not get slept through in
+    one process, whatever `goal` asked for.
 
     A failed send **stops the openers for this pass** rather than moving to the next
     lead. The spacing clock is written after a successful send, so a box that just
@@ -152,8 +183,16 @@ def _open_conversations(campaign, result: PassResult, prompt_line_name: str | No
     from cold_outreach.emails.steps.send import send_first_email
     from cold_outreach.leads.pools import emailable_deals
 
+    remaining = goal
     waiting = emailable_deals(campaign).iterator()
-    while (mailbox := Mailbox.objects.free_for_first_email()) is not None:
+    while remaining is None or remaining > 0:
+        mailbox = Mailbox.objects.free_for_first_email()
+        if mailbox is None:
+            wait = _wait_for_spacing() if goal is not None else None
+            if wait is None:
+                return
+            time.sleep(wait)
+            continue
         deal = next(waiting, None)
         if deal is None:
             return
@@ -164,6 +203,37 @@ def _open_conversations(campaign, result: PassResult, prompt_line_name: str | No
             logger.exception("first email to %s failed", deal.lead.public_id)
             result.failed += 1
             return
+        if remaining is not None:
+            remaining -= 1
+
+
+def _wait_for_spacing() -> float | None:
+    """Seconds until a box next frees up purely on its spacing clock — or `None` when
+    nothing is waiting *only* on that.
+
+    `None` covers three cases that all mean the same thing to a caller deciding
+    whether to sleep: the window is shut, every box with headroom left is paused for
+    the rest of today, or there is no mailbox at all. Any of those is a wall measured
+    in hours or a calendar day, not the ~3.5–4.5 minute spacing gap this exists to
+    wait out, so a caller sees the same answer either way — stop, do not sleep.
+    """
+    from django.utils import timezone
+
+    from cold_outreach.core.sending_window import within_sending_window
+    from cold_outreach.emails.models import Mailbox
+
+    if not within_sending_window():
+        return None
+    now = timezone.now()
+    candidates = [
+        box.next_send_at for box in Mailbox.objects.all()
+        if box.headroom_today() > 0 and not box.free_now(now) and box.next_send_at
+    ]
+    if not candidates:
+        return None
+    # +1s: `free_now` compares with `<=`, so sleeping to the exact instant is enough
+    # in theory — the second is slack for wall-clock rounding between here and there.
+    return max(0.0, (min(candidates) - now).total_seconds()) + 1
 
 
 def _apply(deal, next_state) -> None:

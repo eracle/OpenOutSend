@@ -115,7 +115,8 @@ class TestPickingABox:
         heavy = _box("heavy@b.com", daily_limit=10)
         for _ in range(4):
             _record_send(_ready(campaign), heavy)
-        assert Mailbox.objects.free_for_first_email() == light
+        with patch("cold_outreach.emails.models.mailbox.within_sending_window", return_value=True):
+            assert Mailbox.objects.free_for_first_email() == light
 
     def test_none_when_every_box_is_capped(self, campaign):
         box = _box(daily_limit=1)
@@ -137,7 +138,8 @@ class TestPickingABox:
         box = _box(daily_limit=10)
         box.next_send_at = timezone.now() - timedelta(seconds=1)
         box.save(update_fields=["next_send_at"])
-        assert Mailbox.objects.free_for_first_email() == box
+        with patch("cold_outreach.emails.models.mailbox.within_sending_window", return_value=True):
+            assert Mailbox.objects.free_for_first_email() == box
 
     def test_the_daily_ledger_starts_at_the_operators_midnight(self):
         """Not the server's UTC midnight, which for a US operator falls at 19:00 —

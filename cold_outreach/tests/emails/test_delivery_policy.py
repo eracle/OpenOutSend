@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import smtplib
+from unittest.mock import patch
 
 import pytest
 
@@ -192,5 +193,6 @@ class TestHeadroomRespectsVerdicts:
             username="c@d.com", password="pw", from_address="c@d.com",
             daily_limit=10,
         )
-        assert Mailbox.objects.free_for_first_email() == healthy
+        with patch("cold_outreach.emails.models.mailbox.within_sending_window", return_value=True):
+            assert Mailbox.objects.free_for_first_email() == healthy
         assert Mailbox.objects.remaining_today() == 10

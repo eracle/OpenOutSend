@@ -35,7 +35,7 @@ def connected(campaign):
 
 
 def _args(**kwargs) -> Namespace:
-    return Namespace(**{"command": "send", "campaign": None, "prompt_line": None,
+    return Namespace(**{"command": "send", "goal": None, "campaign": None, "prompt_line": None,
                         "debug": False, **kwargs})
 
 
@@ -64,10 +64,24 @@ def test_send_runs_one_pass_over_the_resolved_campaign(connected, capsys):
                return_value=PassResult(mirrored=2, answered=1, opened=3)) as run:
         assert _send(_args()) == 0
 
-    run.assert_called_once_with(connected, None)
+    run.assert_called_once_with(connected, None, None)
     narration = capsys.readouterr().err
     assert f"campaign: {connected.name}" in narration
     assert "read 2 new message(s) · answered 1 · followed up 0 · opened 3" in narration
+
+
+def test_a_goal_is_passed_through_and_named_in_the_narration(connected, capsys):
+    with patch("cold_outreach.send_pass.run_send_pass",
+               return_value=PassResult(opened=3)) as run:
+        assert _send(_args(goal=5)) == 0
+
+    run.assert_called_once_with(connected, None, 5)
+    assert "opened 3 of 5 asked for" in capsys.readouterr().err
+
+
+def test_a_negative_goal_is_refused(connected):
+    with pytest.raises(OutsendError):
+        _send(_args(goal=-1))
 
 
 def test_a_failed_send_is_reported_and_carried_into_the_exit_code(connected, capsys):

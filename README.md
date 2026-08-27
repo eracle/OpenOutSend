@@ -46,6 +46,16 @@ has replied in, writes again to the ones who went quiet, opens as many first ema
 allow, and exits — cadence is a timer's job. Reading first is what makes the rest honest: an opt-out
 that arrived overnight suppresses the person before anything is written to them.
 
+**`outsend send N` opens up to `N` first emails in this one call**, instead of the roughly-one-per-box
+a bare `outsend send` stops at. It sleeps through each box's own ~3.5–4.5 minute spacing clock to keep
+going — the same class of short, bounded wait the finder already sleeps through on a provider retry —
+but stops the moment the wall holding it up is the sending window or the day's headroom, since those
+are hours-to-a-day, not minutes, and sleeping through *that* inside one process is exactly the
+"residency" the daemon this project replaced was deleted for. So `find N emails --json | outsend &&
+outsend send N` needs no cron at all for a goal inside one day's headroom; past that, whatever
+re-invokes it next (a timer, or you) picks up where it stopped — nothing here is state a lost process
+would strand.
+
 **A lead who never answers gets two more emails, then the pursuit ends** — after three working days,
 then five, and the deal closes as `unresponsive`. A reply at any point ends the sequence and the
 conversation takes over. **Follow-ups are cold volume and are treated as such**: they share one daily

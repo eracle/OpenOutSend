@@ -31,8 +31,12 @@ import os
 import sys
 
 USAGE = """outsend [--campaign NAME]        read JSON Lines on stdin, store them, exit
-outsend send [--campaign NAME] [--prompt-line ID]
-                                 read the mail, answer replies, open what the guards allow
+outsend send [N] [--campaign NAME] [--prompt-line ID]
+                                 read the mail, answer replies, open what the guards allow.
+                                 With N: keep opening — sleeping through the spacing clock
+                                 between sends — until N are opened this call, or the wall
+                                 holding it up is the sending window or the day's headroom.
+                                 Omit N for the old one-send-per-box-and-stop shape.
 outsend init [--campaign NAME]   collect what a first run needs — the campaign, who you
                                  are, and a mailbox to send from"""
 
@@ -55,6 +59,9 @@ def main(argv: list[str] | None = None) -> int:
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="outsend", usage=USAGE)
     parser.add_argument("command", nargs="?", choices=["init", "send"])
+    parser.add_argument("goal", nargs="?", type=int, default=None,
+                        help="`send` only: how many first emails to open this call. "
+                             "Omit for one send per free box, then stop.")
     parser.add_argument("--campaign", default=None,
                         help="which campaign these leads belong to; required only if there are several")
     parser.add_argument("--prompt-line", default=None, dest="prompt_line",
@@ -134,18 +141,26 @@ def _send(args: argparse.Namespace) -> int:
     TTY that is the same prompts; headless it is the same error naming the variables,
     raised before any mail moves.
 
-    Exit code is the pass's own: non-zero when something failed on its way out, so a
-    timer's failure mail carries it.
+    **With a goal, falling short of it is not a failure** — a wall the pass genuinely
+    cannot sleep through (the sending window, the day's headroom) is a normal place
+    to stop, the same way the finder's `find` prints its rows and exits non-zero on an
+    unmet goal without that meaning anything broke. Exit code stays the pass's own:
+    non-zero only when something actually failed on its way out.
     """
+    from cold_outreach.errors import OutsendError
     from cold_outreach.first_run import ensure_ready
     from cold_outreach.send_pass import run_send_pass
+
+    if args.goal is not None and args.goal < 0:
+        raise OutsendError("goal cannot be negative")
 
     campaign = _campaign_for(args)
     ensure_ready(campaign)
 
-    result = run_send_pass(campaign, args.prompt_line)
+    result = run_send_pass(campaign, args.prompt_line, args.goal)
     print(f"read {result.mirrored} new message(s) · answered {result.answered} · "
-          f"followed up {result.followed_up} · opened {result.opened}", file=sys.stderr)
+          f"followed up {result.followed_up} · opened {result.opened}"
+          + (f" of {args.goal} asked for" if args.goal is not None else ""), file=sys.stderr)
     if result.gave_up:
         print(f"{result.gave_up} lead(s) never answered and were closed", file=sys.stderr)
     if result.failed:
