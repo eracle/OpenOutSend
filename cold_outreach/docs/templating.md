@@ -7,6 +7,6 @@ One agent (`core/agents/outreach.py`) and one prompt (`outreach_agent.j2`) cover
 - **First touch** — at `READY_TO_EMAIL` the prompt renders its no-thread branch and the decision must be `send_message` with a `subject`. Sent once, parking the deal at `EMAILED`.
 - **In thread** — on `EMAILED` deals that have an unanswered reply, the prompt renders the conversation branch: `send_message` / `mark_completed` / `suppress`. See [Outreach Agent](./outreach_agent.md).
 
-The agent never decides *when* to speak, only what to say. A deal becomes actionable again because a reply arrived, not because a clock came due — there is no `wait` action and no follow-up interval to choose.
+The agent never decides *when* to speak, only what to say. A deal becomes actionable because a reply arrived or because a follow-up gap has elapsed — both derived from the mail log in `leads/pools.py`, never from a countdown the agent re-arms. There is no `wait` action and no interval to choose.
 
 The prompts live in `core/templates/prompts/`. Shared context (product docs, campaign target, booking link, seller identity, and the lead/conversation fact summaries) is assembled in `core/agents/prompt.py`. See [Template Variables](./template-variables.md) for what each prompt receives.

@@ -6,15 +6,18 @@
 > `cold_outreach/core/templates/prompts/outreach_agent.j2`. Every defect this card names travelled
 > with the code.
 >
-> ⚠️ **Check "missing backoff" against the current design before building it.** OpenOutreach removed
-> chasing entirely before the port: a follow-up is *checking whether a reply came*, and if none came
-> nothing is sent — no timer, no follow-up interval, no `wait` action. That deleted the very thing a
-> backoff would schedule. Whether this project keeps that rule is its own call, but the card predates
-> it and does not know.
+> ⚠️ **Bug 2 is closed, and not the way this card imagined.** OpenOutreach had removed chasing
+> entirely before the port, which deleted the very thing a backoff would schedule; chasing is now
+> back (`emails/steps/follow_up.py`), but **the agent no longer owns the clock at all**. The gaps are
+> constants in `core/conf.py`, and who is due is derived from the mail log by
+> `leads/pools.awaiting_follow_up`. There is no `wait` verdict to fail to push out, no
+> `next_follow_up_at` to re-arm, and therefore nothing that can re-read an unchanged context five
+> times in a window. A backoff was the wrong shape for the problem: the defect was that a decision
+> about *timing* was being made by the thing that writes the *message*.
 
-- **Status:** To Do
+- **Status:** To Do — **bug 2 is closed** (see above). Bugs 1 and 3 stand.
 - **Priority:** Medium
-- **Effort:** Medium
+- **Effort:** Small — what is left is the identity mismatch and the sentiment exit.
 - **Area:** Pipeline
 
 > Evidence: `roadmap/bug.logs` (a worker-loop capture). Three distinct defects surface on the deal `paolo-tardani-336b3359`.

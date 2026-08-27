@@ -67,7 +67,7 @@ def test_send_runs_one_pass_over_the_resolved_campaign(connected, capsys):
     run.assert_called_once_with(connected, None)
     narration = capsys.readouterr().err
     assert f"campaign: {connected.name}" in narration
-    assert "read 2 new message(s) · answered 1 · opened 3" in narration
+    assert "read 2 new message(s) · answered 1 · followed up 0 · opened 3" in narration
 
 
 def test_a_failed_send_is_reported_and_carried_into_the_exit_code(connected, capsys):

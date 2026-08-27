@@ -47,7 +47,7 @@ class TestRenderSystemPrompt:
         from cold_outreach.core.agents.outreach import _render_system_prompt
 
         recent = [_msg("Hi, what do you do?", is_outgoing=True), _msg("Sales tooling.", is_outgoing=False)]
-        prompt = _render_system_prompt(deal_with_summaries, recent, is_first_touch=False)
+        prompt = _render_system_prompt(deal_with_summaries, recent, stage="reply")
 
         # Profile facts appear under the lead-knowledge block.
         assert "Senior engineer at Acme Corp." in prompt
@@ -67,7 +67,7 @@ class TestRenderSystemPrompt:
         silence is the absence of work rather than a decision."""
         from cold_outreach.core.agents.outreach import _render_system_prompt
 
-        prompt = _render_system_prompt(deal_with_summaries, [], is_first_touch=False)
+        prompt = _render_system_prompt(deal_with_summaries, [], stage="reply")
 
         assert "**send_message**" in prompt
         assert "**suppress**" in prompt
@@ -79,7 +79,7 @@ class TestRenderSystemPrompt:
         """No thread yet — no chat summary, no transcript, and no complete/suppress choice."""
         from cold_outreach.core.agents.outreach import _render_system_prompt
 
-        prompt = _render_system_prompt(deal_with_summaries, [], is_first_touch=True)
+        prompt = _render_system_prompt(deal_with_summaries, [], stage="open")
 
         # Lead facts still there; conversation facts are not.
         assert "Senior engineer at Acme Corp." in prompt
@@ -93,10 +93,8 @@ class TestRenderSystemPrompt:
     def test_both_ends_carry_the_research_framing(self, db, campaign, deal_with_summaries):
         from cold_outreach.core.agents.outreach import _render_system_prompt
 
-        for first_touch in (True, False):
-            prompt = _render_system_prompt(
-                deal_with_summaries, [], is_first_touch=first_touch,
-            )
+        for stage in ("open", "follow_up", "reply"):
+            prompt = _render_system_prompt(deal_with_summaries, [], stage=stage)
             assert "You follow the Mom Test method." in prompt
             # Discovery is the default mode; pitching only on an explicit pull.
             assert "### Discovery (default, and where you stay)" in prompt
@@ -115,7 +113,7 @@ class TestRenderSystemPrompt:
         deal = DealFactory(lead=lead, campaign=campaign,
                            thread=Thread.objects.create(mailbox=maillog.mailbox()))
 
-        prompt = _render_system_prompt(deal, [], is_first_touch=False)
+        prompt = _render_system_prompt(deal, [], stage="reply")
 
         assert "cto at acme, milan, 50 employees" in prompt
         # The conversation has taught us nothing yet, and says so.
@@ -127,7 +125,7 @@ class TestRenderSystemPrompt:
 
         deal = DealFactory(lead=LeadFactory(profile_text=""), campaign=campaign)
 
-        prompt = _render_system_prompt(deal, [], is_first_touch=True)
+        prompt = _render_system_prompt(deal, [], stage="open")
 
         assert "(nothing on file)" in prompt
 
@@ -197,26 +195,26 @@ class TestOpenerBreach:
     """
 
     def test_a_short_plain_opener_keeps_them_all(self):
-        from cold_outreach.core.agents.outreach import opener_breach
+        from cold_outreach.core.agents.outreach import cold_message_breach
 
-        assert opener_breach(
+        assert cold_message_breach(
             "Saw you run infra at Acme. I'm building tooling for teams that size. "
             "How do you handle on-call rotations today?"
         ) is None
 
     def test_a_long_opener_is_rejected_and_told_its_length(self):
-        from cold_outreach.core.agents.outreach import OPENER_WORD_CEILING, opener_breach
+        from cold_outreach.core.agents.outreach import COLD_WORD_CEILING, cold_message_breach
 
-        breach = opener_breach("word " * (OPENER_WORD_CEILING + 1))
+        breach = cold_message_breach("word " * (COLD_WORD_CEILING + 1))
 
         assert breach is not None
-        assert str(OPENER_WORD_CEILING) in breach
+        assert str(COLD_WORD_CEILING) in breach
 
     def test_an_opener_at_the_ceiling_exactly_is_allowed(self):
         """A ceiling, not a target — the boundary belongs on the permitted side."""
-        from cold_outreach.core.agents.outreach import OPENER_WORD_CEILING, opener_breach
+        from cold_outreach.core.agents.outreach import COLD_WORD_CEILING, cold_message_breach
 
-        assert opener_breach("word " * OPENER_WORD_CEILING) is None
+        assert cold_message_breach("word " * COLD_WORD_CEILING) is None
 
     @pytest.mark.parametrize("message", [
         "Have a look at https://example.com and tell me what you think.",
@@ -224,14 +222,14 @@ class TestOpenerBreach:
     ])
     def test_a_link_is_rejected(self, message):
         """A first email asks a question; a link turns it into a funnel step."""
-        from cold_outreach.core.agents.outreach import opener_breach
+        from cold_outreach.core.agents.outreach import cold_message_breach
 
-        assert "link" in opener_breach(message)
+        assert "link" in cold_message_breach(message)
 
     def test_an_em_dash_is_rejected(self):
-        from cold_outreach.core.agents.outreach import opener_breach
+        from cold_outreach.core.agents.outreach import cold_message_breach
 
-        assert "em dash" in opener_breach("I build tools — mostly for infra teams.")
+        assert "em dash" in cold_message_breach("I build tools — mostly for infra teams.")
 
 
 @pytest.mark.django_db
@@ -243,7 +241,7 @@ class TestThePromptLineReachesThePrompt:
         deal = DealFactory(lead=LeadFactory(), campaign=campaign)
         line = choose("plain-ask")
 
-        prompt = _render_system_prompt(deal, [], is_first_touch=True, prompt_line=line)
+        prompt = _render_system_prompt(deal, [], stage="open", prompt_line=line)
 
         assert line.prompt in prompt
 
@@ -255,7 +253,7 @@ class TestThePromptLineReachesThePrompt:
         line = choose("plain-ask")
 
         prompt = _render_system_prompt(
-            deal_with_summaries, [], is_first_touch=False, prompt_line=line)
+            deal_with_summaries, [], stage="reply", prompt_line=line)
 
         assert line.prompt not in prompt
 
@@ -267,7 +265,7 @@ class TestThePromptLineReachesThePrompt:
         deal = DealFactory(lead=LeadFactory(), campaign=campaign)
 
         prompt = _render_system_prompt(
-            deal, [], is_first_touch=True, prompt_line=choose("plain-ask"))
+            deal, [], stage="open", prompt_line=choose("plain-ask"))
 
         assert "No link of any kind" in prompt
         assert "No meeting request" in prompt
@@ -278,6 +276,6 @@ class TestThePromptLineReachesThePrompt:
 
         deal = DealFactory(lead=LeadFactory(), campaign=campaign)
 
-        prompt = _render_system_prompt(deal, [], is_first_touch=True, prompt_line=None)
+        prompt = _render_system_prompt(deal, [], stage="open", prompt_line=None)
 
         assert "one genuine discovery question" in prompt

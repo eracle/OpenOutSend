@@ -112,9 +112,11 @@ class DealState(models.TextChoices):
 
     - **READY** — ingested and not yet written to. A row with no address rests here
       too: an address is an enrichment a later run fills in for free.
-    - **EMAILED** — the opener went out. From here the deal is only ever touched
-      again if the recipient answers; silence is not a state, it is the absence of
-      work.
+    - **EMAILED** — at least one cold email went out and the conversation is live.
+      A silent lead rests here between touches and leaves as `COMPLETED`
+      (`unresponsive`) once its touches are spent; one who answers stays here while
+      the thread runs. Which of the two a row is, is never stored — it is the
+      comparison between the thread's newest inbound and outbound turns.
     - **COMPLETED** — the conversation reached its end, with an `outcome` saying how.
     - **UNSUBSCRIBED** — they asked to stop. The address is on the suppression list
       and this row is terminal for good.

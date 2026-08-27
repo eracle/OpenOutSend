@@ -22,15 +22,17 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture
 def steps():
-    """The three things a pass calls out to, stubbed, with the order they were called in."""
+    """The four things a pass calls out to, stubbed, with the order they were called in."""
     order: list[str] = []
     with patch("cold_outreach.emails.mail_pass.run_mail_pass") as mail, \
             patch("cold_outreach.emails.steps.reply.answer_reply") as reply, \
+            patch("cold_outreach.emails.steps.follow_up.send_follow_up") as chase, \
             patch("cold_outreach.emails.steps.send.send_first_email") as send:
         mail.side_effect = lambda: (order.append("read"), (0, 0, 0))[1]
         reply.side_effect = lambda deal: order.append("answer")
+        chase.side_effect = lambda deal: order.append("follow_up")
         send.side_effect = lambda deal, mailbox, prompt_line: order.append("open")
-        yield SimpleNamespace(mail=mail, reply=reply, send=send, order=order)
+        yield SimpleNamespace(mail=mail, reply=reply, chase=chase, send=send, order=order)
 
 
 def _waiting(campaign, address="lead@acme.com"):
@@ -210,6 +212,56 @@ def test_the_counts_are_said_even_when_nothing_is_holding(campaign):
 
     assert "1 waiting to be emailed" in line
     assert "5 first email(s) left today" in line
+
+
+# ── Follow-ups and openers share one budget ───────────────────────
+
+
+def _silent(campaign, box, days_ago=10):
+    """An EMAILED deal, written to once, that never answered."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    thread = Thread.objects.create(mailbox=box)
+    deal = DealFactory(
+        campaign=campaign, lead=LeadFactory(email="silent@acme.com"),
+        state=DealState.EMAILED, mailbox=box, thread=thread, email_subject="Hi",
+    )
+    maillog.outbound(box, thread=thread, message_id="old@infra.com",
+                     sent_at=timezone.now() - timedelta(days=days_ago))
+    return deal
+
+
+def test_a_follow_up_and_an_opener_compete_for_the_same_slot(campaign, steps):
+    """The whole fix for 102-follow-ups-to-1-opener: one budget, not two.
+
+    A box with room for exactly one cold email, one lead waiting to be opened and one
+    gone quiet. Only one message leaves — the follow-up, because it runs first — and
+    the opener waits for the next pass rather than being sent out of a reserve.
+    """
+    box = maillog.mailbox(daily_limit=1)
+    _silent(campaign, box)
+    _waiting(campaign, "new@acme.com")
+
+    with patch("cold_outreach.core.sending_window.within_sending_window", return_value=True), \
+            patch.object(Mailbox.objects, "free_for_first_email", side_effect=[box, None]):
+        result = run_send_pass(campaign)
+
+    assert steps.order == ["read", "follow_up", "open"]
+    assert result.followed_up == 1
+
+
+def test_nothing_is_chased_outside_the_sending_window(campaign, steps):
+    """A follow-up is cold volume, so the clock speaks for it as it does for an opener."""
+    box = maillog.mailbox(daily_limit=5)
+    _silent(campaign, box)
+
+    with patch("cold_outreach.core.sending_window.within_sending_window", return_value=False):
+        result = run_send_pass(campaign)
+
+    assert "follow_up" not in steps.order
+    assert result.followed_up == 0
 
 
 # ── The verdict ───────────────────────────────────────────────────

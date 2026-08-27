@@ -1,25 +1,28 @@
 # cold_outreach/emails/steps/reply.py
-"""Answering someone who wrote back — the only outbound mail after the first email.
+"""Answering someone who wrote back.
 
 This step runs on a deal whose newest inbound message is newer than its newest
-outgoing one, so there is always something to answer and the agent is never asked
-to decide about silence. That is the whole follow-up policy: **a lead who does not
-reply is never emailed again.**
+outgoing one, so there is always something to answer and the agent is never asked to
+decide about silence. **Silence is `emails/steps/follow_up.py`'s question, not this
+one** — a lead who says nothing gets at most two more cold emails and then the pursuit
+ends; a lead who answers is here, and is never chased again.
 
-What that deletes is worth naming, because it was the most intricate machinery in
-the old scheduler. There was a per-deal countdown (``next_follow_up_at``) that the
-agent itself re-armed in business hours; a claim priority putting follow-ups above
-first emails; and — because that priority is not ownership — a floor
-(``OPENER_FLOOR_FRACTION``) reserving a quarter of the mailbox for first contact,
-capped in turn by the openers actually ready to send so nothing idled. All of it
-existed because open threads accumulate faster than they close, so an unbounded
-follow-up drain eventually owned every send in the box: measured on a live install,
-102 follow-ups and 1 first email in a week. None of it is needed once a reply is
-the trigger — replies are bounded by how many people write back, and they are not
-cold volume, so they compete for nothing.
+Sending here is **exempt from the daily cap, the send spacing and the sending
+window** — the only outbound mail that is. Answering within minutes of being written
+to is more human, not less, and a reply is not cold volume: it is bounded by how many
+people write back, so it competes for nothing.
 
-Sending here is therefore **exempt from the daily cap and from send spacing**.
-Answering within minutes of being written to is more human, not less.
+**A follow-up is the opposite on every count**, and the reason is the machinery this
+rewrite deleted. The old scheduler had a per-deal countdown (``next_follow_up_at``)
+the agent re-armed itself, a claim priority putting follow-ups *above* first emails,
+and — because that priority is not ownership — a floor (``OPENER_FLOOR_FRACTION``)
+reserving a quarter of the mailbox for first contact. All of it existed because open
+threads accumulate faster than they close, so an unbounded follow-up drain eventually
+owned every send in the box: measured on a live install, 102 follow-ups and 1 first
+email in a week. Chasing came back without any of it — no countdown on a row, no
+separate budget, no reserved fraction — because follow-ups now draw from the same
+capped and spaced pool as openers, which makes that ratio arithmetically unreachable
+rather than something a floor has to defend against.
 """
 from __future__ import annotations
 
@@ -106,7 +109,7 @@ def _send_reply(deal, decision) -> DealState | None:
 
     logger.info("[%s] reply to %s: %s",
                 deal.campaign, deal.lead.public_id, decision.message)
-    chain = _thread_ids(deal)
+    chain = thread_ids(deal)
     send_email(
         deal.mailbox,
         deal.lead.email,
@@ -149,7 +152,7 @@ def _reply_subject(opener_subject: str) -> str:
     return subject if subject.lower().startswith("re:") else f"Re: {subject}"
 
 
-def _thread_ids(deal) -> list[str]:
+def thread_ids(deal) -> list[str]:
     """Every Message-ID in this conversation, oldest first, bracketed for a header.
 
     The whole chain, because that is what ``References`` is for: a client that

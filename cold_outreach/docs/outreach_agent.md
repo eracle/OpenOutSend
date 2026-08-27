@@ -2,9 +2,11 @@
 
 One agent runs the whole email conversation, from the cold open to the last reply. It is doing **Mom Test research, not selling**: the goal of a thread is a candid answer about how the lead works today, not a booked meeting.
 
-**Nobody is chased.** The agent runs once to open, then once per reply. The trigger is an inbound message newer than our newest outgoing one — no clock, no `wait` action. An unanswered thread rests at `EMAILED`.
+**Three touches at most, then the pursuit ends.** The agent opens, and if nobody answers it writes twice more — after three working days, then five — before the deal closes as `unresponsive`. A reply at any point takes the lead out of that sequence for good, and the conversation continues instead.
 
-The cold open and the in-thread replies are the same voice doing the same job, so they render from **one** prompt (`core/templates/prompts/outreach_agent.j2`) which branches on the only thing that differs: whether a thread exists yet (`deal.email_message_id`).
+**The agent never decides *when*.** There is no clock it owns and no `wait` action: the pools in `leads/pools.py` derive who is due from timestamps in the mail log, and the agent is only ever asked what to write.
+
+The cold open, a follow-up and the in-thread replies are the same voice doing the same job, so all three render from **one** prompt (`core/templates/prompts/outreach_agent.j2`), branching on the stage the caller names.
 
 ## Flow
 

@@ -38,6 +38,8 @@ class PassResult:
     projected: int = 0
     answered: int = 0
     opened: int = 0
+    followed_up: int = 0
+    gave_up: int = 0
     failed: int = 0
 
     @property
@@ -58,6 +60,7 @@ def run_send_pass(campaign, prompt_line_name: str | None = None) -> PassResult:
     result = PassResult()
     result.mirrored, result.classified, result.projected = run_mail_pass()
     _answer_replies(campaign, result)
+    _follow_up(campaign, result)
     _open_conversations(campaign, result, prompt_line_name)
     logger.info("%s", _what_is_holding(campaign))
     return result
@@ -81,6 +84,47 @@ def _answer_replies(campaign, result: PassResult) -> None:
         except Exception:
             logger.exception("reply to %s failed", deal.lead.public_id)
             result.failed += 1
+
+
+def _follow_up(campaign, result: PassResult) -> None:
+    """Write again to the ones who never answered, and end the ones out of touches.
+
+    **Ordered before openers, and that is not a priority.** Both draw from the same
+    per-box headroom and the same spacing clock, so whichever runs first simply takes
+    the slot; running follow-ups first means the box's last send of the day goes to a
+    thread already started rather than opening one more it will never return to. The
+    old arrangement — follow-ups claiming *ahead of* openers out of a separate budget —
+    is what produced 102 follow-ups against 1 first email in a week, and it is
+    unreachable here: there is one budget.
+
+    **A box that is not free is skipped, not waited for.** A follow-up cannot change
+    mailbox, so a busy box means its threads wait for the next pass. Others continue.
+
+    Giving up costs no send, so it is not gated on a box at all — a deal past its last
+    touch is closed whatever the pool's capacity.
+    """
+    from cold_outreach.core.sending_window import within_sending_window
+    from cold_outreach.emails.steps.follow_up import give_up, send_follow_up
+    from cold_outreach.leads.pools import awaiting_follow_up, exhausted_touches
+
+    for deal in exhausted_touches(campaign):
+        _apply(deal, give_up(deal))
+        result.gave_up += 1
+
+    if not within_sending_window():
+        return
+
+    for deal in awaiting_follow_up(campaign):
+        box = deal.mailbox
+        if box is None or not box.free_now() or box.headroom_today() <= 0:
+            continue
+        try:
+            _apply(deal, send_follow_up(deal))
+            result.followed_up += 1
+        except Exception:
+            logger.exception("follow-up to %s failed", deal.lead.public_id)
+            result.failed += 1
+            return
 
 
 def _open_conversations(campaign, result: PassResult, prompt_line_name: str | None = None) -> None:

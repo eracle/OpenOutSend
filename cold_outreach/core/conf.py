@@ -98,6 +98,28 @@ MIN_SEND_INTERVAL_SECONDS = 180          # 3 minutes, the hard floor between sen
 SEND_INTERVAL_JITTER_MIN_SECONDS = 30    # + U[30, 90] → a 3.5–4.5 minute spread
 SEND_INTERVAL_JITTER_MAX_SECONDS = 90
 
+# ----------------------------------------------------------------------
+# Follow-ups (leads/pools.awaiting_follow_up, emails/steps/follow_up.py)
+#
+# **The gaps are constants, not a decision.** An earlier version let the agent pick
+# its own interval and re-arm a per-deal countdown; that produced the defect in
+# `p2-e2-followup-identity-backoff-sentiment`, where a `wait` verdict failed to push
+# the next action out and the same unchanged context was re-read five times in one
+# window. Nothing here is scheduled on a row — the gap is measured backwards from
+# the mail log, so a pass can be interrupted anywhere and simply asked again.
+#
+# **Business days, not calendar days.** A Friday opener followed up on Monday has
+# waited one working day, and chasing across a weekend reads as a machine counting
+# hours (`core/business_time.py`).
+#
+# Two follow-ups, then the deal ends `unresponsive`. The cap is what stops an open
+# thread being pursued forever, and the number is deliberately small: cold volume is
+# what damages a sending domain, and a third touch is already likelier to draw a
+# complaint than a reply.
+# ----------------------------------------------------------------------
+FOLLOW_UP_GAPS_BUSINESS_DAYS = (3, 5)    # touch 2 after 3 days, touch 3 after 5 more
+MAX_COLD_TOUCHES = len(FOLLOW_UP_GAPS_BUSINESS_DAYS) + 1
+
 # Mean realized gap: the floor plus the expected value of U[min, max].
 MEAN_SEND_INTERVAL_SECONDS = MIN_SEND_INTERVAL_SECONDS + (
     SEND_INTERVAL_JITTER_MIN_SECONDS + SEND_INTERVAL_JITTER_MAX_SECONDS) / 2

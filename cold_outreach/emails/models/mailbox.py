@@ -42,15 +42,16 @@ class MailboxManager(models.Manager):
         volume spreads rather than piling on whichever row sorts first.
 
         Only *first* emails come through here. A reply is not cold volume and is
-        sent regardless of window, cap or spacing.
+        sent regardless of window, cap or spacing. A **follow-up is** cold volume, but
+        it cannot pick its box — the thread already has one — so it asks that box
+        directly with ``Mailbox.free_now``.
         """
         if not within_sending_window():
             return None
         now = timezone.now()
         ranked = [
             (box, headroom) for box in self.all()
-            if (box.next_send_at is None or box.next_send_at <= now)
-            and (headroom := box.headroom_today()) > 0
+            if box.free_now(now) and (headroom := box.headroom_today()) > 0
         ]
         if not ranked:
             return None
@@ -213,6 +214,20 @@ class Mailbox(models.Model):
         if self.paused_today():
             return 0
         return max(0, self.daily_limit - self.sent_today())
+
+    def free_now(self, now=None) -> bool:
+        """True when this box's spacing clock has elapsed — cold volume may go.
+
+        The per-box half of `free_for_first_email`, split out because a follow-up
+        cannot choose its box: the thread was opened from one, and answering from
+        another would break the conversation. So it asks that box whether it is free
+        instead of asking the pool for whichever box is freest.
+
+        The window and the daily cap are **not** here. They are pool-level and
+        per-day respectively, and both callers check them, so folding them in would
+        make this method answer three questions and be reusable for none.
+        """
+        return self.next_send_at is None or self.next_send_at <= (now or timezone.now())
 
 
 def has_mailbox() -> bool:

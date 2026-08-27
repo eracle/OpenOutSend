@@ -77,12 +77,12 @@ def send_first_email(deal, mailbox, prompt_line) -> DealState | None:
     deal.email_subject = opener.subject
     deal.thread = sent.thread
     deal.email_sent_at = sent.sent_at
-    _space_out(mailbox, timezone.now())
+    space_out(mailbox, timezone.now())
     return DealState.EMAILED
 
 
-def _space_out(mailbox, now) -> None:
-    """Set when this box may send its next first email.
+def space_out(mailbox, now) -> None:
+    """Set when this box may send its next cold email — an opener or a follow-up.
 
     Fresh jitter every time: a fixed cadence is its own machine signature, so the
     gap has to vary. Per box, because the daily ceiling is per box — two mailboxes

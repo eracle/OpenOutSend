@@ -1,19 +1,24 @@
 # cold_outreach/core/agents/outreach.py
-"""The outreach agent: one prompt, one decision type, both ends of the thread.
+"""The outreach agent: one prompt, one decision type, every stage of the thread.
 
-There is a single conversational agent. The cold open and every later reply are
-the same voice doing the same job — Mom Test research, not selling — so they
-render from one template (``outreach_agent.j2``) which branches on the only thing
-that actually differs: whether a thread exists yet.
+There is a single conversational agent. The cold open, a follow-up and every later
+reply are the same voice doing the same job — Mom Test research, not selling — so all
+three render from one template (``outreach_agent.j2``), which branches on the stage
+the caller names:
 
-- **first touch** (no thread): the agent must ``send_message`` and must supply a
-  ``subject``. ``emails/steps/send.py`` sends it and records the thread root.
-- **in thread**: the agent only ever runs on a thread the lead has *replied* to —
-  the mail pass has already written the reply — so it picks ``send_message`` /
-  ``mark_completed`` / ``suppress``. ``emails/steps/reply.py`` executes the choice.
+- **open** (no thread): the agent must ``send_message`` and must supply a ``subject``.
+  ``emails/steps/send.py`` sends it and records the thread root.
+- **follow_up** (a thread nobody has answered): ``send_message`` in the same thread
+  under the same subject, or ``mark_completed`` if the record says this person is
+  plainly the wrong fit. ``emails/steps/follow_up.py`` executes it.
+- **reply** (they wrote back): ``send_message`` / ``mark_completed`` / ``suppress``.
+  ``emails/steps/reply.py`` executes the choice.
 
-There is no ``wait`` and no follow-up interval, because nobody is chased: silence
-is not a decision the agent gets to make, it is simply the absence of work.
+**The agent never decides *when*.** There is no ``wait`` action and no follow-up
+interval to choose: the pools in ``leads/pools.py`` decide who is due from timestamps
+in the mail log, and the agent is only ever asked what to write. An earlier version
+let it re-arm its own countdown, and a ``wait`` verdict that failed to push the next
+action out re-read one unchanged context five times inside a single window.
 
 ``suppress`` is the *worded* unsubscribe — "take me off your list", "stop
 emailing me". It threads like any other reply, so the box-wide alias scan in
@@ -84,91 +89,127 @@ class OutreachDecision(BaseModel):
 RECENT_MESSAGES_WINDOW = 6
 
 
-# ── The opener's hard rules ───────────────────────────────────────
+# ── The three stages of a conversation ────────────────────────────
+
+# What the agent is being asked to write. `OPEN` and `FOLLOW_UP` are **cold** — nobody
+# has answered, the same hard rules apply to both, and both are written from the same
+# prompt line so a sequence keeps one voice. `REPLY` is not cold: somebody wrote to us,
+# and the message answers what they said rather than making a move picked in advance.
+OPEN = "open"
+FOLLOW_UP = "follow_up"
+REPLY = "reply"
+
+COLD_STAGES = (OPEN, FOLLOW_UP)
+
+
+# ── The hard rules for a cold message ─────────────────────────────
 
 # Most of the LinkedIn-DM *feel* is length and ask-shape rather than depth of
-# personalisation, and a cold opener has one job small enough to do in a paragraph.
+# personalisation, and a cold email has one job small enough to do in a paragraph.
 # A ceiling rather than a target: a prompt line that writes 30 words is not in breach.
-OPENER_WORD_CEILING = 75
+# It binds a follow-up as hard as an opener — a chaser that runs longer than the
+# message it is chasing is the exact thing nobody answers.
+COLD_WORD_CEILING = 75
 
-# One retry, and only for a breach of these rules. A model that writes 80 words
-# usually writes 60 when told; a model that ignores the ceiling twice is a
-# configuration problem, and failing the send is how it gets noticed rather than
-# silently mailing something that breaks the discipline the whole card rests on.
-OPENER_ATTEMPTS = 2
+# One retry, and only for a breach of these rules. A model that writes 80 words usually
+# writes 60 when told; one that ignores the ceiling twice is a configuration problem,
+# and failing the send is how that gets noticed rather than quietly mailing something
+# that breaks the discipline.
+COLD_ATTEMPTS = 2
 
-# A first email asks a question. A link is a call to action wearing a URL, and
-# putting one in the opener converts a conversation into a funnel step.
+# A cold email asks a question. A link is a call to action wearing a URL, and putting
+# one in converts a conversation into a funnel step.
 _URL = re.compile(r"https?://|\bwww\.", re.IGNORECASE)
 
+# A merge tag or a bracketed slot that reached the output is a placeholder the model
+# failed to fill. It is checked on the way **out**, where the damage would be — a
+# prompt is allowed to contain whatever it likes; an email is not.
+_PLACEHOLDER = re.compile(r"\{\{.*?\}\}|\[(?:your|first|last|company|lead)[ _][^\]]{0,30}\]",
+                          re.IGNORECASE)
 
-def run_outreach_agent(deal, prompt_line=None) -> OutreachDecision:
-    """Decide the next move for ``deal`` — the cold open or the answer to a reply.
+
+def run_outreach_agent(deal, prompt_line=None, stage=None) -> OutreachDecision:
+    """Decide the next move for ``deal`` at ``stage``.
 
     The caller has already folded any new inbound messages into ``deal.chat_summary``
     (``emails/steps/reply.py``), so this reads the conversation store rather than the
     mailbox — no IMAP here.
 
-    ``prompt_line`` is the move the *opener* makes (``core/prompt_lines.py``) and is
-    ignored in thread: a reply answers what the person actually wrote, which is not a
-    move anybody picks in advance. The caller chooses it, because the caller is also
-    what records it on the message that goes out. ``None`` means an install with no
-    prompt lines at all, which still has a complete opener prompt without one.
+    ``stage`` says which of the three things is being written, and the **caller** names
+    it rather than this function deriving it: each step knows exactly what it is, and a
+    derivation here would be a second copy of the pool predicates in `leads/pools.py`,
+    free to drift from them. It defaults to the one case that is unambiguous from the
+    row alone — no thread means nothing has been sent.
 
-    **A first touch is validated and retried, never silently sent.** The rules the
-    opener has to keep are enforced here rather than in the prompt-line files, so no
-    line can drop one by being edited carelessly and no author has to repeat them in
-    every file.
+    ``prompt_line`` is the move the cold message makes (``core/prompt_lines.py``). A
+    follow-up is given the **same line the opener used**, so a sequence reads as one
+    person, and so a reply can be attributed to one line rather than to a mixture.
+    Ignored on a reply.
+
+    **A cold message is validated and retried, never silently sent.** The rules live
+    here rather than in the prompt-line files, so no line can drop one by being edited
+    carelessly and no author has to repeat them in every file.
     """
     public_id = deal.lead.public_id
-    is_first_touch = not deal.thread_id
+    stage = stage or (OPEN if not deal.thread_id else REPLY)
 
-    recent = [] if is_first_touch else _load_recent_messages(deal)
-    system_prompt = _render_system_prompt(deal, recent, is_first_touch, prompt_line)
+    recent = [] if stage == OPEN else _load_recent_messages(deal)
+    system_prompt = _render_system_prompt(deal, recent, stage, prompt_line)
 
     agent = Agent(
         get_llm_model(),
         output_type=OutreachDecision,
         model_settings={"temperature": 0.7, "timeout": 60},
     )
-    if not is_first_touch:
+    if stage not in COLD_STAGES:
         decision = _run_once(agent, system_prompt, public_id)
         logger.info("outreach agent for %s: %s", public_id, decision.action)
         return decision
 
     prompt = system_prompt
-    for attempt in range(1, OPENER_ATTEMPTS + 1):
+    for attempt in range(1, COLD_ATTEMPTS + 1):
         decision = _run_once(agent, prompt, public_id)
-        _validate_opener(decision, public_id)
-        breach = opener_breach(decision.message or "")
+        if stage == OPEN:
+            _validate_opener(decision, public_id)
+        if decision.action != "send_message":
+            logger.info("outreach agent for %s: %s", public_id, decision.action)
+            return decision
+        breach = cold_message_breach(decision.message or "")
         if breach is None:
-            logger.info("outreach agent for %s: %s (prompt line: %s)",
-                        public_id, decision.action,
+            logger.info("outreach agent for %s: %s %s (prompt line: %s)",
+                        public_id, stage, decision.action,
                         prompt_line.id if prompt_line else "none")
             return decision
-        logger.warning("opener for %s breached a rule on attempt %d: %s",
-                       public_id, attempt, breach)
+        logger.warning("%s for %s breached a rule on attempt %d: %s",
+                       stage, public_id, attempt, breach)
         prompt = f"{system_prompt}\n\n## Your last draft was rejected\n{breach}\nWrite it again."
 
-    raise ValueError(f"opener for {public_id} kept breaking a hard rule: {breach}")
+    raise ValueError(f"{stage} for {public_id} kept breaking a hard rule: {breach}")
 
 
-def opener_breach(message: str) -> str | None:
-    """The rule this opener breaks, worded for the model, or ``None`` if it keeps them.
+def cold_message_breach(message: str) -> str | None:
+    """The rule this cold message breaks, worded for the model, or ``None``.
 
-    Only the mechanical ones live here — the rules a reader could check without
+    Binds an opener and a follow-up alike: they are the same kind of message to the
+    person receiving them, and a chaser allowed to run long is how a short opener turns
+    into a paragraph nobody answers.
+
+    Only the mechanical rules live here — the ones a reader could check without
     judgement. Language, register and sourcing are asked for in the prompt, because a
-    regex cannot tell a sourced claim from an invented one and pretending otherwise
+    regex cannot tell a sourced claim from an invented one, and pretending otherwise
     would be worse than the honest gap.
     """
     words = len(message.split())
-    if words > OPENER_WORD_CEILING:
-        return (f"It ran to {words} words; the ceiling is {OPENER_WORD_CEILING}. "
+    if words > COLD_WORD_CEILING:
+        return (f"It ran to {words} words; the ceiling is {COLD_WORD_CEILING}. "
                 "Cut it down — do not compress a long message, write a short one.")
     if _URL.search(message):
-        return "It contained a link. A first email carries no link at all."
+        return "It contained a link. A cold email carries no link at all."
     if "—" in message:
         return "It contained an em dash, which reads as machine-written. Use plain punctuation."
+    if match := _PLACEHOLDER.search(message):
+        return (f"It contained the unfilled placeholder {match.group(0)!r}. "
+                "Write the actual words, or leave the thought out.")
     return None
 
 
@@ -191,10 +232,10 @@ def _validate_opener(decision: OutreachDecision, public_id: str) -> None:
 # ── Prompt context ────────────────────────────────────────────────
 
 
-def _render_system_prompt(deal, recent_messages: list, is_first_touch: bool, prompt_line=None) -> str:
-    """Render the outreach prompt for whichever end of the thread we're at."""
+def _render_system_prompt(deal, recent_messages: list, stage: str, prompt_line=None) -> str:
+    """Render the outreach prompt for whichever stage of the conversation we're at."""
     now = timezone.now()
-    thread_context = {} if is_first_touch else {
+    thread_context = {} if stage == OPEN else {
         "chat_summary": _format_facts(deal.chat_summary),
         "recent_messages": _format_recent_messages(recent_messages, now),
         "today": now.strftime("%Y-%m-%d"),
@@ -203,9 +244,12 @@ def _render_system_prompt(deal, recent_messages: list, is_first_touch: bool, pro
     return render(
         "outreach_agent.j2",
         **base_context(deal),
-        is_first_touch=is_first_touch,
-        prompt_line=prompt_line.prompt if (prompt_line and is_first_touch) else "",
-        word_ceiling=OPENER_WORD_CEILING,
+        stage=stage,
+        is_first_touch=stage == OPEN,
+        is_cold=stage in COLD_STAGES,
+        is_follow_up=stage == FOLLOW_UP,
+        prompt_line=prompt_line.prompt if (prompt_line and stage in COLD_STAGES) else "",
+        word_ceiling=COLD_WORD_CEILING,
         **thread_context,
     )
 

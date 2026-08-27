@@ -1,9 +1,10 @@
 # cold_outreach/tests/emails/test_reply.py
-"""Answering a reply — and the invariant that there is no other reason to email.
+"""Answering a reply.
 
-The first test here is the whole follow-up policy: a lead who does not write back
-is never emailed again. Everything the old scheduler did to pace, prioritise and
-reserve capacity for chasing is gone because of it.
+A reply is the one thing that takes a lead out of the cold sequence for good: from
+here the thread runs on what they write, and `leads/pools.awaiting_follow_up` can
+never select the deal again. Chasing the silent ones is `test_follow_up.py`; this file
+is what happens once somebody has actually said something.
 """
 from datetime import timedelta
 from unittest.mock import patch

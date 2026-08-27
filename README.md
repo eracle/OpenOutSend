@@ -28,7 +28,7 @@ a second, separate invocation is what mails them:
 pip install -e .
 outsend init --campaign devtools                            # once: what you sell, who you are, a box
 openoutreach find 50 --json | outsend --campaign devtools   # store
-outsend send --campaign devtools                            # read, answer, open
+outsend send --campaign devtools                            # read, answer, follow up, open
 ```
 
 The two invocations are separate on purpose: a pipe's right-hand side must not block on the network
@@ -42,10 +42,16 @@ the counts to **stderr**, and exits 0 when every line became a row. Its database
 first run, so a fresh install is an ingest that works rather than a traceback.
 
 **`outsend send` is one bounded pass, not a daemon.** It reads the mail, answers every thread the lead
-has replied in, opens as many first emails as the guards allow, and exits — cadence is a timer's job.
-Reading first is what makes the other two honest: an opt-out that arrived overnight suppresses the
-person before anything is written to them. Openers are the only cold volume, so they are the only
-thing under a daily cap, a spacing clock and a sending window; a reply obeys none of the three.
+has replied in, writes again to the ones who went quiet, opens as many first emails as the guards
+allow, and exits — cadence is a timer's job. Reading first is what makes the rest honest: an opt-out
+that arrived overnight suppresses the person before anything is written to them.
+
+**A lead who never answers gets two more emails, then the pursuit ends** — after three working days,
+then five, and the deal closes as `unresponsive`. A reply at any point ends the sequence and the
+conversation takes over. **Follow-ups are cold volume and are treated as such**: they share one daily
+cap, one spacing clock and one sending window with the openers, rather than claiming ahead of them out
+of a budget of their own. A reply obeys none of the three, because answering someone who wrote to you
+is not cold volume and holding the answer until Monday is worse than sending it at 21:00.
 **`outsend init` collects what a first run needs** — what the campaign sells and to whom, the name
 that signs the mail, and a mailbox to send it from — and it runs implicitly on the first send, so a
 setup step is never something a timer discovers. The environment first, prompts second and **only on a
