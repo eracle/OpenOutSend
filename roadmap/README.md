@@ -11,9 +11,10 @@ are still live.
 **The eighth is new**, written in openoutreach-docs and filed here for the same reason the seven came:
 the subject is here. It is the only card in the folder designed *after* the port rather than before it.
 
-**The ninth is the one to read first.** Every other card describes code that cannot run yet: there is no
-console script, no settings module and no database, and the send path still reaches into OpenOutreach's
-CRM for the row it acts on. `p1-e2-outsend-ingest-and-packaging` is what makes the rest buildable.
+**The ninth made the rest buildable, and it is done** — `outsend` is a command, `openoutsend` is on
+PyPI, and `pip install openoutreach[send]` installs both halves of the pipe. It is archived in
+[`history/`](history/2026-08-27-p1-e2-outsend-ingest-and-packaging.md), which is where a finished card
+goes; read it for how the receiver got its lead model, its store and its release path.
 
 **The tenth is a hypothesis rather than a design**, filed so the reasoning behind it is not lost:
 whether the reply rate answers to how the message *looks* — a face, a chat shape, somewhere to reply
@@ -23,14 +24,13 @@ that is not an inbox. It is gated on being able to count a reply rate at all.
 
 | Card | What it is | Why it came here |
 |---|---|---|
-| `p1-e2-email-bounce-detection-suppression` | The send path has no feedback from delivery failure | **The most valuable one.** A bounce is the only verdict on whether an address was real, and the finder can no longer see one. Half the mechanism already exists in `warmth.py` |
+| `p1-e2-email-bounce-detection-suppression` | The send path has no feedback from delivery failure | **Mostly closed.** A bounce naming a dead address now suppresses it and ends the deal at `UNDELIVERABLE`; what is left is telling an operator whether their domain is on a DNSBL |
 | `p1-e2-inbound-mail-silent-skip` | The mail pass can skip a message and nothing notices | **A live bug.** Came across unfixed with `sync.py` |
 | `p2-e2-followup-identity-backoff-sentiment` | Three defects in the outreach agent | The agent is `cold_outreach/core/agents/outreach.py` now |
 | `p3-e1-onboarding-daily-send-cap-prompt` | Ask the operator for a daily send cap | Its premise moved — the cap is *measured*, not configured. Rewrite before building |
 | `p3-e2-mailbox-oauth-authentication` | What mailbox OAuth would cost | Its trigger (Google restricting app passwords) now breaks *this* project and nothing else |
 | `p3-e2-resend-opt-in-send-transport` | Resend as an alternative transport | Sending lives here |
 | `p2-e3-inbound-agentic-email` | Hosted reply capture + agent autopilot, as a paid tier | The only *product* idea in the folder, and a sender's product |
-| `p1-e2-outsend-ingest-and-packaging` | Ingest on stdin, the lead model behind it, and `outsend` as a command | **Written here, and the prerequisite for every row above.** Nothing in this repo runs until it lands |
 | `p1-e2-sender-message-generation` | Plays as files, fragments as the database, a learner over observed replies | **Not inherited — written after the port.** It reshapes `core/agents/outreach.py` and its prompt template, and it is what the low reply rate on the first version actually needs |
 | `p2-e2-message-carries-a-face` | Whether presentation moves the reply rate — an avatar, a chat shape, a hosted thread | **Written here, from a live complaint.** A hypothesis with a cheaper rival already on the table, so it is gated on measuring a reply rate rather than on effort |
 

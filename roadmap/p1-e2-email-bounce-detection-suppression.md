@@ -26,9 +26,17 @@
 > halt itself — none of which the epic decides. It also keeps the measured
 > evidence, which is not reproducible.
 
-- **Status:** To Do — policy only; mechanism moved to [[2026-08-13-p1-e2-mail-log-epic]]
-- **Priority:** Critical
-- **Effort:** Unknown — the modelling question is open (see *Open questions*)
+- **Status:** In Progress — **the suppression half is built.** A bounce naming a dead
+  address now ends the pursuit: the address joins the suppression list, its open deals
+  reach `UNDELIVERABLE`, and a refusal at the SMTP door does the same thing through
+  the same function. The policy is in *What the policy turned out to be* below, and
+  every open question in this card is answered there except one. **What is left is
+  the second half of one criterion — the operator cannot ask the system whether the
+  domain is listed on a DNSBL.** That is the whole remainder.
+- **Priority:** Medium — was Critical while addresses were mailed forever; the failure
+  mode that earned that rating is closed.
+- **Effort:** Small — DNSBL lookups against the sending domain, surfaced somewhere an
+  operator reads.
 - **Area:** Pipeline
 
 > **This card states a problem, not a solution.** It is written for someone
@@ -227,18 +235,53 @@ solution may reject the framing entirely.
 
 Stated as outcomes; how they are achieved is open.
 
-- A non-delivery report never appears in a deal's conversation or chat facts, and
-  never influences the agent's reasoning.
-- No message is ever sent to an address already known to be undeliverable — from
-  any campaign, at any later date.
-- A deal that cannot be delivered to reaches a terminal, rather than being
-  re-selected indefinitely.
-- The send volume of a box that is bouncing goes **down** without a human
-  intervening.
-- An operator can answer "what is my bounce rate?" and "is my domain listed?" from
-  the system, not from a third-party website.
-- A replacement address found later for the same person is still sendable.
-- Each behaviour is covered by a test in the OpenOutreach submodule.
+- [x] A non-delivery report never appears in a deal's conversation or chat facts,
+      and never influences the agent's reasoning.
+- [x] No message is ever sent to an address already known to be undeliverable —
+      from any campaign, at any later date. *(A dead address goes on the same
+      `Suppression` list an opt-out uses, so ingest parks new rows for it and
+      `sender.suppressed` re-asks after the agent has written.)*
+- [x] A deal that cannot be delivered to reaches a terminal, rather than being
+      re-selected indefinitely. *(`DealState.UNDELIVERABLE` — its own state, not
+      `UNSUBSCRIBED`, because nobody asked for anything. Both pools name the state
+      they want, so a terminal state is unsendable without an exclusion to forget.)*
+- [x] The send volume of a box that is bouncing goes **down** without a human
+      intervening. *(Already true — `warmth.py` halves capacity above tolerance; a
+      suppressing bounce still records its `DeliveryEvent`, so this keeps working
+      for the statuses that now also end the pursuit.)*
+- [ ] An operator can answer "what is my bounce rate?" and "is my domain listed?"
+      from the system, not from a third-party website. *(The rate is arithmetic the
+      log can already answer; **DNSBL listing is not built**, and it is the honest
+      remainder of this card.)*
+- [x] A replacement address found later for the same person is still sendable.
+      *(Suppression is keyed on the address, never on the lead or the deal.)*
+- [x] Each behaviour is covered by a test.
+
+## What the policy turned out to be
+
+**Only the receiver's explicit statement that there is nobody there.** The statuses
+are listed one by one in `emails/delivery_policy._DEAD_ADDRESS_STATUSES` — 5.1.1,
+5.1.2, 5.1.3, 5.1.6, 5.1.10, 5.2.1 — rather than matched as a class, because the
+list *is* the policy and has to be auditable without knowing RFC 3463 by heart.
+
+**Two exclusions carry most of the safety.** `5.7.x` is the policy/reputation class,
+a statement about this sending box rather than the recipient; suppressing on it would
+delete good prospects from every future campaign for as long as our standing was
+poor, turning a recoverable dip into permanent, invisible list attrition. It already
+has a home in `Response.BLOCKED`, which pauses the box and calls for an operator.
+`5.2.2` (mailbox full) is a deferral wearing a 5.x code — the mailbox empties and the
+person is real. A report carrying **no** parseable status suppresses nothing: an
+unreadable report is not evidence.
+
+**The open questions resolved as follows.** *What entity is "bounced" a property of?*
+The **address** — `Suppression` was already address-keyed for the opt-out duty, and
+its `reason` field already anticipated a bounce. *Is a mail-borne failure the same
+event as an SMTP response?* **Yes** — same enhanced status, same meaning — so both
+paths call one `delivery_policy.stop_mailing` and cannot drift; the only difference
+is which door the answer came home through. *End the pursuit or re-enrich?* **End
+it**: re-enrichment spends a paid credit and may well return the same dead address,
+and ending it forecloses nothing, since a replacement address is sendable the moment
+it arrives. *Should the system halt itself?* Untouched — still `warmth`'s question.
 
 ## Not this card
 

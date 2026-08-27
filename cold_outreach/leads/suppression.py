@@ -34,13 +34,32 @@ def is_suppressed(address: str | None) -> bool:
     return bool(email) and Suppression.objects.filter(email=email).exists()
 
 
-def suppress_email(address: str | None, *, reason: str = "") -> int:
+# A deal already here is left alone: whatever ends it now, it ended before.
+TERMINAL_STATES = (
+    DealState.COMPLETED,
+    DealState.UNSUBSCRIBED,
+    DealState.UNDELIVERABLE,
+)
+
+
+def suppress_email(
+    address: str | None,
+    *,
+    reason: str = "",
+    end_state: str = DealState.UNSUBSCRIBED,
+) -> int:
     """Put *address* on the list for good and end its open conversations.
 
-    Returns the number of deals moved to `UNSUBSCRIBED` — the deals rather than the
-    leads, because the request is to stop being emailed and a deal is what would have
-    emailed them. Already-terminal deals are left where they are: an opt-out arriving
-    after a conversation completed changes nothing about how it ended.
+    Returns the number of deals moved to *end_state* — the deals rather than the
+    leads, because the duty is to stop emailing and a deal is what would have emailed
+    them. Already-terminal deals are left where they are: an opt-out arriving after a
+    conversation completed changes nothing about how it ended.
+
+    ``end_state`` says *why the mailing stopped*, and the two reasons must not be
+    told apart only by reading a free-text column: somebody who asked to stop lands
+    at `UNSUBSCRIBED`, an address the receiver says is dead lands at `UNDELIVERABLE`
+    (`emails/delivery_policy.stop_mailing`). Both are terminal and neither is
+    sendable; the difference is what the funnel says happened.
 
     Idempotent, and the first suppression wins. Re-suppressing keeps the original
     timestamp and reason, since when somebody *first* asked is the fact worth having.
@@ -55,8 +74,8 @@ def suppress_email(address: str | None, *, reason: str = "") -> int:
     # row that arrived by any other route must not slip through.
     ended = (
         Deal.objects.filter(lead__email__iexact=email)
-        .exclude(state__in=(DealState.COMPLETED, DealState.UNSUBSCRIBED))
-        .update(state=DealState.UNSUBSCRIBED)
+        .exclude(state__in=TERMINAL_STATES)
+        .update(state=end_state)
     )
     logger.info(
         "suppressed %s (%s) — %d open deal(s) ended",

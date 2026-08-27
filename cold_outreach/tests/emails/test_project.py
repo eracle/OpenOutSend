@@ -69,6 +69,80 @@ class TestBounces:
 
 
 @pytest.mark.django_db
+class TestUndeliverableAddresses:
+    """The half of the bounce story that was missing: a dead address stops being mailed.
+
+    `indieoutreach.app` reached SURBL with clean SPF/DKIM/DMARC — authentication was
+    never the problem, address quality was, and nothing in the system could perceive
+    it. Recording the bounce made it visible; these tests are what makes it act.
+    """
+
+    def _bounced(self, status, *, email="p@corp.com"):
+        """One send to *email*, bounced back with *status*. Returns the deal."""
+        box = _box()
+        deal = DealFactory(lead=LeadFactory(email=email), state=DealState.EMAILED)
+        maillog.outbound(box, to=email, message_id="root@infra.com")
+        _pass(box, bounce(7, to=SENDER, original="<root@infra.com>",
+                          recipient=email, status=status))
+        deal.refresh_from_db()
+        return deal
+
+    def test_a_dead_address_is_suppressed_and_its_deal_ends_undeliverable(self):
+        deal = self._bounced("5.1.1")
+
+        assert is_suppressed("p@corp.com")
+        assert deal.state == DealState.UNDELIVERABLE
+
+    def test_undeliverable_is_not_unsubscribed(self):
+        """Nobody asked for anything — the funnel must not say they did."""
+        assert self._bounced("5.1.1").state != DealState.UNSUBSCRIBED
+
+    @pytest.mark.parametrize("status", ["5.7.1", "5.7.26"])
+    def test_a_reputation_block_never_suppresses_the_recipient(self, status):
+        """5.7.x is about *this box*, not the person.
+
+        Suppressing on it would delete good prospects from every future campaign for
+        as long as our standing was poor — a recoverable dip turned into permanent,
+        invisible list attrition.
+        """
+        deal = self._bounced(status)
+
+        assert not is_suppressed("p@corp.com")
+        assert deal.state == DealState.EMAILED
+
+    @pytest.mark.parametrize("status", ["4.2.2", "5.2.2", None])
+    def test_a_recoverable_failure_never_suppresses(self, status):
+        """A deferral, a full mailbox, and a report naming no status at all.
+
+        The mailbox empties, the deferral lifts, and an unreadable report is not
+        evidence — so none of the three may end a pursuit.
+        """
+        deal = self._bounced(status)
+
+        assert not is_suppressed("p@corp.com")
+        assert deal.state == DealState.EMAILED
+
+    def test_the_bounce_is_still_recorded_when_it_does_not_suppress(self):
+        """Not suppressing is not the same as not noticing: warmth still reads it."""
+        self._bounced("5.7.1")
+
+        assert DeliveryEvent.objects.filter(status=DeliveryEvent.Status.BOUNCED).count() == 1
+
+    def test_a_replacement_address_for_the_same_person_is_sendable(self):
+        """Suppression is keyed on the address, so a corrected one is not caught by it."""
+        self._bounced("5.1.1", email="old@corp.com")
+
+        assert is_suppressed("old@corp.com")
+        assert not is_suppressed("new@corp.com")
+
+    def test_the_daemon_that_reported_it_is_never_the_one_suppressed(self):
+        """The address to stop mailing is the one we wrote to, not the postmaster."""
+        self._bounced("5.1.1")
+
+        assert not is_suppressed("mailer-daemon@googlemail.com")
+
+
+@pytest.mark.django_db
 class TestOptOuts:
     def test_the_alias_suppresses_everyone_holding_the_address(self):
         box = _box()

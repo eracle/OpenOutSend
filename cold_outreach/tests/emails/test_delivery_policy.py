@@ -11,7 +11,10 @@ from cold_outreach.emails.delivery_policy import (
     record_failure,
 )
 from cold_outreach.emails.models import DeliveryEvent, Mailbox
+from cold_outreach.leads.models import DealState
+from cold_outreach.leads.suppression import is_suppressed
 from cold_outreach.tests.emails import maillog
+from cold_outreach.tests.factories import DealFactory, LeadFactory
 
 
 def _box() -> Mailbox:
@@ -107,6 +110,33 @@ class TestRecordFailure:
         assert event.smtp_code == 550
         assert event.enhanced_status == "5.4.5"
         assert event.status == DeliveryEvent.Status.REJECTED
+
+    def test_a_refusal_at_the_door_suppresses_just_as_a_report_would(self):
+        """The same status means the same thing whichever route it comes home by."""
+        send = maillog.outbound(_box(), to="gone@corp.com")
+        deal = DealFactory(lead=LeadFactory(email="gone@corp.com"), state=DealState.EMAILED)
+
+        record_failure(send, smtplib.SMTPRecipientsRefused(
+            {"gone@corp.com": (550, b"5.1.1 The email account does not exist")},
+        ))
+
+        deal.refresh_from_db()
+        assert is_suppressed("gone@corp.com")
+        assert deal.state == DealState.UNDELIVERABLE
+
+    def test_a_reputation_refusal_at_the_door_suppresses_nobody(self):
+        send = maillog.outbound(_box(), to="fine@corp.com")
+        deal = DealFactory(lead=LeadFactory(email="fine@corp.com"), state=DealState.EMAILED)
+
+        policy = record_failure(send, smtplib.SMTPDataError(
+            550, b"5.7.1 Our system has detected ... blocked",
+        ))
+
+        deal.refresh_from_db()
+        assert not is_suppressed("fine@corp.com")
+        assert deal.state == DealState.EMAILED
+        # It is still the box's problem, and still stops the box for the day.
+        assert policy.pause_today and policy.needs_operator
 
     def test_transport_failure_is_recorded_without_a_code(self):
         send = maillog.outbound(_box())

@@ -70,9 +70,9 @@ accepted send leaves a row and every inbound turn leaves one, so reply rate is c
 and — once plays exist — per play. Until that number is on screen, any of the three pieces above
 would ship as a change nobody can grade.
 
-So the prerequisite is not effort, it is **a denominator**:
-[`p1-e2-outsend-ingest-and-packaging`](p1-e2-outsend-ingest-and-packaging.md) (nothing runs without
-it) and then the reply-rate arithmetic over the log.
+So the prerequisite is not effort, it is **a denominator**. The program itself is no longer in the way
+— [`p1-e2-outsend-ingest-and-packaging`](history/2026-08-27-p1-e2-outsend-ingest-and-packaging.md)
+landed — so what remains is the reply-rate arithmetic over the log.
 
 ## User Story
 

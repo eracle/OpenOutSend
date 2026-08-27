@@ -107,7 +107,7 @@ class DealState(models.TextChoices):
     """Where a deal is in *this* side's funnel — the conversation, not the search.
 
     The finder's states describe finding somebody and optionally resolving an
-    address; they all end before the first message is written. These four describe
+    address; they all end before the first message is written. These five describe
     what happens after:
 
     - **READY** — ingested and not yet written to. A row with no address rests here
@@ -118,12 +118,21 @@ class DealState(models.TextChoices):
     - **COMPLETED** — the conversation reached its end, with an `outcome` saying how.
     - **UNSUBSCRIBED** — they asked to stop. The address is on the suppression list
       and this row is terminal for good.
+    - **UNDELIVERABLE** — the receiver said there is nobody at that address. Terminal
+      in the same way, and deliberately *not* `UNSUBSCRIBED`: nobody asked for
+      anything, and a row reading as withdrawn consent when it is really a dead
+      mailbox misstates what happened to whoever reads the funnel later.
+
+    **A state added here is unsendable by default.** Both pools name the state they
+    want (`state=READY`, `state=EMAILED`) rather than excluding the ones they don't,
+    so a terminal state cannot be re-selected by an exclusion somebody forgot.
     """
 
     READY = "Ready to Email"
     EMAILED = "Emailed"
     COMPLETED = "Completed"
     UNSUBSCRIBED = "Unsubscribed"
+    UNDELIVERABLE = "Undeliverable"
 
 
 class Outcome(models.TextChoices):

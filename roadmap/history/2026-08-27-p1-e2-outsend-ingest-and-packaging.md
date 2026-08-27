@@ -1,6 +1,6 @@
 # `outsend` Becomes a Program — Ingest on stdin, and a Command on the PATH
 
-- **Status:** In Progress — **`openoutreach find 50 --json | outsend` is a command now.** The lead
+- **Status:** Done — **`openoutreach find 50 --json | outsend` is a command now.** The lead
   model exists (`cold_outreach/leads/`), the nine foreign imports are gone, ingest reads stdin and
   upserts idempotently with the door closed behind it, and the program around it is here: a console
   script, this repo's own settings, a SQLite store under `~/.openoutsend/` that migrates itself, and a
@@ -12,10 +12,10 @@
   and the box is stored only once its SMTP login succeeds. **Every test in the repo runs** — the five
   inherited files are ported and nothing is ignored. **The release path is built too**: `deploy.yml`
   tests and then publishes on every green push to `main`, with the version derived from the commit
-  count, exactly as the finder does it. What is left is arming it — a PyPI pending publisher and the
-  `pypi` environment, two browser steps — and then the `openoutreach[send]` extra, which cannot be
-  declared until this distribution is on PyPI.
-- **Priority:** High — every other card here describes code that cannot run yet.
+  count, exactly as the finder does it. **And it is armed and shipped**: `openoutsend` is on PyPI,
+  and `pip install openoutreach[send]` puts both binaries on the PATH — verified in a clean venv,
+  with no module in the finder importing this one.
+- **Priority:** High — every other card here described code that could not run until this landed.
 - **Effort:** Medium
 - **Area:** Packaging + ingest — the receiving end of
   [the boundary contract](https://github.com/eracle/openoutreach-docs/blob/main/roadmap/p1-e2-find-send-boundary-contract.md)

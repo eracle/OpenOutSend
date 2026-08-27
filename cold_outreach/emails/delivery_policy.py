@@ -170,6 +170,63 @@ def _enhanced_status(error) -> tuple[int, int, int] | None:
     return tuple(int(part) for part in match.groups())
 
 
+# ── Undeliverable addresses ───────────────────────────────────────────
+
+# The enhanced statuses that mean *there is nobody at this address*, as opposed to
+# *not right now* or *not from you*. Listed one by one rather than matched as the
+# 5.1.x class, because the list is the policy and a reader has to be able to audit
+# it without knowing RFC 3463 by heart.
+_DEAD_ADDRESS_STATUSES = frozenset({
+    "5.1.1",   # no such user
+    "5.1.2",   # no such domain
+    "5.1.3",   # the address is malformed and never could have worked
+    "5.1.6",   # mailbox moved, no forwarding address
+    "5.1.10",  # null MX — the domain publishes that it accepts no mail at all
+    "5.2.1",   # the mailbox exists and is disabled
+})
+
+# Two absences are deliberate and load-bearing.
+#
+# **5.7.x is not here**, and it is the one that would do the damage. It is the
+# policy/reputation class — *we are blocked* — a statement about this sending box,
+# not about the recipient. Suppressing on it would delete perfectly good prospects
+# from every future campaign for as long as our standing was poor, turning a
+# recoverable reputation dip into permanent, invisible list attrition. It already
+# has the right home: `Response.BLOCKED` pauses the box and calls for an operator.
+#
+# **5.2.2 (mailbox full) is not here** either: a full mailbox empties, and the
+# person is real. It is a deferral wearing a 5.x code.
+
+
+def address_is_dead(enhanced_status: str) -> bool:
+    """True when *enhanced_status* is the receiver saying this address is gone.
+
+    Conservative on purpose: a blank, malformed or unlisted status is never dead.
+    Mail stops going to somebody only on the receiver's own explicit statement that
+    there is nobody there — a false positive here deletes a real prospect from every
+    campaign, now and later, and nothing in the system would ever say why.
+    """
+    return enhanced_status in _DEAD_ADDRESS_STATUSES
+
+
+def stop_mailing(address: str, enhanced_status: str) -> int:
+    """Suppress *address* as undeliverable. Returns the deals it ended.
+
+    The single place a delivery failure becomes a suppression, so the NDR path and
+    the synchronous-refusal path cannot drift: they carry the same enhanced status
+    and mean the same thing to the receiver, and the only difference between them is
+    which door the answer came back through.
+    """
+    from cold_outreach.leads.models import DealState
+    from cold_outreach.leads.suppression import suppress_email
+
+    return suppress_email(
+        address,
+        reason=f"undeliverable ({enhanced_status})",
+        end_state=DealState.UNDELIVERABLE,
+    )
+
+
 def _detail(error) -> str:
     """The server's own words, decoded and trimmed for storage."""
     if isinstance(error, bytes):
@@ -238,6 +295,14 @@ def record_failure(message, exc: Exception):
                    address, verdict.response, verdict.smtp_code, verdict.detail)
     if policy.needs_operator:
         logger.error("%s needs attention — %s: %s", address, verdict.response, verdict.detail)
+
+    # A refusal at the door and a report an hour later carry the same enhanced status
+    # and mean the same thing about the recipient. Reading only one of them would let
+    # a dead address survive purely by the route its verdict came home.
+    if address_is_dead(verdict.enhanced_status):
+        ended = stop_mailing(message.to_address, verdict.enhanced_status)
+        logger.warning("%s is undeliverable (%s) — %d open deal(s) ended",
+                       message.to_address, verdict.enhanced_status, ended)
     return policy
 
 

@@ -12,11 +12,13 @@ thread, and the cycle finds the deal by comparing the thread's newest inbound tu
 with its newest outbound one. There is no second copy of the conversation to keep
 in step — which is the dual-write this design deleted.
 
-Nothing here decides what a bounce *means for a deal*. Whether a dead address
-ends the pursuit or sends it back for re-enrichment is policy, and it is owned by
-``p1-e2-email-bounce-detection-suppression``. This card only makes the bounce
-visible — which is the part that was missing while capacity ramped ×1.5/day
-against 590 sends and zero recorded verdicts.
+**A bounce that names a dead address ends the pursuit.** Only the receiver's own
+explicit statement counts — the enhanced statuses in
+``delivery_policy._DEAD_ADDRESS_STATUSES``, never the 5.7.x policy class, which is
+about this box rather than the recipient. Everything else is recorded and left
+alone, so a deferral and a full mailbox stay sendable. Whether a dead address may
+later be *replaced* is untouched: suppression is keyed on the address, so a new one
+found for the same person is sendable the moment it arrives.
 """
 from __future__ import annotations
 
@@ -70,13 +72,19 @@ def project(message: Message) -> None:
 
 
 def _record_bounce(ndr: Message) -> None:
-    """Raise a ``bounced`` event against the send this report is about.
+    """Raise a ``bounced`` event against the send this report is about, and stop
+    mailing the address when the receiver says there is nobody there.
 
     An NDR whose original message cannot be identified still leaves its own row
     and is still counted as a bounce for the box; it just has no send to attach
     to. Losing the link is a gap in the arithmetic, not a reason to drop the fact.
+
+    **Suppression hangs off the identified send, never off the report.** The address
+    to stop mailing is the one *we wrote to*, which only the original message knows;
+    a report arrives from a mailer-daemon, so suppressing its sender would put a
+    postmaster on the list and leave the dead address live.
     """
-    from cold_outreach.emails.delivery_policy import Response
+    from cold_outreach.emails.delivery_policy import Response, address_is_dead, stop_mailing
 
     original = _bounced_send(ndr)
     status = _dsn_status(ndr)
@@ -98,6 +106,11 @@ def _record_bounce(ndr: Message) -> None:
     )
     logger.warning("project: %s bounced (%s) — reported by %s",
                    original.to_address, status or "no status", ndr.message_id)
+
+    if address_is_dead(status):
+        ended = stop_mailing(original.to_address, status)
+        logger.warning("project: %s is undeliverable (%s) — %d open deal(s) ended",
+                       original.to_address, status, ended)
 
 
 def _bounced_send(ndr: Message) -> Message | None:

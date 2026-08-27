@@ -21,7 +21,7 @@ DAEMON_BOUNCE_BODY = (
     "Your message could not be delivered.\r\n"
     "\r\n"
     "Final-Recipient: rfc822; {recipient}\r\n"
-    "Status: 5.1.1\r\n"
+    "{status_line}"
     "\r\n"
     "----- Original message -----\r\n"
     "Message-ID: {original}\r\n"
@@ -47,8 +47,13 @@ def message(uid, *, to, sender, subject="Re: Hi", body="Sure, happy to chat.",
     return uid, ("\r\n".join(lines) + "\r\n\r\n" + body).encode()
 
 
-def bounce(uid, *, to, original, recipient="p@corp.com"):
-    """A non-delivery report from the receiving side's daemon."""
+def bounce(uid, *, to, original, recipient="p@corp.com", status="5.1.1"):
+    """A non-delivery report from the receiving side's daemon.
+
+    ``status`` is the enhanced status in the delivery-status part. ``None`` omits the
+    line altogether, which is the shape of the many real reports that say a message
+    failed without ever saying so in a form a machine can read.
+    """
     return message(
         uid,
         to=to,
@@ -56,7 +61,11 @@ def bounce(uid, *, to, original, recipient="p@corp.com"):
         subject="Delivery Status Notification (Failure)",
         message_id=f"<ndr{uid}@googlemail.com>",
         in_reply_to=original,
-        body=DAEMON_BOUNCE_BODY.format(recipient=recipient, original=original),
+        body=DAEMON_BOUNCE_BODY.format(
+            recipient=recipient,
+            original=original,
+            status_line=f"Status: {status}\r\n" if status else "",
+        ),
     )
 
 
