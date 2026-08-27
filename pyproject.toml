@@ -4,9 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openoutsend"
-# The base, not the released version — major and minor bumped by hand. The finder
-# derives its patch from the commit count at publish time; this side will do the same
-# when it has a release workflow.
+# The base, not the released version — major and minor bumped by hand. The patch is
+# derived at publish time from this repo's commit count (`.github/workflows/deploy.yml`,
+# job `publish-pypi`), because every green push to `main` releases and PyPI version
+# numbers are single-use.
 version = "0.1.0"
 description = "The sending half of OpenOutreach: reads qualified leads on stdin and mails them from your own box."
 readme = "README.md"
