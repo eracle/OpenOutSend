@@ -31,7 +31,8 @@ import os
 import sys
 
 USAGE = """outsend [--campaign NAME]        read JSON Lines on stdin, store them, exit
-outsend send [--campaign NAME]   read the mail, answer replies, open what the guards allow
+outsend send [--campaign NAME] [--prompt-line ID]
+                                 read the mail, answer replies, open what the guards allow
 outsend init [--campaign NAME]   collect what a first run needs — the campaign, who you
                                  are, and a mailbox to send from"""
 
@@ -56,6 +57,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("command", nargs="?", choices=["init", "send"])
     parser.add_argument("--campaign", default=None,
                         help="which campaign these leads belong to; required only if there are several")
+    parser.add_argument("--prompt-line", default=None, dest="prompt_line",
+                        help="open every email in this pass with one named prompt line; "
+                             "omit to draw one at random per send")
     parser.add_argument("--debug", action="store_true", help="log what each step decided")
     return parser.parse_args(argv)
 
@@ -139,7 +143,7 @@ def _send(args: argparse.Namespace) -> int:
     campaign = _campaign_for(args)
     ensure_ready(campaign)
 
-    result = run_send_pass(campaign)
+    result = run_send_pass(campaign, args.prompt_line)
     print(f"read {result.mirrored} new message(s) · answered {result.answered} · "
           f"opened {result.opened}", file=sys.stderr)
     if result.failed:

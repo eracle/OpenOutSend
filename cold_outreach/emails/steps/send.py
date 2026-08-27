@@ -31,25 +31,33 @@ from cold_outreach.leads.models import DealState
 logger = logging.getLogger(__name__)
 
 
-def send_first_email(deal, mailbox) -> DealState | None:
+def send_first_email(deal, mailbox, prompt_line) -> DealState | None:
     """Open the conversation with *deal* from *mailbox*. Returns the next state.
 
     The caller has already established that this box may send right now
     (``Mailbox.objects.free_for_first_email``). Returns ``None`` without sending if
     the lead was suppressed while the agent was writing — an unsubscribe can land in
     the seconds an LLM call takes, and this is the last gate before the message goes.
+
+    ``prompt_line`` is the move this opener makes (``core/prompt_lines.py``), and it is
+    required — an opener that reaches the log unattributed is a hole nothing can fill
+    in afterwards, and a default would let a new call site open one silently. ``None``
+    is a legitimate value (an install with no prompt lines), but it has to be said.
+    The **pass** draws it rather than this function, so two sends in one pass can be
+    told apart instead of sharing whatever one call happened to pick.
     """
     from cold_outreach.core.agents.outreach import run_outreach_agent
     from cold_outreach.core.operator import get_active_user
     from cold_outreach.emails.sender import operator_bcc, send_email, suppressed
     from cold_outreach.leads.summaries import materialize_profile_summary_if_missing
 
-    logger.info("[%s] %s %s via %s", deal.campaign,
+    logger.info("[%s] %s %s via %s (%s)", deal.campaign,
                 colored("▶ first email", "blue", attrs=["bold"]),
-                deal.lead.public_id, mailbox.from_address)
+                deal.lead.public_id, mailbox.from_address,
+                prompt_line.id if prompt_line else "no prompt line")
 
     materialize_profile_summary_if_missing(deal.lead)
-    opener = run_outreach_agent(deal)
+    opener = run_outreach_agent(deal, prompt_line)
 
     if suppressed(deal.lead):
         logger.warning("[%s] %s was suppressed mid-run — not sending",
@@ -59,6 +67,7 @@ def send_first_email(deal, mailbox) -> DealState | None:
     sent = send_email(
         mailbox, deal.lead.email, opener.subject, opener.message,
         bcc=operator_bcc(get_active_user()),
+        prompt_line=prompt_line,
     )
 
     # The send wrote itself into the mail log and opened a thread; the deal just

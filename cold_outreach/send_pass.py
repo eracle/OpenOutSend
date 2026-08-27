@@ -46,14 +46,19 @@ class PassResult:
         return self.failed == 0
 
 
-def run_send_pass(campaign) -> PassResult:
-    """Read, answer, open — once — and report. Never raises for a failed send."""
+def run_send_pass(campaign, prompt_line_name: str | None = None) -> PassResult:
+    """Read, answer, open — once — and report. Never raises for a failed send.
+
+    ``prompt_line_name`` pins every opener in this pass to one move
+    (``core/prompt_lines.py``); left unset, each opener draws its own at random, which
+    is what makes the log a comparison rather than a run of whatever was pinned.
+    """
     from cold_outreach.emails.mail_pass import run_mail_pass
 
     result = PassResult()
     result.mirrored, result.classified, result.projected = run_mail_pass()
     _answer_replies(campaign, result)
-    _open_conversations(campaign, result)
+    _open_conversations(campaign, result, prompt_line_name)
     logger.info("%s", _what_is_holding(campaign))
     return result
 
@@ -78,7 +83,7 @@ def _answer_replies(campaign, result: PassResult) -> None:
             result.failed += 1
 
 
-def _open_conversations(campaign, result: PassResult) -> None:
+def _open_conversations(campaign, result: PassResult, prompt_line_name: str | None = None) -> None:
     """Send first emails while a box is free and somebody is waiting.
 
     The loop's bound is the guards themselves: `free_for_first_email` answers `None`
@@ -91,7 +96,14 @@ def _open_conversations(campaign, result: PassResult) -> None:
     lead. The spacing clock is written after a successful send, so a box that just
     refused one is still "free" — retrying inside the same pass would hammer a box
     that has already said no, and would not terminate.
+
+    **The draw happens per send, not per pass.** Drawing once outside the loop would
+    make a pass a block of one move, and the log would then carry the pass's shape
+    rather than the move's — the comparison would be between days, not between lines.
+    A name given on the command line pins them all deliberately, which is the one case
+    where a block is what the operator asked for.
     """
+    from cold_outreach.core.prompt_lines import choose
     from cold_outreach.emails.models import Mailbox
     from cold_outreach.emails.steps.send import send_first_email
     from cold_outreach.leads.pools import emailable_deals
@@ -102,7 +114,7 @@ def _open_conversations(campaign, result: PassResult) -> None:
         if deal is None:
             return
         try:
-            _apply(deal, send_first_email(deal, mailbox))
+            _apply(deal, send_first_email(deal, mailbox, choose(prompt_line_name)))
             result.opened += 1
         except Exception:
             logger.exception("first email to %s failed", deal.lead.public_id)

@@ -35,7 +35,8 @@ def connected(campaign):
 
 
 def _args(**kwargs) -> Namespace:
-    return Namespace(**{"command": "send", "campaign": None, "debug": False, **kwargs})
+    return Namespace(**{"command": "send", "campaign": None, "prompt_line": None,
+                        "debug": False, **kwargs})
 
 
 # ── The surface ───────────────────────────────────────────────────
@@ -63,7 +64,7 @@ def test_send_runs_one_pass_over_the_resolved_campaign(connected, capsys):
                return_value=PassResult(mirrored=2, answered=1, opened=3)) as run:
         assert _send(_args()) == 0
 
-    run.assert_called_once_with(connected)
+    run.assert_called_once_with(connected, None)
     narration = capsys.readouterr().err
     assert f"campaign: {connected.name}" in narration
     assert "read 2 new message(s) · answered 1 · opened 3" in narration

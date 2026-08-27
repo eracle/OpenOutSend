@@ -1,0 +1,17 @@
+id = "plain-ask"
+when = "Any lead, and the control the others are measured against — the shortest honest thing that can be sent."
+
+prompt = """
+Two sentences and a question. Nothing else.
+
+Say who you are and what you are trying to learn. Ask how they do the thing today.
+Stop.
+
+No framing, no compliment, no observation about their company, no reason given for
+picking them. This is deliberately the barest version — some of what the other lines
+add is what makes a message feel written, and some of it is what makes it feel like a
+campaign, and the only way to find out which is to have a floor to compare against.
+
+Resist the urge to warm it up. If this produces something that could have been sent to
+anyone, that is the point of it.
+"""

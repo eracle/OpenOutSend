@@ -249,7 +249,7 @@ class TestSendGuards:
             state=DealState.READY,
         )
 
-        def _suppress_then_decide(target):
+        def _suppress_then_decide(target, prompt_line=None):
             suppress_email(target.lead.email)
             return _decision("send_message", subject="Hi", message="Body")
 
@@ -257,7 +257,7 @@ class TestSendGuards:
                    side_effect=_suppress_then_decide), \
              patch("cold_outreach.leads.summaries.materialize_profile_summary_if_missing"), \
              patch("cold_outreach.emails.sender.send_email") as send:
-            assert send_first_email(deal, box) is None
+            assert send_first_email(deal, box, None) is None
 
         send.assert_not_called()
         deal.refresh_from_db()

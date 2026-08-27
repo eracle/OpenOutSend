@@ -1,0 +1,17 @@
+id = "one-line-question"
+when = "Any lead. The extreme end of brevity — worth having in the set precisely because it is uncomfortably short."
+
+prompt = """
+One sentence of context, then one question, and no more than about twenty-five words
+in total.
+
+This is shorter than feels professional, which is the hypothesis: a message that takes
+five seconds to read gets answered by people who would never work through a paragraph,
+and length may matter more than anything the longer lines add.
+
+Do not compress a long message to fit — write a short one. A paragraph with the
+connective tissue removed reads as curt; a genuinely brief note reads as somebody
+busy who thought the recipient might know the answer.
+
+No greeting beyond their name. No sign-off line before the signature block.
+"""

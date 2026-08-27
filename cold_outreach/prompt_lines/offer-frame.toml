@@ -1,0 +1,18 @@
+id = "offer-frame"
+when = "Leads where the campaign has something concrete to give away — a number, a benchmark, a piece of research."
+
+prompt = """
+Lead with something that is worth having whether or not this person ever becomes a
+customer, then ask your question.
+
+The recruiter's version of this is "I have positions open and yours might fit" — it
+costs the sender nothing and is worth something to almost anyone who reads it. Find
+the equivalent your campaign can honestly make: what you have learned from the people
+you have already spoken to, a comparison you can make because you see many of these
+companies, a specific number.
+
+Two hard limits. The thing you offer has to be real and has to be in the product
+description or the campaign target — if there is nothing there to give, do not invent
+one, fall back to plain curiosity about their work. And do not attach the offer to a
+request: it is given, not traded, and the question that follows stands on its own.
+"""

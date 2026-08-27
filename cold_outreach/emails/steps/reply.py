@@ -116,6 +116,10 @@ def _send_reply(deal, decision) -> DealState | None:
         in_reply_to=chain[-1] if chain else None,
         references=" ".join(chain) or None,
         thread=deal.thread,
+        # A reply answers what they wrote. There is no move picked in advance to
+        # attribute it to, and inventing one would put noise in the log the opener
+        # comparison reads.
+        prompt_line=None,
     )
     return None
 

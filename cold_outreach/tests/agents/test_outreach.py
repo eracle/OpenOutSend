@@ -183,3 +183,101 @@ class TestLoadRecentMessages:
         assert contents == sorted(contents, key=lambda c: int(c.split("-")[1]))
         # Returned the *latest* messages.
         assert contents[-1] == f"msg-{RECENT_MESSAGES_WINDOW + 2}"
+
+
+# ── The opener's hard rules ───────────────────────────────────────
+
+
+class TestOpenerBreach:
+    """The rules a prompt line cannot drop by being edited carelessly.
+
+    Only the mechanical ones are checked here. Language, register and sourcing are
+    asked for in the prompt, because no regex tells a sourced claim from an invented
+    one — and pretending otherwise would be worse than the honest gap.
+    """
+
+    def test_a_short_plain_opener_keeps_them_all(self):
+        from cold_outreach.core.agents.outreach import opener_breach
+
+        assert opener_breach(
+            "Saw you run infra at Acme. I'm building tooling for teams that size. "
+            "How do you handle on-call rotations today?"
+        ) is None
+
+    def test_a_long_opener_is_rejected_and_told_its_length(self):
+        from cold_outreach.core.agents.outreach import OPENER_WORD_CEILING, opener_breach
+
+        breach = opener_breach("word " * (OPENER_WORD_CEILING + 1))
+
+        assert breach is not None
+        assert str(OPENER_WORD_CEILING) in breach
+
+    def test_an_opener_at_the_ceiling_exactly_is_allowed(self):
+        """A ceiling, not a target — the boundary belongs on the permitted side."""
+        from cold_outreach.core.agents.outreach import OPENER_WORD_CEILING, opener_breach
+
+        assert opener_breach("word " * OPENER_WORD_CEILING) is None
+
+    @pytest.mark.parametrize("message", [
+        "Have a look at https://example.com and tell me what you think.",
+        "Our site is www.example.com if you're curious.",
+    ])
+    def test_a_link_is_rejected(self, message):
+        """A first email asks a question; a link turns it into a funnel step."""
+        from cold_outreach.core.agents.outreach import opener_breach
+
+        assert "link" in opener_breach(message)
+
+    def test_an_em_dash_is_rejected(self):
+        from cold_outreach.core.agents.outreach import opener_breach
+
+        assert "em dash" in opener_breach("I build tools — mostly for infra teams.")
+
+
+@pytest.mark.django_db
+class TestThePromptLineReachesThePrompt:
+    def test_a_first_touch_carries_the_line(self, campaign):
+        from cold_outreach.core.agents.outreach import _render_system_prompt
+        from cold_outreach.core.prompt_lines import choose
+
+        deal = DealFactory(lead=LeadFactory(), campaign=campaign)
+        line = choose("plain-ask")
+
+        prompt = _render_system_prompt(deal, [], is_first_touch=True, prompt_line=line)
+
+        assert line.prompt in prompt
+
+    def test_a_reply_never_carries_one(self, deal_with_summaries):
+        """A reply answers what they wrote — a move picked in advance has no place in it."""
+        from cold_outreach.core.agents.outreach import _render_system_prompt
+        from cold_outreach.core.prompt_lines import choose
+
+        line = choose("plain-ask")
+
+        prompt = _render_system_prompt(
+            deal_with_summaries, [], is_first_touch=False, prompt_line=line)
+
+        assert line.prompt not in prompt
+
+    def test_the_hard_rules_are_in_the_prompt_whatever_the_line_says(self, campaign):
+        """They live in the template, so no prompt-line file has to remember them."""
+        from cold_outreach.core.agents.outreach import _render_system_prompt
+        from cold_outreach.core.prompt_lines import choose
+
+        deal = DealFactory(lead=LeadFactory(), campaign=campaign)
+
+        prompt = _render_system_prompt(
+            deal, [], is_first_touch=True, prompt_line=choose("plain-ask"))
+
+        assert "No link of any kind" in prompt
+        assert "No meeting request" in prompt
+        assert "Only claims the facts above can source" in prompt
+
+    def test_an_install_with_no_lines_still_renders_an_opener(self, campaign):
+        from cold_outreach.core.agents.outreach import _render_system_prompt
+
+        deal = DealFactory(lead=LeadFactory(), campaign=campaign)
+
+        prompt = _render_system_prompt(deal, [], is_first_touch=True, prompt_line=None)
+
+        assert "one genuine discovery question" in prompt

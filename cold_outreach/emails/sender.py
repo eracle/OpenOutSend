@@ -29,6 +29,7 @@ def send_email(
     in_reply_to: str | None = None,
     references: str | None = None,
     thread=None,
+    prompt_line=None,
 ):
     """Send ``body`` from ``mailbox`` to ``to_address``; return its ``Message`` row.
 
@@ -53,10 +54,17 @@ def send_email(
     ``in_reply_to``/``references`` thread a reply onto an existing email thread
     (both are prior Message-IDs); ``thread`` puts the row in that conversation
     directly, rather than making the log re-derive what the caller already knows.
+
+    ``prompt_line`` is the move the opener was written from
+    (``core/prompt_lines.py``), recorded on the row so that which line produced which
+    reply is a query rather than a guess. Only an opener has one — a reply answers what
+    they wrote — so this is the transport's optional argument and
+    ``steps/send.send_first_email``'s required one, which is where losing it would
+    actually put a hole in the log.
     """
     email_message = _build_message(
         mailbox, to_address, subject, body, bcc, in_reply_to, references)
-    row = _record_send(mailbox, email_message, body, thread)
+    row = _record_send(mailbox, email_message, body, thread, prompt_line)
     _deliver(mailbox, email_message, row)
     logger.info("email sent from %s to %s: %s [%s]",
                 mailbox.from_address, to_address, subject, email_message["Message-ID"])
@@ -211,7 +219,7 @@ def _mint_message_id(from_address: str) -> str:
 # ── Transport ─────────────────────────────────────────────────────
 
 
-def _record_send(mailbox, email_message: EmailMessage, body: str, thread):
+def _record_send(mailbox, email_message: EmailMessage, body: str, thread, prompt_line):
     """Write the outbound row *before* the transport runs, and thread it.
 
     Outbound is authoritative in a way inbound never is: we composed the body, so
@@ -238,6 +246,8 @@ def _record_send(mailbox, email_message: EmailMessage, body: str, thread):
         references_ids=parsing.referenced_ids(email_message),
         raw=_headers_of(email_message),
         body_text=body,
+        prompt_line_id=prompt_line.id if prompt_line else "",
+        prompt_line_digest=prompt_line.digest if prompt_line else "",
         sent_at=now,
         kind=Kind.OUTBOUND,
         classified_at=now,

@@ -1,0 +1,17 @@
+id = "shared-ground"
+when = "Leads whose record shares something checkable with the sender — the same industry, country, or kind of company."
+
+prompt = """
+Name the ground you actually share, then ask your question from inside it.
+
+Proximity moves trust far more than its cost suggests: people answer someone who is
+adjacent to them. The record already carries the adjacency — the same industry, the
+same country, the same sort of company, the same problem seen from the other side.
+
+**Only ever claim what the facts you were given say.** You may say you work with
+companies like theirs if that is what the campaign describes. You may not say you have
+met anyone there, that you were referred, that a mutual contact suggested it, or that
+you have used their product — none of which is in the record, all of which would be a
+lie told at scale. If the facts show nothing genuinely in common, say nothing about
+common ground and just ask the question.
+"""

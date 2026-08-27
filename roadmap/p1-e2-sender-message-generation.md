@@ -7,7 +7,7 @@
 > assumptions the port invalidated. There is no older version of it in another repo.
 >
 > It reshapes what is already built: `cold_outreach/core/agents/outreach.py` and
-> `core/templates/prompts/outreach_agent.j2` are the generator, and **plays replace that one
+> `core/templates/prompts/outreach_agent.j2` are the generator, and **prompt lines replace that one
 > template** rather than arriving beside it.
 >
 > Two cards in this folder are prerequisites, not neighbours —
@@ -16,12 +16,19 @@
 > [`p1-e2-email-bounce-detection-suppression`](p1-e2-email-bounce-detection-suppression.md), which
 > owns half the suppression duty the pipe contract leans on.
 
-- **Status:** To Do. **Receiver-internal**: everything here lives on the sender's side of
-  [the boundary contract](https://github.com/eracle/openoutreach-docs/blob/main/roadmap/p1-e2-find-send-boundary-contract.md) and nothing in it crosses the pipe. Three things are
-  **decided** — plays are files, the learner optimises fragments from observed replies, and a set of
-  constraints is hard-coded rather than tested. Two are **explicitly ditched** (federated pooling,
-  Optuna/TPE). The input problem in *What we can actually say* is the open one, and it bounds
-  everything else.
+- **Status:** In Progress — **the shape half is built and the log under it is collecting.** Six
+  **prompt lines** ship as files (`cold_outreach/prompt_lines/`), one is drawn at random per opener or
+  pinned with `outsend send --prompt-line ID`, the hard rules are enforced in the generator rather than
+  repeated in every file, and every send records which line wrote it and a hash of that line's text.
+  **The learner is deliberately not built**: the reward is roughly one bit per fifty sends arriving
+  days late, so it would fit on nothing for months, while a random draw collects exactly the data it
+  will eventually need. What is left is the extraction retune, the fragment split that only matters
+  once something scores it, and the threshold that says a flat log means *the material is thin* rather
+  than *shape does not matter*.
+  **Receiver-internal**: everything here lives on the sender's side of
+  [the boundary contract](https://github.com/eracle/openoutreach-docs/blob/main/roadmap/p1-e2-find-send-boundary-contract.md) and nothing in it crosses the pipe. Two things are
+  **explicitly ditched** (federated pooling, Optuna/TPE). The input problem in *What we can actually
+  say* is still the open one, and it bounds everything else.
 - **Priority:** High — the first version's reply rate was low, and the message is the half the whole
   split was made to hand away.
 - **Effort:** Medium
@@ -116,28 +123,34 @@ paid only for people actually mailed, rather than across the whole discovery fun
 lives in the database is the *log* and the per-fragment statistics over it. This is the same split
 already drawn between campaign config and CRM rows.
 
-**A play encodes a posture, not a mail-merge template.** The moment a file contains
+**A prompt line encodes a move, not a mail-merge template.** The moment a file contains
 `{{first_name}}, I noticed {{company}}…` we have rebuilt Instantly and discarded the reason to have a
-model in the loop. A file carries the move and why it works, the ask shape, a length ceiling, what is
-forbidden, and which leads it suits.
+model in the loop. A file carries the move and why it works, the ask shape, and which leads it suits.
+The length ceiling and the forbidden list are **not** in it — they are enforced in the generator, so a
+dozen files do not have to remember them and no file can drop one by being edited carelessly.
 
 **But the format permits fixed text too.** The trigger message worked partly *because* the words were
-a human's clumsy ones, and a model writing from a posture produces clean prose. Some plays will be
+a human's clumsy ones, and a model writing from a posture produces clean prose. Some lines will be
 mostly skeleton, some pure posture, and **the ratio is itself one of the things the learner varies.**
 
 **The fragments in *What made that message work* are the database.** Each is a small, named, reusable
-prompt piece — the offer frame, the proximity claim, the ask shape, the register — and a play is a
-composition of them. The fragment is the unit the learner scores; the play is the unit a person reads
-and edits.
+prompt piece — the offer frame, the proximity claim, the ask shape, the register — and a prompt line is
+a composition of them. The fragment is the unit the learner scores; the line is the unit a person reads
+and edits. *(Deferred: a line is one whole piece of text today, and the fragment only earns its
+complexity once something scores it.)*
 
-**The play id is the template key.** `(lead_id, play)` is the key [the boundary contract](https://github.com/eracle/openoutreach-docs/blob/main/roadmap/p1-e2-find-send-boundary-contract.md)
-already floats for follow-ups, so the file's identity and the log's identity are the same thing.
+**Identity is the id and the text.** `(lead_id, prompt_line)` is the key
+[the boundary contract](https://github.com/eracle/openoutreach-docs/blob/main/roadmap/p1-e2-find-send-boundary-contract.md)
+already floats for follow-ups, and a digest of the prompt rides beside it so an edited line does not
+pool with the version before it.
 
-**Selection follows the house rule.** With one play there is nothing to select. With several,
-`--play` resolves exactly as `--campaign` does — required only if there are several — and the sender
-narrates what it resolved. One vocabulary across the whole system.
+**Selection is a random draw**, with `--prompt-line` pinning one — named exactly as `--campaign` is,
+and the sender narrates what it used. One vocabulary across the whole system. Random rather than
+"required only if there are several", because the draw *is* how the comparison data gets collected;
+pinning is the deliberate exception, not the default.
 
-**Ship one play first.** The format and the log are the work; a library of plays is not.
+**Ship several, score none.** The format and the log are the work. Six lines ship because a library
+costs nothing here — they are prompt text — while a scorer over them costs months of waiting.
 
 ## Hard-coded, not tested
 
@@ -204,8 +217,8 @@ tracked in [the boundary contract](https://github.com/eracle/openoutreach-docs/b
 ## What already exists on the receiver
 
 Not a green field. `cold_outreach/core/agents/outreach.py` and
-`core/templates/prompts/outreach_agent.j2` are the generator this card reshapes — **plays replace that
-one template**, they do not arrive beside it. `emails/steps/send.py` and `emails/steps/reply.py` are
+`core/templates/prompts/outreach_agent.j2` are the generator this card reshapes — **prompt lines
+replace that one template**, they do not arrive beside it. `emails/steps/send.py` and `emails/steps/reply.py` are
 the two passes, and the reply pass is what the learner's reward depends on.
 
 **Two of the seven cards inherited by that repo are prerequisites, not neighbours:**
@@ -219,13 +232,14 @@ the pipe contract leans on.
 - **The trigger for reaching for company pages.** Shipping on firmographics is decided; what is not is
   *what result sends us to the next source*. Without a stated threshold, a flat log gets read as "the
   learner does not work" instead of "the material is too thin", and the wrong thing gets rebuilt.
-- **A play's identity has to survive its text changing.** Edit a play and every log row written before
-  the edit still names it, so the learner pools two different messages under one id and the estimate
-  quietly stops meaning anything. A content hash, or a version bumped on save, is cheap now and
-  unrecoverable later — the old rows cannot be re-attributed once they are ambiguous.
-- **Where plays live on disk.** Shipped defaults belong in the repo, but an operator editing one needs
-  a writable location — `~/.openoutsend/plays/` mirroring `state_dir()`. Which wins when both define
-  the same id, and how an edited copy keeps a stable identity, is unspecified.
+- ~~**A prompt line's identity has to survive its text changing.**~~ **Closed.**
+  `Message.prompt_line_digest` is a hash of the prompt, written beside the id on every send, so an
+  edited line is distinguishable from the version before it rather than pooled with it.
+- ~~**Where prompt lines live on disk.**~~ **Closed.** Shipped defaults in
+  `cold_outreach/prompt_lines/`, an operator's in `state_dir()/prompt_lines/`, and **the operator's
+  wins** on a shared id — so a shipped line can be overridden without editing an installed package or
+  losing the edit on upgrade. An edited copy keeps its identity through the id and is told apart by
+  the digest.
 - **The conversation lane is gone.** `Deal.chat_summary` and `update_chat_summary` left with the
   sending leg; the removal notes survive in `core/db/summaries.py`. A sender that holds threads
   rebuilds it.
@@ -235,14 +249,47 @@ the pipe contract leans on.
 ## Acceptance criteria
 
 - [ ] Fact extraction runs in the sender, from the `profile_text` the pipe delivered, tuned for an
-      opener rather than for a verdict.
-- [ ] A play is a file, with an id, and one play ships.
-- [ ] Fragments are named, stored, and composable into a play; the fragment is what the learner scores.
-- [ ] The hard-coded constraints are enforced in the generator, not left to a play to remember —
-      language, length, no link, sourced claims.
-- [ ] Every send writes a log row carrying play, fragments, segment keys and reply outcome, shaped so
-      it aggregates.
+      opener rather than for a verdict. *(It runs here — `leads/summaries.py` — but on the inherited
+      prompt, which prefers durable facts because it was written for a **verdict**. The retune has not
+      happened.)*
+- [x] **A prompt line is a file, with an id, and six ship.** *(`cold_outreach/prompt_lines/*.toml`,
+      loaded by `core/prompt_lines.py`: shipped defaults plus `~/.openoutsend/prompt_lines/`, the
+      operator's copy winning on a shared id. **Named "prompt line", not "play"** — it is a piece of
+      prompt, and naming it for what it is beat naming it for a metaphor out of sales playbooks, which
+      is the register this project avoids.)*
+- [ ] Fragments are named, stored, and composable; the fragment is what the learner scores.
+      **Deferred with the learner** — a prompt line is one whole piece of text today. The fragment
+      only earns its complexity once something scores it, and splitting first would build the harder
+      half for a reader that does not exist.
+- [x] The hard rules are enforced in the generator, not left to a prompt line to remember — language,
+      length, no link, no meeting request, sourced claims, no machine tells. *(In the template for
+      every rule, and in `opener_breach` for the three a machine can actually check: the word ceiling,
+      links, em dashes. A breach retries once with the complaint appended, then fails the send —
+      quietly mailing something that breaks the discipline is the outcome worth avoiding. Language,
+      register and sourcing stay prompt-side, because no regex separates a sourced claim from an
+      invented one and pretending otherwise would be worse than the honest gap.)*
+- [x] Every send records which prompt line wrote it, shaped so it aggregates.
+      *(`Message.prompt_line_id` + `prompt_line_digest` — **both**, because an edited line keeps its id
+      and stops being the same message. Whether a send was answered is already derivable from the
+      thread, so the comparison is a query over two columns rather than a second log to keep in step,
+      and it only works from the first send onward, which is why the columns exist before anything
+      reads them. Segment keys sit on the lead and are joinable; they are not copied.)*
 - [ ] The learner scores fragments with shrinkage and samples from the posterior, with a forced-random
-      slice.
-- [ ] No surrogate judge, no pooled data, no TPE — and the reason each was declined is readable here
-      rather than rediscovered.
+      slice. **Deliberately not built yet.** Selection is a uniform random draw per send, and this
+      card's own arithmetic is why: roughly one bit per fifty sends, arriving days late. A learner
+      shipped today fits on nothing and stays uninformative for months, while the random draw collects
+      exactly the data it will need. The precedent is in the finder — the GP lost to plain counting
+      once already, and query selection is arithmetic now.
+- [x] No surrogate judge, no pooled data, no TPE — and the reason each was declined is readable here
+      rather than rediscovered. *(Nothing scores a message but a human replying to it.)*
+
+## What is left
+
+Two things, and they are the same thing twice: **the material is thin, and there is nothing to learn
+from yet.**
+
+The prompt lines vary the *shape* of a message written from eight firmographic fields. That was the
+decision on the record — *"a flat log is the expected outcome, not evidence that message shape does not
+matter"* — and it is now testable rather than merely asserted. What sends us to company pages is a flat
+log across six lines with enough sends behind it, and **that threshold is still unstated**: it is the
+gap named in *Gaps this card has to close or name*, and this pass did not close it.

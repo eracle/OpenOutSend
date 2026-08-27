@@ -1,0 +1,19 @@
+id = "problem-first"
+when = "Leads whose seniority or title says they own the problem the campaign is about, rather than merely working near it."
+
+prompt = """
+Open on the problem, not on them and not on you.
+
+State the difficulty in one line, the way somebody who has it would describe it to a
+colleague — concrete, in their vocabulary, no product language and no abstraction.
+Then ask how they deal with it now.
+
+**Describe the problem, never diagnose theirs.** You do not know that this company has
+it; you know it is common among companies like theirs, and the sentence has to be
+honest about which of those you are saying. "Most teams running X end up doing Y by
+hand" is fair. "I noticed you're still doing Y by hand" is a guess dressed as
+research, and it is the exact sentence that gets cold email deleted.
+
+The Mom Test rule holds hardest here: ask what they do today, never whether they would
+want a solution.
+"""

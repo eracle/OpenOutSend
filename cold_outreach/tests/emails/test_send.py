@@ -292,6 +292,44 @@ class TestSendEmailAttribution:
         assert ATTRIBUTION not in metadata
 
 
+# ── The prompt line rides on the send ─────────────────────────────
+
+
+@pytest.mark.django_db
+class TestPromptLineIsRecorded:
+    """What makes comparing prompt lines later a query rather than an experiment.
+
+    None of this is read yet. It is here now because it can only be collected from the
+    first send onward — a column added after a thousand sends leaves a thousand rows
+    that can never say which line wrote them.
+    """
+
+    def test_an_opener_records_the_line_that_wrote_it(self):
+        from cold_outreach.core.prompt_lines import choose
+        from cold_outreach.emails.sender import send_email
+
+        line = choose("plain-ask")
+        box = maillog.mailbox("s@infra.com")
+
+        with patch("cold_outreach.emails.sender._deliver"):
+            row = send_email(box, "p@corp.com", "Hi", "Body", prompt_line=line)
+
+        assert row.prompt_line_id == "plain-ask"
+        assert row.prompt_line_digest == line.digest
+
+    def test_a_reply_records_no_line(self):
+        """A reply answers what they wrote; attributing it would be noise in the log."""
+        from cold_outreach.emails.sender import send_email
+
+        box = maillog.mailbox("s@infra.com")
+
+        with patch("cold_outreach.emails.sender._deliver"):
+            row = send_email(box, "p@corp.com", "Re: Hi", "Body", prompt_line=None)
+
+        assert row.prompt_line_id == ""
+        assert row.prompt_line_digest == ""
+
+
 # ── send_first_email (the step) ───────────────────────────────────
 
 
@@ -309,7 +347,7 @@ class TestSendFirstEmail:
             side_effect=lambda mailbox, *a, **kw: maillog.outbound(
                 mailbox, message_id="mid@corp.com"),
         ) as send:
-            next_state = send_first_email(deal, box)
+            next_state = send_first_email(deal, box, None)
         deal.save()
         return send, next_state
 
@@ -323,6 +361,7 @@ class TestSendFirstEmail:
         send.assert_called_once_with(
             box, "lead@corp.com", "Hi there", "Short opener.",
             bcc=operator.email,
+            prompt_line=None,
         )
         assert next_state == DealState.EMAILED
         deal.refresh_from_db()
@@ -375,14 +414,14 @@ class TestSendFirstEmail:
             "cold_outreach.leads.summaries.materialize_profile_summary_if_missing",
         ), patch(
             "cold_outreach.core.agents.outreach.run_outreach_agent",
-            side_effect=lambda d: (
+            side_effect=lambda d, prompt_line=None: (
                 suppress_email(d.lead.email, reason="opted out mid-run")
                 or OutreachDecision(action="send_message", subject="s", message="m")
             ),
         ), patch(
             "cold_outreach.emails.sender.send_email",
         ) as send:
-            next_state = send_first_email(deal, box)
+            next_state = send_first_email(deal, box, None)
 
         send.assert_not_called()
         assert next_state is None

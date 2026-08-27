@@ -1,0 +1,16 @@
+id = "peer-curiosity"
+when = "Any lead. The default when nothing more specific fits, and the safest thing to send."
+
+prompt = """
+Write as one practitioner to another who happens to work on the same kind of problem.
+
+Open with the single most concrete thing the record actually says about them — their
+role, their employer, where they work. One clause, stated plainly, not admired. Then
+say in one line who you are and why you are writing to this person rather than to a
+list. Then ask one question about how they handle the thing your campaign is about
+today.
+
+The question is the message. Everything before it exists to make answering it feel
+normal rather than transactional, so keep it short enough that the question is still
+the last thing they read.
+"""

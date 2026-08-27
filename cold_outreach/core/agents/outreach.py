@@ -26,6 +26,7 @@ Single LLM call with structured output — no tool-calling loop.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Literal
 
@@ -83,32 +84,99 @@ class OutreachDecision(BaseModel):
 RECENT_MESSAGES_WINDOW = 6
 
 
-def run_outreach_agent(deal) -> OutreachDecision:
+# ── The opener's hard rules ───────────────────────────────────────
+
+# Most of the LinkedIn-DM *feel* is length and ask-shape rather than depth of
+# personalisation, and a cold opener has one job small enough to do in a paragraph.
+# A ceiling rather than a target: a prompt line that writes 30 words is not in breach.
+OPENER_WORD_CEILING = 75
+
+# One retry, and only for a breach of these rules. A model that writes 80 words
+# usually writes 60 when told; a model that ignores the ceiling twice is a
+# configuration problem, and failing the send is how it gets noticed rather than
+# silently mailing something that breaks the discipline the whole card rests on.
+OPENER_ATTEMPTS = 2
+
+# A first email asks a question. A link is a call to action wearing a URL, and
+# putting one in the opener converts a conversation into a funnel step.
+_URL = re.compile(r"https?://|\bwww\.", re.IGNORECASE)
+
+
+def run_outreach_agent(deal, prompt_line=None) -> OutreachDecision:
     """Decide the next move for ``deal`` — the cold open or the answer to a reply.
 
     The caller has already folded any new inbound messages into ``deal.chat_summary``
     (``emails/steps/reply.py``), so this reads the conversation store rather than the
-    mailbox — no IMAP here. On a first touch there is nothing to read, and the
-    decision is validated to be a sendable opener with a subject.
+    mailbox — no IMAP here.
+
+    ``prompt_line`` is the move the *opener* makes (``core/prompt_lines.py``) and is
+    ignored in thread: a reply answers what the person actually wrote, which is not a
+    move anybody picks in advance. The caller chooses it, because the caller is also
+    what records it on the message that goes out. ``None`` means an install with no
+    prompt lines at all, which still has a complete opener prompt without one.
+
+    **A first touch is validated and retried, never silently sent.** The rules the
+    opener has to keep are enforced here rather than in the prompt-line files, so no
+    line can drop one by being edited carelessly and no author has to repeat them in
+    every file.
     """
     public_id = deal.lead.public_id
     is_first_touch = not deal.thread_id
 
     recent = [] if is_first_touch else _load_recent_messages(deal)
-    system_prompt = _render_system_prompt(deal, recent, is_first_touch)
+    system_prompt = _render_system_prompt(deal, recent, is_first_touch, prompt_line)
 
     agent = Agent(
         get_llm_model(),
         output_type=OutreachDecision,
         model_settings={"temperature": 0.7, "timeout": 60},
     )
-    decision = run_agent_sync(agent.run(system_prompt)).output
+    if not is_first_touch:
+        decision = _run_once(agent, system_prompt, public_id)
+        logger.info("outreach agent for %s: %s", public_id, decision.action)
+        return decision
+
+    prompt = system_prompt
+    for attempt in range(1, OPENER_ATTEMPTS + 1):
+        decision = _run_once(agent, prompt, public_id)
+        _validate_opener(decision, public_id)
+        breach = opener_breach(decision.message or "")
+        if breach is None:
+            logger.info("outreach agent for %s: %s (prompt line: %s)",
+                        public_id, decision.action,
+                        prompt_line.id if prompt_line else "none")
+            return decision
+        logger.warning("opener for %s breached a rule on attempt %d: %s",
+                       public_id, attempt, breach)
+        prompt = f"{system_prompt}\n\n## Your last draft was rejected\n{breach}\nWrite it again."
+
+    raise ValueError(f"opener for {public_id} kept breaking a hard rule: {breach}")
+
+
+def opener_breach(message: str) -> str | None:
+    """The rule this opener breaks, worded for the model, or ``None`` if it keeps them.
+
+    Only the mechanical ones live here — the rules a reader could check without
+    judgement. Language, register and sourcing are asked for in the prompt, because a
+    regex cannot tell a sourced claim from an invented one and pretending otherwise
+    would be worse than the honest gap.
+    """
+    words = len(message.split())
+    if words > OPENER_WORD_CEILING:
+        return (f"It ran to {words} words; the ceiling is {OPENER_WORD_CEILING}. "
+                "Cut it down — do not compress a long message, write a short one.")
+    if _URL.search(message):
+        return "It contained a link. A first email carries no link at all."
+    if "—" in message:
+        return "It contained an em dash, which reads as machine-written. Use plain punctuation."
+    return None
+
+
+def _run_once(agent, prompt: str, public_id: str) -> OutreachDecision:
+    """One agent call, with an unparseable answer raised rather than returned as None."""
+    decision = run_agent_sync(agent.run(prompt)).output
     if decision is None:
         raise RuntimeError(f"LLM returned unparseable response for outreach to {public_id}")
-    if is_first_touch:
-        _validate_opener(decision, public_id)
-
-    logger.info("outreach agent for %s: %s", public_id, decision.action)
     return decision
 
 
@@ -123,7 +191,7 @@ def _validate_opener(decision: OutreachDecision, public_id: str) -> None:
 # ── Prompt context ────────────────────────────────────────────────
 
 
-def _render_system_prompt(deal, recent_messages: list, is_first_touch: bool) -> str:
+def _render_system_prompt(deal, recent_messages: list, is_first_touch: bool, prompt_line=None) -> str:
     """Render the outreach prompt for whichever end of the thread we're at."""
     now = timezone.now()
     thread_context = {} if is_first_touch else {
@@ -136,6 +204,8 @@ def _render_system_prompt(deal, recent_messages: list, is_first_touch: bool) -> 
         "outreach_agent.j2",
         **base_context(deal),
         is_first_touch=is_first_touch,
+        prompt_line=prompt_line.prompt if (prompt_line and is_first_touch) else "",
+        word_ceiling=OPENER_WORD_CEILING,
         **thread_context,
     )
 

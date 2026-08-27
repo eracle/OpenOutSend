@@ -29,7 +29,7 @@ def steps():
             patch("cold_outreach.emails.steps.send.send_first_email") as send:
         mail.side_effect = lambda: (order.append("read"), (0, 0, 0))[1]
         reply.side_effect = lambda deal: order.append("answer")
-        send.side_effect = lambda deal, mailbox: order.append("open")
+        send.side_effect = lambda deal, mailbox, prompt_line: order.append("open")
         yield SimpleNamespace(mail=mail, reply=reply, send=send, order=order)
 
 

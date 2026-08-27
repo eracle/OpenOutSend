@@ -125,6 +125,19 @@ class Message(models.Model):
     sent_at = models.DateTimeField(null=True, blank=True)
     received_at = models.DateTimeField(null=True, blank=True)
     recorded_at = models.DateTimeField(auto_now_add=True)
+    # Outbound openers only: which prompt line wrote this, and a hash of that line's
+    # text at the time (``core/prompt_lines.py``). Both, because an edited line keeps
+    # its id and stops being the same message — pooling the two under one name would
+    # quietly corrupt any later comparison, and the rows cannot be re-attributed once
+    # they are ambiguous. Blank on replies, and on an install that has no lines.
+    #
+    # **This is the whole A/B apparatus.** The line is drawn at random and written down
+    # here; whether a send got an answer is already derivable from the thread. So the
+    # comparison is a query rather than an experiment somebody had to design in
+    # advance — and it only works from the first send onward, which is why the columns
+    # exist before anything reads them.
+    prompt_line_id = models.CharField(max_length=64, blank=True, default="")
+    prompt_line_digest = models.CharField(max_length=64, blank=True, default="")
     # Provenance, never identity — see the class docstring.
     folder = models.CharField(max_length=255, blank=True, default="")
     uid = models.PositiveBigIntegerField(null=True, blank=True)
