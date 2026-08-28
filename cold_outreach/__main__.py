@@ -6,8 +6,8 @@
 none: `| less`, `| jq`, `| tee`. The one argument it has is the campaign, and that one
 is usually absent too. The two verbs it does have are the ones that are not on the pipe
 at all: `send`, which reads no stdin and mails what is already stored, and `init`,
-which asks for what a first run needs — what the campaign sells and to whom, who is
-signing the mail, and the mailbox it leaves from.
+which asks for what a first run needs — what the campaign sells and to whom, the model
+that writes it, who is signing the mail, and the mailbox it leaves from.
 
 **Ingesting and sending are separate invocations on purpose.** A pipe's right-hand side
 must not block on the network while a producer is still writing, and the cadence the two
@@ -36,8 +36,8 @@ outsend send [N|all] [--campaign NAME] [--prompt-line ID]
                                  guards allow right now. With N, keep at it until N
                                  conversations are open, waiting out the send clocks;
                                  with `all`, until nobody is left to email
-outsend init [--campaign NAME]   collect what a first run needs — the campaign, who you
-                                 are, and a mailbox to send from"""
+outsend init [--campaign NAME]   collect what a first run needs — the campaign, the model
+                                 that writes it, who you are, and a mailbox to send from"""
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -163,7 +163,8 @@ def _send(args: argparse.Namespace) -> int:
     already keeps, read as timestamps rather than polled from outside.
 
     **`init` runs implicitly here**, because a send is the first moment the campaign's
-    fields, the operator's name and a mailbox actually have to be there — and an operator
+    fields, a reachable model, the operator's name and a mailbox actually have to be
+    there — and an operator
     who wired the pipe into a timer should not discover a setup step they never ran. On a
     TTY that is the same prompts; headless it is the same error naming the variables,
     raised before any mail moves.
@@ -227,19 +228,21 @@ def _report(result) -> None:
 
 
 def _init(args: argparse.Namespace) -> int:
-    """Collect the three things a send needs, and say what it ended up with.
+    """Collect the four things a send needs, and say what it ended up with.
 
     The collecting itself lives in `first_run.py`, because `send` does exactly the same
     thing before any mail moves and the two must not drift.
     """
+    from cold_outreach.core.models import SiteConfig
     from cold_outreach.core.operator import seller_full_name
     from cold_outreach.emails.models import Mailbox
     from cold_outreach.first_run import ensure_ready
 
     campaign = _campaign_for(args)
     ensure_ready(campaign)
-    print(f"campaign {campaign.name} is ready: signed by {seller_full_name()}, "
-          f"sending from {Mailbox.objects.first()}", file=sys.stderr)
+    print(f"campaign {campaign.name} is ready: written by {SiteConfig.load().ai_model}, "
+          f"signed by {seller_full_name()}, sending from {Mailbox.objects.first()}",
+          file=sys.stderr)
     return 0
 
 

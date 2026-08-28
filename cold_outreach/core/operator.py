@@ -5,8 +5,10 @@ Self-hosted means one operator, so identity is a lookup, not a parameter. The na
 signs the mail and binds the outreach agent's persona; the country decides which
 local clock the sending window is measured in.
 
-The country is a **setting**, not a config singleton — this side has no site-config
-table to load, and a single value read at the point of use is the smaller seam.
+The country stays a **setting** even though `SiteConfig` exists: it is not a
+credential, there is nothing to verify it against, and a blank one has a defined
+meaning (UTC) rather than a reason to stop a run. What is on the singleton is what a
+send cannot start without and cannot check for itself.
 
 Nothing is cached across calls. The read is a single indexed row and happens at most
 once per pass; a cache would only add a way for a renamed operator to keep signing

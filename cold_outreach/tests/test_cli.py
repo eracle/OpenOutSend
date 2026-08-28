@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from cold_outreach.__main__ import _parse_args, _send
+from cold_outreach.core.models import LLM_ENV, SiteConfig
 from cold_outreach.errors import OutsendError
 from cold_outreach.leads.campaigns import CONFIG_ENV
 from cold_outreach.send_pass import PassResult
@@ -19,17 +20,19 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture(autouse=True)
 def unconfigured_environment(monkeypatch):
     """No `OUTSEND_*` in scope, so a test about a missing field is about that field."""
-    for variable in CONFIG_ENV.values():
+    for variable in [*CONFIG_ENV.values(), *LLM_ENV.values()]:
         monkeypatch.delenv(variable, raising=False)
 
 
 @pytest.fixture
 def connected(campaign):
-    """A campaign, an operator and a box to send from — an install past its first run.
+    """A campaign, a model, an operator and a box — an install past its first run.
 
     What that first run *collects* is `test_first_run.py`'s subject; what is tested here
     is only that a send refuses to move mail until it has been collected.
     """
+    SiteConfig.objects.create(
+        ai_model="anthropic:claude-sonnet-4-5-20250929", llm_api_key="sk-ada")
     maillog.mailbox()
     return campaign
 
@@ -163,6 +166,18 @@ def test_a_send_with_no_mailbox_never_reaches_the_pass(campaign, capsys):
     with patch("cold_outreach.send_pass.run_send_pass") as run, \
             patch("sys.stdin.isatty", return_value=False), \
             pytest.raises(OutsendError, match="OUTSEND_MAILBOX_ADDRESS"):
+        _send(_args())
+
+    run.assert_not_called()
+
+
+def test_a_send_with_no_model_never_reaches_the_pass(campaign):
+    """The key used to be missed until an agent asked for a model, mid-pass, per lead."""
+    maillog.mailbox()
+
+    with patch("cold_outreach.send_pass.run_send_pass") as run, \
+            patch("sys.stdin.isatty", return_value=False), \
+            pytest.raises(OutsendError, match=LLM_ENV["llm_api_key"]):
         _send(_args())
 
     run.assert_not_called()

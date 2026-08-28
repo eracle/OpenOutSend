@@ -1,10 +1,16 @@
 """What a first run has to collect before a message can be written or sent.
 
-Three things, and none of them is a preference. A campaign has to say what is being
-sold and to whom, or the agent has nothing to write from. The mail has to be signed by
-somebody, and self-hosted means that somebody is the one operator this install runs
-as. And it has to leave a mailbox — a box whose credentials have been checked, because
-the provider has no health API and the SMTP login is the only gate there is.
+Four things, and none of them is a preference. A campaign has to say what is being
+sold and to whom, or the agent has nothing to write from. A model has to be reachable,
+or there is nothing to write it with. The mail has to be signed by somebody, and
+self-hosted means that somebody is the one operator this install runs as. And it has to
+leave a mailbox.
+
+**Two of the four are credentials, and both are checked before they are stored** — the
+mailbox by its SMTP login, the model by one ping. Neither provider has a health API,
+and an accepted login is the only gate there is. The alternative is what the LLM key
+used to do: sit in a variable nobody read until an agent asked for a model, halfway
+through a pass, with a lead already chosen.
 
 **`outsend send` calls this before any mail moves**, so an operator who wired the pipe
 into a timer never discovers a setup step they did not know to run.
@@ -24,6 +30,7 @@ import logging
 import os
 import sys
 
+from cold_outreach.core.models import LLM_ENV
 from cold_outreach.errors import OutsendError
 from cold_outreach.leads.campaigns import CONFIG_ENV, hydrate_from_environment, missing_config
 
@@ -57,6 +64,9 @@ _PROMPTS = {
     "product_docs": "What do you sell? Paste anything that explains it — a page, notes, a pitch.",
     "campaign_target": "Who is this campaign for?",
     "booking_link": "A link to book a call, if you have one (blank to skip).",
+    "ai_model": "Which model writes the mail? A provider:model id, "
+                "e.g. anthropic:claude-sonnet-4-5-20250929.",
+    "llm_api_key": "Its API key.",
     "name": "Who is sending this mail? The name that signs it.",
     "email": "Your own address, to blind-copy every send to (blank to skip).",
     "address": "The address to send from.",
@@ -74,6 +84,7 @@ def ensure_ready(campaign) -> None:
     interactive = sys.stdin.isatty()
     missing = [
         *_ensure_campaign(campaign, interactive),
+        *_ensure_llm(interactive),
         *_ensure_operator(interactive),
         *_ensure_mailbox(interactive),
     ]
@@ -107,6 +118,53 @@ def _prompt_campaign(campaign, missing: list[str]) -> None:
         if answer:
             setattr(campaign, field, answer)
     campaign.save()
+
+
+# ── The model ─────────────────────────────────────────────────────
+
+
+def _ensure_llm(interactive: bool) -> list[str]:
+    """Store the model and key this install writes with. Returns the variables still unanswered.
+
+    Skipped once both are stored, because verifying them costs a round trip to the
+    provider and a pass that already has credentials has nothing to check — the same
+    bargain the mailbox strikes with its SMTP login.
+    """
+    from cold_outreach.core.llm import verify_llm_credentials
+    from cold_outreach.core.models import SiteConfig, hydrate_llm_from_environment, missing_llm_config
+
+    config = SiteConfig.load()
+    if not missing_llm_config(config):
+        return []
+
+    hydrate_llm_from_environment(config)
+    missing = missing_llm_config(config)
+    if missing and interactive:
+        _prompt_llm(config, missing)
+        missing = missing_llm_config(config)
+    if missing:
+        return [LLM_ENV[field] for field in missing]
+
+    refused = verify_llm_credentials(config.ai_model, config.llm_api_key, config.llm_api_base)
+    if refused:
+        raise OutsendError(f"{config.ai_model} refused these credentials: {refused}")
+
+    config.save()
+    logger.info("writing with %s", config.ai_model)
+    return []
+
+
+def _prompt_llm(config, missing: list[str]) -> None:
+    """Ask for whichever of the two is still empty, without saving either.
+
+    Nothing is written here: `_ensure_llm` stores the row only after the model has
+    answered, so a mistyped key leaves no half-configured install to clear out before
+    the next attempt.
+    """
+    if "ai_model" in missing:
+        config.ai_model = _ask(_PROMPTS["ai_model"])
+    if "llm_api_key" in missing:
+        config.llm_api_key = _ask_secret(_PROMPTS["llm_api_key"])
 
 
 # ── The operator ──────────────────────────────────────────────────

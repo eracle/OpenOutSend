@@ -7,9 +7,14 @@ default. The finder made the same choice for the same reason — from a wheel th
 package directory is site-packages, and neither a database nor an operator's mail
 history belongs there.
 
-**The operator seam is the environment.** `OUTSEND_*` variables are read here and
-land as settings; nothing on this side has a config singleton to load, and a single
-value read at the point of use is the smaller seam.
+**The operator seam is the environment, and most of what it carries seeds the store.**
+A variable that only ever configures the process — where the state dir is, which local
+clock the sending window is measured in — is read here and lands as a setting. A
+variable that answers something a send cannot run without is read once into a row the
+operator can then edit: the campaign's fields, the mailbox, and the model and key on
+`core.SiteConfig`. The split is not tidiness. A setting missing at the point of use is
+discovered mid-pass, per lead, with a mailbox already open; a stored answer is checked
+before any mail moves.
 """
 from __future__ import annotations
 
@@ -44,6 +49,7 @@ DEBUG = False
 INSTALLED_APPS = [
     "django.contrib.auth",
     "django.contrib.contenttypes",
+    "cold_outreach.core",
     "cold_outreach.leads",
     "cold_outreach.emails",
 ]
@@ -67,8 +73,8 @@ TIME_ZONE = "UTC"
 # ── The operator seam ─────────────────────────────────────────────
 
 # ISO 3166 alpha-2. Resolves the local clock the sending window is measured in.
+# A setting rather than a stored answer: it is not a credential, there is nothing to
+# verify it against, and a blank one has a defined meaning (UTC) instead of stopping a
+# run. The model and its key are the opposite on all three counts, which is why they
+# live on `core.SiteConfig` and are collected by `first_run.py`.
 OUTSEND_OPERATOR_COUNTRY = os.environ.get("OUTSEND_OPERATOR_COUNTRY", "")
-# A pydantic-ai `provider:model` id, e.g. `anthropic:claude-sonnet-4-5-20250929`.
-OUTSEND_AI_MODEL = os.environ.get("OUTSEND_AI_MODEL", "")
-OUTSEND_LLM_API_KEY = os.environ.get("OUTSEND_LLM_API_KEY", "")
-OUTSEND_LLM_API_BASE = os.environ.get("OUTSEND_LLM_API_BASE", "")

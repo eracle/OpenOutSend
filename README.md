@@ -111,12 +111,12 @@ came across with the transport now assert against this side's own models.
 | --- | --- |
 | `cold_outreach/leads/` | what comes through the pipe — the models, ingest, suppression, the facts extraction |
 | `cold_outreach/emails/` | the transport — SMTP, IMAP sync, the mail pass, threads, delivery policy, warmth |
-| `cold_outreach/core/` | the outreach agent, its templates, and the sending window |
+| `cold_outreach/core/` | the outreach agent, its templates, the sending window, and the stored site configuration |
 | `cold_outreach/docs/` | how the agent and its templating work |
 | `cold_outreach/settings.py` | this repo's own Django settings and the state dir |
 | `cold_outreach/send_pass.py` | one pass — read, answer, open — and the line saying what held it |
 | `cold_outreach/send_job.py` | `send N` — passes until the goal is open, waiting out the send clocks |
-| `cold_outreach/first_run.py` | what `init` collects — the campaign's fields, the operator, the mailbox |
+| `cold_outreach/first_run.py` | what `init` collects — the campaign's fields, the model, the operator, the mailbox |
 | `cold_outreach/__main__.py` | the `outsend` console script |
 | `roadmap/` | open work, mostly inherited from OpenOutreach along with the code it describes |
 
@@ -128,13 +128,25 @@ The environment is the operator seam — the only way in a timer has:
 | --- | --- |
 | `OUTSEND_OPERATOR_COUNTRY` | ISO 3166 alpha-2; resolves the local clock the sending window is measured in |
 | `OUTSEND_AI_MODEL` | a pydantic-ai `provider:model` id, e.g. `anthropic:claude-sonnet-4-5-20250929` |
-| `OUTSEND_LLM_API_KEY` / `OUTSEND_LLM_API_BASE` | credentials for it |
+| `OUTSEND_LLM_API_KEY` / `OUTSEND_LLM_API_BASE` | credentials for it; `outsend init` also asks for these on a terminal |
 | `OUTSEND_PRODUCT_DOCS` / `OUTSEND_CAMPAIGN_TARGET` / `OUTSEND_BOOKING_LINK` | what a campaign writes from; `outsend init` also asks for these on a terminal |
 | `OUTSEND_OPERATOR_NAME` / `OUTSEND_OPERATOR_EMAIL` | who signs the mail, and the address every send is blind-copied to (blank for none) |
 | `OUTSEND_MAILBOX_ADDRESS` / `OUTSEND_MAILBOX_PASSWORD` | the box to send from, and its **app password** — a Google box rejects the login password |
 | `OUTSEND_SMTP_HOST` / `OUTSEND_SMTP_PORT` / `OUTSEND_IMAP_HOST` / `OUTSEND_IMAP_PORT` | only for a box that is not on Google Workspace; those four default to Gmail's and are never prompted for |
 | `OUTSEND_SIGNATURE` | the sign-off appended to every send from that box; empty declines one for good |
 | `OUTSEND_HOME` / `OUTSEND_DB` | where the store lives |
+
+**Most of these are read once and then stored.** The campaign's fields, the model and its
+key, the operator and the mailbox are collected by `outsend init` — which `outsend send`
+runs implicitly before any mail moves — and land in the store, where the operator can edit
+them. A variable seeds an empty field and never overwrites a filled one, so a stale unit
+file cannot silently revert an answer changed in the store. Two of them are checked before
+they are kept: the mailbox by its SMTP login, the model by one ping. `OUTSEND_HOME`,
+`OUTSEND_DB` and `OUTSEND_OPERATOR_COUNTRY` are the ones that stay settings — they
+configure the process, not the outreach.
+
+The store therefore holds credentials — the mailbox's app password and the LLM key.
+`~/.openoutsend/data/db.sqlite3` is a file to keep: back it up, and do not copy it around.
 
 ## The contract it has to implement
 

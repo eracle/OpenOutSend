@@ -3,8 +3,8 @@
 
 Two public entry points:
 
-- `get_llm_model()` — builds a `pydantic_ai.Model` from Django settings,
-  routing to the right provider.
+- `get_llm_model()` — builds a `pydantic_ai.Model` from the stored
+  `core.SiteConfig`, routing to the right provider.
 - `run_agent_sync(coro)` — drives a pydantic-ai coroutine to completion
   from sync code, on a dedicated worker thread with a long-lived event
   loop. Used everywhere instead of `Agent.run_sync`.
@@ -134,7 +134,8 @@ def _build_cohere(model, api_key, api_base):
 
 def _build_openai_compatible(model, api_key, api_base):
     if not api_base:
-        raise ValueError("OUTSEND_LLM_API_BASE is required for the openai_compatible provider.")
+        raise ValueError(
+            "the openai_compatible provider needs an API base — set OUTSEND_LLM_API_BASE.")
     from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.openai import OpenAIProvider
     return OpenAIModel(model, provider=OpenAIProvider(
@@ -176,7 +177,7 @@ def split_model_id(ai_model: str) -> tuple[str, str]:
         if ai_model.startswith(prefix):
             return provider, ai_model
     raise ValueError(
-        f"OUTSEND_AI_MODEL {ai_model!r} has no provider prefix. "
+        f"the configured model {ai_model!r} has no provider prefix. "
         f"Use 'provider:model', e.g. 'anthropic:{ai_model}'."
     )
 
@@ -189,23 +190,27 @@ def build_llm_model(ai_model: str, api_key: str, api_base: str = ""):
     builder = _PROVIDER_BUILDERS.get(provider)
     if builder is None:
         raise ValueError(
-            f"Unknown LLM provider {provider!r} in OUTSEND_AI_MODEL {ai_model!r}. "
+            f"Unknown LLM provider {provider!r} in the configured model {ai_model!r}. "
             f"Use one of: {', '.join(_PROVIDER_BUILDERS)}."
         )
     return builder(model, api_key, api_base)
 
 
 def get_llm_model():
-    """Return a configured pydantic-ai `Model` for the current settings."""
-    from django.conf import settings
+    """Return a configured pydantic-ai `Model` for the stored site configuration.
 
-    ai_model = getattr(settings, "OUTSEND_AI_MODEL", "")
-    api_key = getattr(settings, "OUTSEND_LLM_API_KEY", "")
-    if not api_key:
-        raise ValueError("OUTSEND_LLM_API_KEY is not set.")
-    if not ai_model:
-        raise ValueError("OUTSEND_AI_MODEL is not set.")
-    return build_llm_model(ai_model, api_key, getattr(settings, "OUTSEND_LLM_API_BASE", ""))
+    The guards are a backstop, not the check: `first_run.ensure_ready` collects and
+    verifies these before a pass touches a mailbox, so reaching either message means
+    something emptied the row after the run had already started.
+    """
+    from cold_outreach.core.models import LLM_ENV, SiteConfig
+
+    config = SiteConfig.load()
+    if not config.llm_api_key:
+        raise ValueError(f"no LLM API key stored — set {LLM_ENV['llm_api_key']} and run `outsend init`.")
+    if not config.ai_model:
+        raise ValueError(f"no LLM model stored — set {LLM_ENV['ai_model']} and run `outsend init`.")
+    return build_llm_model(config.ai_model, config.llm_api_key, config.llm_api_base)
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(max=10), reraise=True)
