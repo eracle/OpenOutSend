@@ -71,6 +71,14 @@ def test_a_goal_that_is_not_a_number_of_conversations_is_refused(count):
         _parse_args(["send", count])
 
 
+@pytest.mark.parametrize("word", ["all", "ALL"])
+def test_the_pool_itself_can_be_the_goal(word):
+    """`send all` spares the operator looking up a count that goes stale as they type it."""
+    from cold_outreach.send_job import ALL
+
+    assert _parse_args(["send", word]).count == ALL
+
+
 def test_a_count_belongs_to_send():
     """`outsend init 5` means nothing, and silently ignoring the 5 is worse than saying so."""
     with pytest.raises(SystemExit):
@@ -116,6 +124,19 @@ def test_a_goal_the_run_could_not_reach_is_said_and_carried_into_the_exit_code(
         assert _send(_args(count=5)) == 1
 
     assert "stopped at 3 of 5 — nobody left to email" in capsys.readouterr().err
+
+
+def test_draining_the_pool_is_how_send_all_succeeds(connected, capsys):
+    """The ending that fails `send 5` is the ending `send all` was asking for."""
+    from cold_outreach.send_job import ALL, DRAINED, SendJobResult
+
+    run = SendJobResult(goal=ALL, passes=9, totals=PassResult(opened=26),
+                        stopped_because=DRAINED, detail="26 opened — nobody left to email")
+    with patch("cold_outreach.send_job.run_send_job", return_value=run):
+        assert _send(_args(count=ALL)) == 0
+
+    assert "opened 26 conversation(s) in 9 pass(es) — nobody left to email" in \
+        capsys.readouterr().err
 
 
 def test_a_failed_send_is_reported_and_carried_into_the_exit_code(connected, capsys):

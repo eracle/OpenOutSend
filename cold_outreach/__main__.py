@@ -31,10 +31,11 @@ import os
 import sys
 
 USAGE = """outsend [--campaign NAME]        read JSON Lines on stdin, store them, exit
-outsend send [N] [--campaign NAME] [--prompt-line ID]
+outsend send [N|all] [--campaign NAME] [--prompt-line ID]
                                  one pass: read the mail, answer replies, open what the
                                  guards allow right now. With N, keep at it until N
-                                 conversations are open, waiting out the send clocks
+                                 conversations are open, waiting out the send clocks;
+                                 with `all`, until nobody is left to email
 outsend init [--campaign NAME]   collect what a first run needs — the campaign, who you
                                  are, and a mailbox to send from"""
 
@@ -59,9 +60,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("command", nargs="?", choices=["init", "send"])
     # `send 5` is a goal, `send` is a pass — see `_send`. Positional and optional
     # because the count *is* the verb's object, the way `find 5`'s is.
-    parser.add_argument("count", nargs="?", type=_positive_count, default=None,
-                        help="how many conversations to open before returning; "
-                             "omit for a single pass")
+    parser.add_argument("count", nargs="?", type=_goal, default=None,
+                        help="how many conversations to open before returning, or `all` "
+                             "to empty the pool; omit for a single pass")
     parser.add_argument("--campaign", default=None,
                         help="which campaign these leads belong to; required only if there are several")
     parser.add_argument("--prompt-line", default=None, dest="prompt_line",
@@ -74,10 +75,19 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return args
 
 
-def _positive_count(value: str) -> int:
-    """A goal is a number of conversations, so zero and minus one are not answers."""
+def _goal(value: str) -> int | str:
+    """A number of conversations, or ``all``.
+
+    Zero and minus one are not answers, and neither is a word that is not `all` — a goal
+    that cannot be read is worth an error rather than a default nobody asked for.
+    """
+    from cold_outreach.send_job import ALL
+
+    if value.lower() == ALL:
+        return ALL
     if not value.isdigit() or int(value) < 1:
-        raise argparse.ArgumentTypeError(f"expected a number of conversations, got {value!r}")
+        raise argparse.ArgumentTypeError(
+            f"expected a number of conversations or `all`, got {value!r}")
     return int(value)
 
 
@@ -178,17 +188,23 @@ def _run_one_pass(campaign, args: argparse.Namespace) -> int:
 
 
 def _run_to_goal(campaign, args: argparse.Namespace) -> int:
-    """`outsend send N` — and the one line that says how the run ended.
+    """`outsend send N` (or `all`) — and the one line that says how the run ended.
 
     A goal that was not reached is reported as its own sentence rather than folded into
     the counts, because *3 of 5* and *5 of 5* are the same four counts and different
     answers to "can I stop running this by hand now".
+
+    **`all` ends on the same empty pool that fails a numbered goal, and says so as a
+    success**, because emptying the pool is what it asked for.
     """
     from cold_outreach.send_job import run_send_job
 
     run = run_send_job(campaign, args.count, args.prompt_line)
     _report(run.totals)
-    if run.reached:
+    if run.reached and run.drained_the_pool:
+        print(f"opened {run.opened} conversation(s) in {run.passes} pass(es) — "
+              "nobody left to email", file=sys.stderr)
+    elif run.reached:
         print(f"opened {run.opened} of {run.goal} conversation(s) in {run.passes} pass(es)",
               file=sys.stderr)
     else:

@@ -22,7 +22,8 @@ goal is cold volume, and answering somebody who wrote to you is not that.
 **What ends a run that is not finished:**
 
     drained     nobody left to email — the lead pool is the one thing waiting cannot
-                refill, since ingest is a separate invocation
+                refill, since ingest is a separate invocation. This is the one ending
+                `send all` is *asking* for, and it ends that run successfully
     no box      no mailbox connected, which no clock resolves
     refused     two passes in a row that failed a send and opened nothing — a receiver
                 saying no, as opposed to the blip a single failure might be
@@ -34,6 +35,7 @@ not a resident process.
 from __future__ import annotations
 
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -54,12 +56,26 @@ NO_MAILBOX = "no_mailbox"
 REFUSED = "refused"
 INTERRUPTED = "interrupted"
 
+ALL = "all"
+"""The goal that is the pool itself: keep opening until nobody is left to email.
+
+**It is the one goal that inverts the verdict on ``DRAINED``.** For `send 5`, an empty
+pool is failure — five were asked for and three arrived. For `send all`, an empty pool
+is the whole point, so the same stop is success. Nothing else changes: it waits out the
+same clocks, and a missing mailbox or a refusing receiver still ends the run badly.
+
+Spelled as a word rather than as a number the operator has to look up first, because
+the count that means "everything" goes stale between reading it and typing it.
+"""
+
 
 @dataclass
 class SendJobResult:
     """What the run did, summed over its passes — what the exit code is built from."""
 
-    goal: int
+    goal: int | str
+    """A count, or ``ALL``."""
+
     passes: int = 0
     totals: PassResult = field(default_factory=PassResult)
     stopped_because: str | None = None
@@ -75,7 +91,19 @@ class SendJobResult:
         return self.totals.opened
 
     @property
+    def drained_the_pool(self) -> bool:
+        """Whether the run ended because nobody was left to email."""
+        return self.stopped_because == DRAINED
+
+    @property
     def reached(self) -> bool:
+        """Whether the run did what was asked — which depends on what was asked.
+
+        ``send all`` asks for the pool, so emptying it *is* the goal; ``send 5`` asks
+        for five, and an empty pool at three is the run falling short.
+        """
+        if self.goal == ALL:
+            return self.stopped_because in (None, DRAINED)
         return self.stopped_because is None
 
     @property
@@ -83,10 +111,17 @@ class SendJobResult:
         """True when the goal was met and nothing failed on its way out."""
         return self.reached and self.totals.ok
 
+    @property
+    def progress(self) -> str:
+        """How far the run got, phrased the way the goal was asked for."""
+        return f"{self.opened} opened" if self.goal == ALL else f"{self.opened} of {self.goal}"
 
-def run_send_job(campaign, goal: int, prompt_line_name: str | None = None,
+
+def run_send_job(campaign, goal: int | str, prompt_line_name: str | None = None,
                  sleep=time.sleep) -> SendJobResult:
     """Open *goal* conversations for *campaign*, waiting out the clocks in between.
+
+    ``goal`` is a count, or ``ALL`` to keep going until the pool is empty.
 
     ``sleep`` is injected so a test can run a week of waiting in milliseconds. It is the
     only clock this module holds: every *duration* comes from the pool's own timestamps.
@@ -97,11 +132,14 @@ def run_send_job(campaign, goal: int, prompt_line_name: str | None = None,
     return result
 
 
-def _work_to_goal(campaign, goal: int, prompt_line_name: str | None, sleep) -> SendJobResult:
+def _work_to_goal(campaign, goal: int | str, prompt_line_name: str | None, sleep) -> SendJobResult:
     """The loop itself. Every exit is a ``SendJobResult``; none of them raises."""
     from django.utils import timezone
 
     result = SendJobResult(goal=goal)
+    # ``ALL`` is a target no count can reach, which is the honest way to say it: the run
+    # ends on the pool being empty, never on the arithmetic.
+    target = math.inf if goal == ALL else goal
     refusals = 0
     announced = ""
 
@@ -111,7 +149,7 @@ def _work_to_goal(campaign, goal: int, prompt_line_name: str | None, sleep) -> S
         except KeyboardInterrupt:
             return _interrupted(result)
 
-        if result.opened >= goal:
+        if result.opened >= target:
             return result
 
         refusals = refusals + 1 if done.failed and not done.opened else 0
@@ -178,7 +216,7 @@ def _announce(result: SendJobResult, opening_at: datetime, announced: str,
     answer changed, so the line is compared to the last one printed and only a new
     answer is announced. Returns what is now on screen.
     """
-    line = (f"opened {result.opened} of {result.goal} · {done.holding} · "
+    line = (f"{result.progress} · {done.holding} · "
             f"next conversation can open {_when(opening_at)}")
     logger.log(logging.INFO if line != announced else logging.DEBUG, "%s", line)
     return line
@@ -229,8 +267,10 @@ def _anyone_waiting(campaign) -> bool:
 
 
 def _stop(result: SendJobResult, because: str, detail: str) -> SendJobResult:
+    """Record why the run ended. Whether *that* is a failure is ``reached``'s question —
+    a drained pool ends `send all` successfully and `send 5` short."""
     result.stopped_because = because
-    result.detail = f"{result.opened} of {result.goal} — {detail}"
+    result.detail = f"{result.progress} — {detail}"
     return result
 
 

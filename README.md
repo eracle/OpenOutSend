@@ -30,6 +30,7 @@ outsend init --campaign devtools                            # once: what you sel
 openoutreach find 50 --json | outsend --campaign devtools   # store
 outsend send --campaign devtools                            # one pass: read, answer, follow up, open
 outsend send 5 --campaign devtools                          # or: keep going until 5 are open
+outsend send all --campaign devtools                        # or: until nobody is left to email
 ```
 
 The two invocations are separate on purpose: a pipe's right-hand side must not block on the network
@@ -59,6 +60,12 @@ toward the goal; a busy inbox cannot satisfy it. It stops short, and says so, wh
 drained (waiting cannot refill it — ingest is a separate invocation), when no mailbox is connected, or
 when two passes in a row fail a send and open nothing, which is a receiver's answer rather than a
 clock. Ctrl-C hands back the conversations already opened.
+
+**`outsend send all` makes the pool itself the goal** — everybody who has an address gets one, and the
+run ends when nobody is left. It is the same run with one verdict inverted: the drained pool that
+*fails* `send 5` at three of five is exactly what `all` asked for, so it exits 0 saying how many went.
+Prefer it to typing a count you had to look up, since that number is stale by the time you type it.
+The other endings stay failures — no mailbox, and a receiver refusing twice in a row.
 
 So `find N emails --json | outsend && outsend send N` needs no cron entry at all: the second command
 returns when the conversations are open, whether that takes four minutes or spans a weekend. A timer

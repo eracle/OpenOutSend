@@ -14,7 +14,7 @@ import pytest
 from django.utils import timezone
 
 from cold_outreach.core.conf import WAIT_SLICE_SECONDS
-from cold_outreach.send_job import DRAINED, NO_MAILBOX, REFUSED, run_send_job
+from cold_outreach.send_job import ALL, DRAINED, NO_MAILBOX, REFUSED, run_send_job
 from cold_outreach.send_pass import PassResult
 from cold_outreach.tests.factories import DealFactory, LeadFactory
 
@@ -179,4 +179,51 @@ def test_the_same_answer_is_not_reprinted_every_slice(waiting, slept, caplog):
 
     waits = [r.getMessage() for r in caplog.records if "next conversation can open" in r.getMessage()]
     assert len(waits) == 1
-    assert "opened 0 of 1" in waits[0] and "0 first email(s) left today" in waits[0]
+    assert "0 of 1" in waits[0] and "0 first email(s) left today" in waits[0]
+
+
+# ── `send all`: the pool is the goal ──────────────────────────────
+
+
+class TestTheGoalThatIsThePool:
+    """`send all` is the same run with one verdict inverted: an empty pool is what it
+    asked for, so the stop that fails a numbered goal succeeds here."""
+
+    def test_it_keeps_going_until_nobody_is_left_to_email(self, waiting, slept):
+        """Three waiting, one opened per pass, and it stops when the third is gone —
+        the count comes from the pool rather than from anything typed."""
+        from cold_outreach.leads.models import Deal
+
+        def one_conversation(*args, **kwargs):
+            Deal.objects.filter(campaign=waiting).first().delete()
+            return PassResult(opened=1)
+
+        with patch("cold_outreach.send_job.run_send_pass", side_effect=one_conversation), \
+                patch("cold_outreach.send_job._next_opening",
+                      side_effect=lambda: timezone.now()):
+            result = run_send_job(waiting, ALL, sleep=slept.append)
+
+        assert (result.opened, result.passes) == (3, 3)
+        assert result.drained_the_pool and result.reached and result.ok
+
+    def test_a_drained_pool_fails_a_numbered_goal_and_satisfies_this_one(self, campaign, slept):
+        """Same stop, same counts, opposite verdict — the whole difference `all` makes."""
+        numbered, _ = _run(campaign, 9, [PassResult(opened=1)], slept)
+        every, _ = _run(campaign, ALL, [PassResult(opened=1)], slept)
+
+        assert numbered.stopped_because == every.stopped_because == DRAINED
+        assert numbered.reached is False and every.reached is True
+
+    def test_it_says_how_far_it_got_without_inventing_a_total(self, campaign, slept):
+        """There is no *of N* to report when the goal was never a number."""
+        result, _ = _run(campaign, ALL, [PassResult(opened=2)], slept)
+
+        assert result.progress == "2 opened"
+
+    def test_the_endings_that_are_not_the_pool_still_fail(self, waiting, slept):
+        """A missing box and a refusing receiver are failures however the goal was said."""
+        no_box, _ = _run(waiting, ALL, [PassResult()], slept, opening_in=None)
+        refused, _ = _run(waiting, ALL, [PassResult(failed=1)] * 2, slept)
+
+        assert (no_box.stopped_because, no_box.reached) == (NO_MAILBOX, False)
+        assert (refused.stopped_because, refused.reached) == (REFUSED, False)
