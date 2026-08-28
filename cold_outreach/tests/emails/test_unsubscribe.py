@@ -36,7 +36,7 @@ from cold_outreach.emails.sender import (
 )
 from cold_outreach.emails.steps.reply import answer_reply
 from cold_outreach.emails.steps.send import send_first_email
-from cold_outreach.leads.models import DealState, Lead, Suppression
+from cold_outreach.leads.models import DealState, Lead, Outcome, Suppression
 from cold_outreach.leads.suppression import suppress_email
 from cold_outreach.tests.emails import maillog
 from cold_outreach.tests.emails.fake_imap import FakeIMAP, message
@@ -213,8 +213,36 @@ class TestWordedUnsubscribe:
         deal.save()
         deal.refresh_from_db()
         assert deal.state == DealState.UNSUBSCRIBED
+        assert deal.outcome == Outcome.UNSUBSCRIBED
         assert suppressed(deal.lead)
         send.assert_not_called()
+
+    def test_the_outcome_alone_is_honoured_as_a_suppression(self, campaign):
+        """`suppress` and the `unsubscribed` outcome are one decision worded two ways.
+        Believing only the action would let an agent that read the reply correctly
+        close the deal `COMPLETED` and leave the address sendable."""
+        deal = _replied_deal(campaign)
+
+        with patch("cold_outreach.core.agents.outreach.run_outreach_agent",
+                   return_value=_decision("mark_completed", outcome="unsubscribed")), \
+             patch("cold_outreach.leads.summaries.update_chat_summary"), \
+             patch("cold_outreach.emails.sender.send_email") as send:
+            next_state = answer_reply(deal)
+
+        assert next_state == DealState.UNSUBSCRIBED
+        assert suppressed(deal.lead)
+        send.assert_not_called()
+
+    def test_an_ordinary_ending_still_completes(self, campaign):
+        """The reading above must not swallow the other seven outcomes."""
+        deal = _replied_deal(campaign)
+
+        with patch("cold_outreach.core.agents.outreach.run_outreach_agent",
+                   return_value=_decision("mark_completed", outcome="not_interested")), \
+             patch("cold_outreach.leads.summaries.update_chat_summary"):
+            assert answer_reply(deal) == DealState.COMPLETED
+
+        assert not suppressed(deal.lead)
 
     def test_the_deal_closes_even_when_the_address_matches_nothing(self, campaign):
         """``suppress_email`` is keyed on the address, the returned state on the

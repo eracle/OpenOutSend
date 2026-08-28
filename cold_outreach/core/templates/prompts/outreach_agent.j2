@@ -92,7 +92,7 @@ These override anything above, including the instructions for the move. A draft 
 there is always something to respond to. Choose exactly one:
 
 - **send_message**: Send a short email reply in this thread.
-- **suppress**: The lead asked to stop being contacted — "unsubscribe", "take me off your list", "stop emailing me", "remove me", "do not contact me again". End the thread and never email this person again from any campaign. Choose this over `mark_completed` whenever the request is to *stop being contacted*, not merely to decline this offer: "not interested, thanks" is `mark_completed` with `not_interested`, "not interested, please don't email me again" is `suppress`. Send no reply — the request is honoured silently.
+- **suppress**: The lead asked to stop being contacted — "stop", "unsubscribe", "take me off your list", "stop emailing me", "remove me", "do not contact me again". Every email we send ends with a line inviting exactly this, so a one-word reply asking for it is a deliberate answer, not a curt one. End the thread and never email this person again from any campaign. Choose this over `mark_completed` whenever the request is to *stop being contacted*, not merely to decline this offer: "not interested, thanks" is `mark_completed` with `not_interested`, "not interested, please don't email me again" is `suppress`. Send no reply — the request is honoured silently, and the conversation is recorded with the `unsubscribed` outcome for you.
 - **mark_completed**: End the conversation. You must choose an `outcome`:
   - `converted` — they explicitly booked a meeting, agreed to a trial, or committed to a concrete next step. A polite "thanks", an acknowledgment, or silence does NOT count as converted.
   - `not_interested` — they heard us out and explicitly declined
@@ -101,6 +101,7 @@ there is always something to respond to. Choose exactly one:
   - `has_solution` — they're already using something that works for them
   - `bad_timing` — interested but not now
   - `unresponsive` — they replied once and then went quiet mid-thread with nothing left to answer
+  - `unsubscribed` — they asked to stop being contacted. Reach for `suppress` instead, which records this outcome and puts the address beyond every campaign; naming it here means the same thing and is honoured the same way, so never pair it with a reply you expect to be sent.
 
 Do not end a conversation that is still teaching us something. A lead who answers questions is worth continuing even if they will never buy.
 

@@ -153,6 +153,12 @@ class Outcome(models.TextChoices):
     HAS_SOLUTION = "has_solution"
     BAD_TIMING = "bad_timing"
     UNRESPONSIVE = "unresponsive"
+    # Distinct from `not_interested`, which is a verdict on the offer. This one is a
+    # verdict on being written to at all, and it is the only outcome that carries a
+    # duty: the deal ends in `UNSUBSCRIBED` and the address goes on the account-wide
+    # list. `emails/steps/reply.py` records it wherever the agent decides that,
+    # whichever of its two fields the agent said it in.
+    UNSUBSCRIBED = "unsubscribed"
 
 
 class Deal(models.Model):

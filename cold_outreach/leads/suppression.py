@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 
-from cold_outreach.leads.models import Deal, DealState, Suppression
+from cold_outreach.leads.models import Deal, DealState, Outcome, Suppression
 
 logger = logging.getLogger(__name__)
 
@@ -72,10 +72,18 @@ def suppress_email(
     # ``iexact``, because the address on a lead is whatever its producer wrote. Ingest
     # normalises on the way in, but the duty is to the person, not to a casing, and a
     # row that arrived by any other route must not slip through.
+    # An opt-out closes a conversation, so it writes the reason it closed for, the way
+    # every other ending does. Only for `UNSUBSCRIBED`: a dead address is not a person
+    # declining, and `UNDELIVERABLE` has no outcome of its own to claim. Nothing here
+    # can overwrite a real verdict — a deal that already has one is terminal, and
+    # terminal deals are excluded above.
+    closing = {"state": end_state}
+    if end_state == DealState.UNSUBSCRIBED:
+        closing["outcome"] = Outcome.UNSUBSCRIBED
     ended = (
         Deal.objects.filter(lead__email__iexact=email)
         .exclude(state__in=TERMINAL_STATES)
-        .update(state=end_state)
+        .update(**closing)
     )
     logger.info(
         "suppressed %s (%s) — %d open deal(s) ended",

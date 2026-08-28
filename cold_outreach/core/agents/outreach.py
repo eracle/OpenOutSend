@@ -26,6 +26,12 @@ emailing me". It threads like any other reply, so the box-wide alias scan in
 can. It is a stronger statement than ``not_interested``: it ends the thread and
 suppresses the person account-wide, across every campaign.
 
+**It is one decision the model can word two ways**, so both are read as one. The
+action is ``suppress`` and the outcome it records is ``unsubscribed``; a decision that
+names that outcome while reaching for ``mark_completed`` is saying the same thing, and
+``emails/steps/reply.py`` honours it identically. Believing only the action would let a
+model that answered the question correctly still leave the address off the list.
+
 Single LLM call with structured output — no tool-calling loop.
 """
 from __future__ import annotations
@@ -68,10 +74,14 @@ class OutreachDecision(BaseModel):
     )
     outcome: Literal[
         "converted", "not_interested", "wrong_fit", "no_budget",
-        "has_solution", "bad_timing", "unresponsive",
+        "has_solution", "bad_timing", "unresponsive", "unsubscribed",
     ] | None = Field(
         default=None,
-        description="Why the conversation ended. Required when action='mark_completed'.",
+        description=(
+            "Why the conversation ended. Required when action='mark_completed'. "
+            "'unsubscribed' belongs to action='suppress', which records it for you — "
+            "naming it here says the same thing and is honoured the same way."
+        ),
     )
     @model_validator(mode="after")
     def _check_required_fields(self):

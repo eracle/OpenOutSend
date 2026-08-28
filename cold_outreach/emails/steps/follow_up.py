@@ -45,7 +45,7 @@ def send_follow_up(deal) -> DealState | None:
     from cold_outreach.core.agents.outreach import FOLLOW_UP, run_outreach_agent
     from cold_outreach.core.operator import get_active_user
     from cold_outreach.emails.sender import operator_bcc, send_email, suppressed
-    from cold_outreach.emails.steps.reply import thread_ids
+    from cold_outreach.emails.steps.reply import ends_in_an_opt_out, honour_opt_out, thread_ids
     from cold_outreach.emails.steps.send import space_out
 
     prompt_line = opening_prompt_line(deal)
@@ -55,6 +55,12 @@ def send_follow_up(deal) -> DealState | None:
 
     decision = run_outreach_agent(deal, prompt_line, stage=FOLLOW_UP)
 
+    # A chase is written to somebody who has said nothing, so there is no opt-out here
+    # to read and the prompt does not offer one. It is honoured anyway if the agent
+    # reaches for it: the alternative is the branch below, which logs the decision and
+    # discards it — leaving a deal the agent judged an opt-out sendable again next pass.
+    if ends_in_an_opt_out(decision):
+        return honour_opt_out(deal)
     if decision.action == "mark_completed":
         logger.info("[%s] %s judged not worth another email: %s",
                     deal.campaign, deal.lead.public_id, decision.outcome)

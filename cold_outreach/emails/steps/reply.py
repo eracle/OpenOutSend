@@ -30,7 +30,7 @@ import logging
 
 from termcolor import colored
 
-from cold_outreach.leads.models import DealState
+from cold_outreach.leads.models import DealState, Outcome
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,8 @@ def answer_reply(deal) -> DealState | None:
     _fold_new_messages_into_summary(deal)
     decision = run_outreach_agent(deal)
 
+    if ends_in_an_opt_out(decision):
+        return honour_opt_out(deal)
     if decision.action == "send_message":
         return _send_reply(deal, decision)
     if decision.action == "mark_completed":
@@ -52,9 +54,19 @@ def answer_reply(deal) -> DealState | None:
                     deal.campaign, deal.lead.public_id, decision.outcome)
         deal.outcome = decision.outcome
         return DealState.COMPLETED
-    if decision.action == "suppress":
-        return _suppress(deal)
     return None
+
+
+def ends_in_an_opt_out(decision) -> bool:
+    """True when the agent said this person asked to stop — in either field it can say it.
+
+    The action and the outcome are one sentence in two places: `suppress` is the move,
+    `unsubscribed` is the reason it records. Asked first, and before the action is
+    branched on, because the two must not be able to disagree — a decision naming the
+    outcome while reaching for `mark_completed` would otherwise close the deal and
+    leave the address off the list, which is the one failure an opt-out cannot have.
+    """
+    return decision.action == "suppress" or decision.outcome == Outcome.UNSUBSCRIBED
 
 
 def _fold_new_messages_into_summary(deal) -> None:
@@ -127,19 +139,25 @@ def _send_reply(deal, decision) -> DealState | None:
     return None
 
 
-def _suppress(deal) -> DealState:
+def honour_opt_out(deal) -> DealState:
     """Honour a worded unsubscribe: suppress the address for good, send nothing.
 
     Enforcement is address-level, so it reaches every campaign holding that address,
     not just this thread's — and it is terminal: no later ingest can walk this person
     back into the sendable set. No reply goes out either; someone who asked to stop
     hearing from us is not owed one more email.
+
+    The deal closes with the `unsubscribed` outcome, so an opt-out reads like every
+    other ended conversation — the state says the thread is over, the outcome says
+    why, and the operator does not have to know that one of the eight is stored
+    somewhere else.
     """
     from cold_outreach.leads.suppression import suppress_email
 
     suppress_email(deal.lead.email, reason="worded unsubscribe in a reply")
     logger.info("[%s] %s asked to stop — suppressed for good",
                 deal.campaign, deal.lead.public_id)
+    deal.outcome = Outcome.UNSUBSCRIBED
     return DealState.UNSUBSCRIBED
 
 

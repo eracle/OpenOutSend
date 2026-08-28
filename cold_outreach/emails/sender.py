@@ -175,17 +175,21 @@ def _sign(body: str, signature: str | None) -> str:
     return f"{body.rstrip()}\n\n{signature}\n"
 
 
-OPT_OUT_LINE = "Don't want to hear from me? Reply with \"unsubscribe\" and I'll stop."
+OPT_OUT_LINE = "Not interested? Reply \"stop\" and I won't write again."
 
 
 def _opt_out(body: str) -> str:
     """Append the visible opt-out line, after the signature and before the attribution.
 
     Plain text rather than a link: a typed reply works in every client, including
-    the ones where Gmail declines to render its own unsubscribe button, so it
-    covers the recipients the ``List-Unsubscribe`` header alone does not reach.
-    Its job is the same as the header's — put an exit in front of someone who
-    wants one, so they take it instead of the spam button.
+    the ones where Gmail declines to render its own unsubscribe button — which, for a
+    low-volume box sending one-to-one shaped mail, is most of them. Without this line
+    those recipients have no visible exit but the spam button, and a complaint costs
+    the sending reputation everything else here is built to protect.
+
+    **The quoted word is load-bearing.** `emails/steps/reply.py` matches it before any
+    model is consulted, so the one wording this asks for is honoured by code rather
+    than by inference. Reword the sentence freely; keep a word the gate can match.
     """
     return f"{body.rstrip()}\n\n{OPT_OUT_LINE}\n"
 

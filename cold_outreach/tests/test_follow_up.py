@@ -123,14 +123,14 @@ class TestGivingUp:
 
 
 class TestTheFollowUpItself:
-    def _send(self, deal, message="One more thought.", action="send_message"):
+    def _send(self, deal, message="One more thought.", action="send_message", outcome=None):
         from cold_outreach.core.agents.outreach import OutreachDecision
         from cold_outreach.emails.steps.follow_up import send_follow_up
 
         with patch("cold_outreach.core.agents.outreach.run_outreach_agent",
                    return_value=OutreachDecision(
                        action=action, message=message,
-                       outcome="wrong_fit" if action == "mark_completed" else None),
+                       outcome=outcome or ("wrong_fit" if action == "mark_completed" else None)),
                    ) as agent, \
                 patch("cold_outreach.emails.sender.send_email") as send:
             next_state = send_follow_up(deal)
@@ -190,6 +190,34 @@ class TestTheFollowUpItself:
         send.assert_not_called()
         assert next_state == DealState.COMPLETED
         assert deal.outcome == "wrong_fit"
+
+    def test_an_opt_out_here_is_honoured_rather_than_logged_away(self, campaign, operator):
+        """A chase is written to silence, so the prompt never offers `suppress` — but a
+        decision that reached for it used to fall through the "sending nothing" branch,
+        leaving a deal the agent judged an opt-out chaseable again on the next pass."""
+        from cold_outreach.leads.suppression import is_suppressed
+
+        deal = _pursued(campaign, touches=1, days_ago=10)
+
+        _, send, next_state = self._send(deal, action="suppress")
+
+        send.assert_not_called()
+        assert next_state == DealState.UNSUBSCRIBED
+        assert deal.outcome == "unsubscribed"
+        assert is_suppressed(deal.lead.email)
+
+    def test_naming_the_outcome_ends_it_the_same_way(self, campaign, operator):
+        """The action and the outcome are one sentence: saying it in the other field
+        cannot close a deal `COMPLETED` with the address still sendable."""
+        from cold_outreach.leads.suppression import is_suppressed
+
+        deal = _pursued(campaign, touches=1, days_ago=10)
+
+        _, send, next_state = self._send(deal, action="mark_completed", outcome="unsubscribed")
+
+        send.assert_not_called()
+        assert next_state == DealState.UNSUBSCRIBED
+        assert is_suppressed(deal.lead.email)
 
     def test_the_box_is_spaced_out_afterwards(self, campaign, operator):
         """A follow-up is cold volume: it pays the same spacing an opener does."""
