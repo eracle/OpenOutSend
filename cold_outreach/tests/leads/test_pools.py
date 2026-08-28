@@ -36,7 +36,7 @@ def test_emailable_deals_skips_rows_with_no_address(campaign):
     assert list(emailable_deals(campaign)) == []
 
 
-@pytest.mark.parametrize("state", [DealState.EMAILED, DealState.COMPLETED, DealState.UNSUBSCRIBED])
+@pytest.mark.parametrize("state", [DealState.EMAILED, DealState.COMPLETED])
 def test_emailable_deals_skips_every_state_but_ready(campaign, state):
     """Suppression needs no filter of its own — an opt-out parks the row instead."""
     _ready(campaign, state=state)

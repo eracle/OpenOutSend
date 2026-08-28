@@ -32,7 +32,7 @@ from typing import IO
 
 from django.utils.dateparse import parse_datetime
 
-from cold_outreach.leads.models import Deal, DealState, Lead
+from cold_outreach.leads.models import Deal, DealState, Lead, Outcome
 from cold_outreach.leads.suppression import is_suppressed, normalize
 
 logger = logging.getLogger(__name__)
@@ -169,11 +169,15 @@ def _upsert_deal(lead: Lead, campaign, record: dict, suppressed: bool) -> Deal:
     often *is*. The state is not: a conversation that has started or ended is this
     side's own business, and a producer re-printing its whole campaign every night
     must never reset it. The one state ingest sets is the terminal one, and only
-    downwards.
+    downwards — and a deal that already reached it keeps the outcome it reached it
+    with, exactly as `suppress_email` leaves one alone. Ending is not sendable, so
+    there is nothing to enforce and nothing to overwrite.
     """
+    opening = {"state": DealState.READY}
+    if suppressed:
+        opening = {"state": DealState.COMPLETED, "outcome": Outcome.UNSUBSCRIBED}
     deal, created = Deal.objects.get_or_create(
-        lead=lead, campaign=campaign,
-        defaults={"state": DealState.UNSUBSCRIBED if suppressed else DealState.READY},
+        lead=lead, campaign=campaign, defaults=opening,
     )
 
     updated = []
@@ -185,9 +189,10 @@ def _upsert_deal(lead: Lead, campaign, record: dict, suppressed: bool) -> Deal:
     if qualified_at and deal.qualified_at != qualified_at:
         deal.qualified_at = qualified_at
         updated.append("qualified_at")
-    if suppressed and not created and deal.state != DealState.UNSUBSCRIBED:
-        deal.state = DealState.UNSUBSCRIBED
-        updated.append("state")
+    if suppressed and not created and deal.state != DealState.COMPLETED:
+        deal.state = DealState.COMPLETED
+        deal.outcome = Outcome.UNSUBSCRIBED
+        updated += ["state", "outcome"]
 
     if updated:
         deal.save(update_fields=[*updated, "updated_at"])

@@ -14,7 +14,7 @@ from cold_outreach.emails.classify import classify_pending
 from cold_outreach.emails.models import DeliveryEvent, Kind, Message
 from cold_outreach.emails.project import project_pending
 from cold_outreach.emails.sync import mirror
-from cold_outreach.leads.models import Deal, DealState
+from cold_outreach.leads.models import Deal, DealState, Outcome
 from cold_outreach.leads.suppression import is_suppressed
 from cold_outreach.tests.emails import maillog
 from cold_outreach.tests.emails.fake_imap import FakeIMAP, bounce, message
@@ -91,11 +91,11 @@ class TestUndeliverableAddresses:
         deal = self._bounced("5.1.1")
 
         assert is_suppressed("p@corp.com")
-        assert deal.state == DealState.UNDELIVERABLE
+        assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.UNDELIVERABLE)
 
     def test_undeliverable_is_not_unsubscribed(self):
         """Nobody asked for anything — the funnel must not say they did."""
-        assert self._bounced("5.1.1").state != DealState.UNSUBSCRIBED
+        assert self._bounced("5.1.1").outcome != Outcome.UNSUBSCRIBED
 
     @pytest.mark.parametrize("status", ["5.7.1", "5.7.26"])
     def test_a_reputation_block_never_suppresses_the_recipient(self, status):
@@ -154,8 +154,8 @@ class TestOptOuts:
         assert is_suppressed("p@corp.com")
         for deal in (first, second):
             deal.refresh_from_db()
-            assert deal.state == DealState.UNSUBSCRIBED
-        assert Deal.objects.exclude(state=DealState.UNSUBSCRIBED).count() == 0
+            assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.UNSUBSCRIBED)
+        assert Deal.objects.exclude(outcome=Outcome.UNSUBSCRIBED).count() == 0
 
 
 @pytest.mark.django_db

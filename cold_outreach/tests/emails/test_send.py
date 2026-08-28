@@ -168,7 +168,7 @@ class TestEmailableDeals:
     def test_returns_only_deals_waiting_for_a_first_email(self, campaign):
         ready = _ready(campaign)
         DealFactory(campaign=campaign, lead=LeadFactory(), state=DealState.EMAILED)
-        DealFactory(campaign=campaign, lead=LeadFactory(), state=DealState.UNSUBSCRIBED)
+        DealFactory(campaign=campaign, lead=LeadFactory(), state=DealState.COMPLETED)
         assert list(emailable_deals(campaign)) == [ready]
 
     def test_excludes_a_lead_with_no_address(self, campaign):

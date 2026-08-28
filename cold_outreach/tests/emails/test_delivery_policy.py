@@ -12,7 +12,7 @@ from cold_outreach.emails.delivery_policy import (
     record_failure,
 )
 from cold_outreach.emails.models import DeliveryEvent, Mailbox
-from cold_outreach.leads.models import DealState
+from cold_outreach.leads.models import DealState, Outcome
 from cold_outreach.leads.suppression import is_suppressed
 from cold_outreach.tests.emails import maillog
 from cold_outreach.tests.factories import DealFactory, LeadFactory
@@ -123,7 +123,7 @@ class TestRecordFailure:
 
         deal.refresh_from_db()
         assert is_suppressed("gone@corp.com")
-        assert deal.state == DealState.UNDELIVERABLE
+        assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.UNDELIVERABLE)
 
     def test_a_reputation_refusal_at_the_door_suppresses_nobody(self):
         send = maillog.outbound(_box(), to="fine@corp.com")

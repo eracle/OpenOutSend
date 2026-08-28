@@ -217,13 +217,13 @@ def stop_mailing(address: str, enhanced_status: str) -> int:
     and mean the same thing to the receiver, and the only difference between them is
     which door the answer came back through.
     """
-    from cold_outreach.leads.models import DealState
+    from cold_outreach.leads.models import Outcome
     from cold_outreach.leads.suppression import suppress_email
 
     return suppress_email(
         address,
         reason=f"undeliverable ({enhanced_status})",
-        end_state=DealState.UNDELIVERABLE,
+        outcome=Outcome.UNDELIVERABLE,
     )
 
 

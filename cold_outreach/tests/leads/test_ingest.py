@@ -10,7 +10,7 @@ import json
 import pytest
 
 from cold_outreach.leads.ingest import ingest
-from cold_outreach.leads.models import Campaign, Deal, DealState, Lead
+from cold_outreach.leads.models import Campaign, Deal, DealState, Lead, Outcome
 from cold_outreach.leads.suppression import suppress_email
 
 pytestmark = pytest.mark.django_db
@@ -150,17 +150,17 @@ def test_a_suppressed_address_arrives_unsendable(campaign):
     result = ingest(stream(record()), campaign)
 
     assert (result.stored, result.suppressed) == (1, 1)
-    assert Deal.objects.get().state == DealState.UNSUBSCRIBED
+    assert Deal.objects.get().outcome == Outcome.UNSUBSCRIBED
 
 
 def test_a_re_ingest_never_resurrects_an_opt_out(campaign):
     ingest(stream(record()), campaign)
     suppress_email("anna@example.com", reason="asked to stop")
-    assert Deal.objects.get().state == DealState.UNSUBSCRIBED
+    assert Deal.objects.get().outcome == Outcome.UNSUBSCRIBED
 
     ingest(stream(record()), campaign)
 
-    assert Deal.objects.get().state == DealState.UNSUBSCRIBED
+    assert Deal.objects.get().outcome == Outcome.UNSUBSCRIBED
 
 
 def test_an_address_that_changes_into_a_suppressed_one_is_caught(campaign):
@@ -171,7 +171,7 @@ def test_an_address_that_changes_into_a_suppressed_one_is_caught(campaign):
 
     ingest(stream(record(email="anna@acme.io")), campaign)
 
-    assert Deal.objects.get().state == DealState.UNSUBSCRIBED
+    assert Deal.objects.get().outcome == Outcome.UNSUBSCRIBED
 
 
 def test_an_opt_out_ends_the_conversation_it_was_in(campaign):
@@ -183,4 +183,4 @@ def test_an_opt_out_ends_the_conversation_it_was_in(campaign):
     suppress_email("Anna@Example.com  ", reason="worded unsubscribe")
 
     deal.refresh_from_db()
-    assert deal.state == DealState.UNSUBSCRIBED
+    assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.UNSUBSCRIBED)

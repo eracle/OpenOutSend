@@ -34,32 +34,24 @@ def is_suppressed(address: str | None) -> bool:
     return bool(email) and Suppression.objects.filter(email=email).exists()
 
 
-# A deal already here is left alone: whatever ends it now, it ended before.
-TERMINAL_STATES = (
-    DealState.COMPLETED,
-    DealState.UNSUBSCRIBED,
-    DealState.UNDELIVERABLE,
-)
-
-
 def suppress_email(
     address: str | None,
     *,
     reason: str = "",
-    end_state: str = DealState.UNSUBSCRIBED,
+    outcome: str = Outcome.UNSUBSCRIBED,
 ) -> int:
     """Put *address* on the list for good and end its open conversations.
 
-    Returns the number of deals moved to *end_state* — the deals rather than the
-    leads, because the duty is to stop emailing and a deal is what would have emailed
-    them. Already-terminal deals are left where they are: an opt-out arriving after a
-    conversation completed changes nothing about how it ended.
+    Returns the number of deals ended — the deals rather than the leads, because the
+    duty is to stop emailing and a deal is what would have emailed them. A deal that
+    already reached `COMPLETED` is left exactly as it was: an opt-out arriving after a
+    conversation ended changes nothing about how it ended.
 
-    ``end_state`` says *why the mailing stopped*, and the two reasons must not be
-    told apart only by reading a free-text column: somebody who asked to stop lands
-    at `UNSUBSCRIBED`, an address the receiver says is dead lands at `UNDELIVERABLE`
-    (`emails/delivery_policy.stop_mailing`). Both are terminal and neither is
-    sendable; the difference is what the funnel says happened.
+    ``outcome`` says *why the mailing stopped*. Somebody who asked to stop ends
+    `unsubscribed`; an address the receiver says is dead ends `undeliverable`
+    (`emails/delivery_policy.stop_mailing`). Both are `COMPLETED` and neither is
+    sendable — the difference is what the funnel says happened, and it is a column of
+    choices rather than a second terminal state, so every ending is read the same way.
 
     Idempotent, and the first suppression wins. Re-suppressing keeps the original
     timestamp and reason, since when somebody *first* asked is the fact worth having.
@@ -72,18 +64,13 @@ def suppress_email(
     # ``iexact``, because the address on a lead is whatever its producer wrote. Ingest
     # normalises on the way in, but the duty is to the person, not to a casing, and a
     # row that arrived by any other route must not slip through.
-    # An opt-out closes a conversation, so it writes the reason it closed for, the way
-    # every other ending does. Only for `UNSUBSCRIBED`: a dead address is not a person
-    # declining, and `UNDELIVERABLE` has no outcome of its own to claim. Nothing here
-    # can overwrite a real verdict — a deal that already has one is terminal, and
-    # terminal deals are excluded above.
-    closing = {"state": end_state}
-    if end_state == DealState.UNSUBSCRIBED:
-        closing["outcome"] = Outcome.UNSUBSCRIBED
+    #
+    # Nothing here can overwrite a verdict somebody else reached: a deal that has one
+    # is `COMPLETED`, and those are excluded.
     ended = (
         Deal.objects.filter(lead__email__iexact=email)
-        .exclude(state__in=TERMINAL_STATES)
-        .update(**closing)
+        .exclude(state=DealState.COMPLETED)
+        .update(state=DealState.COMPLETED, outcome=outcome)
     )
     logger.info(
         "suppressed %s (%s) — %d open deal(s) ended",

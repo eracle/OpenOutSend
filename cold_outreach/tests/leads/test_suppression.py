@@ -19,7 +19,7 @@ def test_suppressing_ends_the_open_deals(deal):
 
     deal.refresh_from_db()
     assert ended == 1
-    assert deal.state == DealState.UNSUBSCRIBED
+    assert deal.state == DealState.COMPLETED
     assert is_suppressed("anna@example.com")
 
 
@@ -30,7 +30,7 @@ def test_it_reaches_every_campaign_holding_the_address(deal):
     assert suppress_email("anna@example.com") == 2
 
     other.refresh_from_db()
-    assert other.state == DealState.UNSUBSCRIBED
+    assert (other.state, other.outcome) == (DealState.COMPLETED, Outcome.UNSUBSCRIBED)
 
 
 def test_an_ended_deal_says_why_it_ended(deal):
@@ -44,23 +44,27 @@ def test_an_ended_deal_says_why_it_ended(deal):
 
 
 def test_a_dead_address_is_not_a_person_declining(deal):
-    """`UNDELIVERABLE` is the receiver's verdict, not the lead's — it claims no outcome."""
+    """Both endings are `COMPLETED` and neither is sendable; the outcome is the
+    difference, so a dead mailbox never reads as withdrawn consent."""
     suppress_email("anna@example.com", reason="hard bounce",
-                   end_state=DealState.UNDELIVERABLE)
+                   outcome=Outcome.UNDELIVERABLE)
 
     deal.refresh_from_db()
-    assert deal.state == DealState.UNDELIVERABLE
-    assert deal.outcome == ""
+    assert deal.state == DealState.COMPLETED
+    assert deal.outcome == Outcome.UNDELIVERABLE
 
 
 def test_a_finished_conversation_is_left_as_it_ended(deal):
-    deal.state = DealState.COMPLETED
-    deal.save(update_fields=["state"])
+    """Including the verdict it ended with: an opt-out arriving after a conversation
+    closed changes nothing about how it closed."""
+    deal.state, deal.outcome = DealState.COMPLETED, Outcome.NOT_INTERESTED
+    deal.save(update_fields=["state", "outcome"])
 
     assert suppress_email("anna@example.com") == 0
 
     deal.refresh_from_db()
-    assert deal.state == DealState.COMPLETED
+    assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.NOT_INTERESTED)
+    assert is_suppressed("anna@example.com")
 
 
 def test_addresses_compare_case_insensitively(deal):

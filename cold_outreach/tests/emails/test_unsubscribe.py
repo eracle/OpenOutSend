@@ -119,7 +119,7 @@ class TestAliasOptOut:
 
         deal.refresh_from_db()
         assert suppressed(lead)
-        assert deal.state == DealState.UNSUBSCRIBED
+        assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.UNSUBSCRIBED)
 
     def test_ordinary_inbox_mail_is_left_alone(self, campaign):
         lead = LeadFactory(email="p@corp.com")
@@ -156,7 +156,7 @@ class TestAliasOptOut:
         assert _read(box, fake) == 0     # already stored, already honoured
 
         deal.refresh_from_db()
-        assert deal.state == DealState.UNSUBSCRIBED
+        assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.UNSUBSCRIBED)
         assert Suppression.objects.count() == 1
 
     def test_an_unreachable_box_keeps_its_coverage(self, campaign):
@@ -212,7 +212,7 @@ class TestWordedUnsubscribe:
         deal.state = next_state
         deal.save()
         deal.refresh_from_db()
-        assert deal.state == DealState.UNSUBSCRIBED
+        assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.UNSUBSCRIBED)
         assert deal.outcome == Outcome.UNSUBSCRIBED
         assert suppressed(deal.lead)
         send.assert_not_called()
@@ -229,7 +229,7 @@ class TestWordedUnsubscribe:
              patch("cold_outreach.emails.sender.send_email") as send:
             next_state = answer_reply(deal)
 
-        assert next_state == DealState.UNSUBSCRIBED
+        assert next_state == DealState.COMPLETED
         assert suppressed(deal.lead)
         send.assert_not_called()
 
@@ -254,7 +254,7 @@ class TestWordedUnsubscribe:
         with patch("cold_outreach.core.agents.outreach.run_outreach_agent",
                    return_value=_decision("suppress")), \
              patch("cold_outreach.leads.summaries.update_chat_summary"):
-            assert answer_reply(deal) == DealState.UNSUBSCRIBED
+            assert answer_reply(deal) == DealState.COMPLETED
 
 
 # ── Enforcement at the send call sites ───────────────────────────
@@ -289,7 +289,7 @@ class TestSendGuards:
 
         send.assert_not_called()
         deal.refresh_from_db()
-        assert deal.state == DealState.UNSUBSCRIBED
+        assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.UNSUBSCRIBED)
 
     def test_a_reply_is_not_sent_to_a_lead_suppressed_mid_run(self, campaign):
         deal = _replied_deal(campaign)
@@ -308,4 +308,4 @@ class TestSendGuards:
         # closed it on its way onto the list, so there is nothing left to transition.
         send.assert_not_called()
         deal.refresh_from_db()
-        assert deal.state == DealState.UNSUBSCRIBED
+        assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.UNSUBSCRIBED)

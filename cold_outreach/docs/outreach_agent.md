@@ -36,7 +36,7 @@ Replies outrank openers, and are exempt from the daily cap, the spacing and the 
 |--------|--------|
 | `send_message` | **First touch:** the decision also carries a `subject`; the opener is sent, the thread it opened recorded on the deal, the deal moved to `EMAILED`. **In thread:** threaded reply via `emails/sender.py` (`References` = every Message-ID in the thread, `In-Reply-To` = the last of them), recorded in the mail log as an outbound `Message` in the same thread. The deal stays `EMAILED` — writing our own message is what makes it stop being actionable. |
 | `mark_completed` | Close the Deal `COMPLETED` with the agent's `Outcome`. |
-| `suppress` | A worded unsubscribe: suppress the person account-wide (`Lead.disqualified`), close the deal `UNSUBSCRIBED` with the `unsubscribed` outcome. No reply is sent. |
+| `suppress` | A worded unsubscribe: put the address on the account-wide list and close the deal `COMPLETED` with the `unsubscribed` outcome. No reply is sent. The list is what is terminal; the deal is a deal that ended. |
 
 **`suppress` and the `unsubscribed` outcome are one decision the model can word two ways**, and `ends_in_an_opt_out` reads them as one — a decision naming that outcome while reaching for `mark_completed` is honoured as a suppression, because a model that judged the reply correctly must not be able to leave the address off the list by putting the answer in the other field. Both `answer_reply` and `write_follow_up` ask that first, before branching on the action.
 

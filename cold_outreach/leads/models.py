@@ -107,7 +107,7 @@ class DealState(models.TextChoices):
     """Where a deal is in *this* side's funnel — the conversation, not the search.
 
     The finder's states describe finding somebody and optionally resolving an
-    address; they all end before the first message is written. These five describe
+    address; they all end before the first message is written. These three describe
     what happens after:
 
     - **READY** — ingested and not yet written to. A row with no address rests here
@@ -117,13 +117,14 @@ class DealState(models.TextChoices):
       (`unresponsive`) once its touches are spent; one who answers stays here while
       the thread runs. Which of the two a row is, is never stored — it is the
       comparison between the thread's newest inbound and outbound turns.
-    - **COMPLETED** — the conversation reached its end, with an `outcome` saying how.
-    - **UNSUBSCRIBED** — they asked to stop. The address is on the suppression list
-      and this row is terminal for good.
-    - **UNDELIVERABLE** — the receiver said there is nobody at that address. Terminal
-      in the same way, and deliberately *not* `UNSUBSCRIBED`: nobody asked for
-      anything, and a row reading as withdrawn consent when it is really a dead
-      mailbox misstates what happened to whoever reads the funnel later.
+    - **COMPLETED** — the conversation reached its end, with an `Outcome` saying how.
+
+    **The state says whether it is over; the outcome says why.** There used to be a
+    terminal state for an opt-out and another for a dead address, which put two of the
+    endings in this column and the other seven in `outcome` — so "why did this end"
+    was answered by reading one column for some deals and the other for the rest.
+    They are `unsubscribed` and `undeliverable` now, and the shape they moved to is
+    the one `give_up` always used: end the deal, name the reason.
 
     **A state added here is unsendable by default.** Both pools name the state they
     want (`state=READY`, `state=EMAILED`) rather than excluding the ones they don't,
@@ -133,8 +134,6 @@ class DealState(models.TextChoices):
     READY = "Ready to Email"
     EMAILED = "Emailed"
     COMPLETED = "Completed"
-    UNSUBSCRIBED = "Unsubscribed"
-    UNDELIVERABLE = "Undeliverable"
 
 
 class Outcome(models.TextChoices):
@@ -144,6 +143,12 @@ class Outcome(models.TextChoices):
     exactly why the boundary declines to send them back across the pipe. They are
     useful here, to the operator and to the learner over the send log, and nowhere
     else.
+
+    **The last two are not the agent's**, which is why they are listed apart: the
+    agent may choose any of the first seven, and these two are written by the code
+    that learns the fact. They are outcomes all the same — a deal that ended because
+    somebody asked to stop ended for a reason, and the reader of a funnel should not
+    have to know that two of the nine are kept in a different column.
     """
 
     CONVERTED = "converted"
@@ -153,12 +158,16 @@ class Outcome(models.TextChoices):
     HAS_SOLUTION = "has_solution"
     BAD_TIMING = "bad_timing"
     UNRESPONSIVE = "unresponsive"
-    # Distinct from `not_interested`, which is a verdict on the offer. This one is a
-    # verdict on being written to at all, and it is the only outcome that carries a
-    # duty: the deal ends in `UNSUBSCRIBED` and the address goes on the account-wide
-    # list. `emails/steps/reply.py` records it wherever the agent decides that,
-    # whichever of its two fields the agent said it in.
+
+    # Distinct from `not_interested`, which is a verdict on the offer: this one is a
+    # verdict on being written to at all, and it is the only outcome carrying a duty —
+    # the address goes on the account-wide list and stays there.
     UNSUBSCRIBED = "unsubscribed"
+    # The receiver said there is nobody at that address. Deliberately not
+    # `unsubscribed`: nobody asked for anything, and a row reading as withdrawn consent
+    # when it is really a dead mailbox misstates what happened to whoever reads the
+    # funnel later.
+    UNDELIVERABLE = "undeliverable"
 
 
 class Deal(models.Model):

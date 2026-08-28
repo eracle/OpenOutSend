@@ -147,10 +147,9 @@ def honour_opt_out(deal) -> DealState:
     back into the sendable set. No reply goes out either; someone who asked to stop
     hearing from us is not owed one more email.
 
-    The deal closes with the `unsubscribed` outcome, so an opt-out reads like every
-    other ended conversation — the state says the thread is over, the outcome says
-    why, and the operator does not have to know that one of the eight is stored
-    somewhere else.
+    The deal closes like every other ended conversation — `COMPLETED`, with the
+    outcome saying why. The address being on the list is the part that is terminal;
+    the deal is just a deal that ended.
     """
     from cold_outreach.leads.suppression import suppress_email
 
@@ -158,7 +157,7 @@ def honour_opt_out(deal) -> DealState:
     logger.info("[%s] %s asked to stop — suppressed for good",
                 deal.campaign, deal.lead.public_id)
     deal.outcome = Outcome.UNSUBSCRIBED
-    return DealState.UNSUBSCRIBED
+    return DealState.COMPLETED
 
 
 # ── Helpers ───────────────────────────────────────────────────────

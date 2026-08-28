@@ -27,7 +27,7 @@
 > evidence, which is not reproducible.
 
 - **Status:** Done — **a bounce naming a dead address now ends the pursuit.** The address
-  joins the suppression list, its open deals reach `UNDELIVERABLE`, and a refusal at the
+  joins the suppression list, its open deals end `undeliverable`, and a refusal at the
   SMTP door does the same thing through the same function. The policy is in *What the
   policy turned out to be* below, and every open question this card raised is answered
   there. **The one criterion it could not close — "is my domain listed?" — moved to
@@ -242,9 +242,10 @@ Stated as outcomes; how they are achieved is open.
       `Suppression` list an opt-out uses, so ingest parks new rows for it and
       `sender.suppressed` re-asks after the agent has written.)*
 - [x] A deal that cannot be delivered to reaches a terminal, rather than being
-      re-selected indefinitely. *(`DealState.UNDELIVERABLE` — its own state, not
-      `UNSUBSCRIBED`, because nobody asked for anything. Both pools name the state
-      they want, so a terminal state is unsendable without an exclusion to forget.)*
+      re-selected indefinitely. *(`COMPLETED` with the `undeliverable` outcome — its
+      own outcome, not `unsubscribed`, because nobody asked for anything. Both pools
+      name the state they want, so a terminal state is unsendable without an
+      exclusion to forget.)*
 - [x] The send volume of a box that is bouncing goes **down** without a human
       intervening. *(Already true — `warmth.py` halves capacity above tolerance; a
       suppressing bounce still records its `DeliveryEvent`, so this keeps working

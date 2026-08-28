@@ -16,7 +16,7 @@ from django.utils import timezone
 
 from cold_outreach.core.conf import FOLLOW_UP_GAPS_BUSINESS_DAYS, MAX_COLD_TOUCHES
 from cold_outreach.emails.models import Thread
-from cold_outreach.leads.models import DealState
+from cold_outreach.leads.models import DealState, Outcome
 from cold_outreach.leads.pools import awaiting_follow_up, exhausted_touches
 from cold_outreach.tests.emails import maillog
 from cold_outreach.tests.factories import DealFactory, LeadFactory
@@ -202,8 +202,7 @@ class TestTheFollowUpItself:
         _, send, next_state = self._send(deal, action="suppress")
 
         send.assert_not_called()
-        assert next_state == DealState.UNSUBSCRIBED
-        assert deal.outcome == "unsubscribed"
+        assert (next_state, deal.outcome) == (DealState.COMPLETED, Outcome.UNSUBSCRIBED)
         assert is_suppressed(deal.lead.email)
 
     def test_naming_the_outcome_ends_it_the_same_way(self, campaign, operator):
@@ -216,7 +215,7 @@ class TestTheFollowUpItself:
         _, send, next_state = self._send(deal, action="mark_completed", outcome="unsubscribed")
 
         send.assert_not_called()
-        assert next_state == DealState.UNSUBSCRIBED
+        assert (next_state, deal.outcome) == (DealState.COMPLETED, Outcome.UNSUBSCRIBED)
         assert is_suppressed(deal.lead.email)
 
     def test_the_box_is_spaced_out_afterwards(self, campaign, operator):

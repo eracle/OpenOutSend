@@ -24,7 +24,7 @@ that is not an inbox. It is gated on being able to count a reply rate at all.
 
 | Card | What it is | Why it came here |
 |---|---|---|
-| `p1-e2-email-bounce-detection-suppression` | The send path has no feedback from delivery failure | **Mostly closed.** A bounce naming a dead address now suppresses it and ends the deal at `UNDELIVERABLE`; what is left is telling an operator whether their domain is on a DNSBL |
+| `p1-e2-email-bounce-detection-suppression` | The send path has no feedback from delivery failure | **Mostly closed.** A bounce naming a dead address now suppresses it and ends the deal `undeliverable`; what is left is telling an operator whether their domain is on a DNSBL |
 | `p1-e2-inbound-mail-silent-skip` | The mail pass can skip a message and nothing notices | **A live bug.** Came across unfixed with `sync.py` |
 | `p2-e2-followup-identity-backoff-sentiment` | Three defects in the outreach agent | The agent is `cold_outreach/core/agents/outreach.py` now |
 | `p3-e1-onboarding-daily-send-cap-prompt` | Ask the operator for a daily send cap | Its premise moved — the cap is *measured*, not configured. Rewrite before building |
