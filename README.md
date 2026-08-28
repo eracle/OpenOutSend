@@ -28,7 +28,8 @@ a second, separate invocation is what mails them:
 pip install -e .
 outsend init --campaign devtools                            # once: what you sell, who you are, a box
 openoutreach find 50 --json | outsend --campaign devtools   # store
-outsend send --campaign devtools                            # read, answer, follow up, open
+outsend send --campaign devtools                            # one pass: read, answer, follow up, open
+outsend send 5 --campaign devtools                          # or: keep going until 5 are open
 ```
 
 The two invocations are separate on purpose: a pipe's right-hand side must not block on the network
@@ -41,20 +42,28 @@ the counts to **stderr**, and exits 0 when every line became a row. Its database
 `~/.openoutsend/data/db.sqlite3` (`OUTSEND_HOME` / `OUTSEND_DB` override it) and it migrates itself on
 first run, so a fresh install is an ingest that works rather than a traceback.
 
-**`outsend send` is one bounded pass, not a daemon.** It reads the mail, answers every thread the lead
-has replied in, writes again to the ones who went quiet, opens as many first emails as the guards
-allow, and exits — cadence is a timer's job. Reading first is what makes the rest honest: an opt-out
-that arrived overnight suppresses the person before anything is written to them.
+**`outsend send` is one pass**: it reads the mail, answers every thread the lead has replied in, writes
+again to the ones who went quiet, opens as many first emails as the guards allow *right now*, and
+exits. Reading first is what makes the rest honest — an opt-out that arrived overnight suppresses the
+person before anything is written to them. That is the form a timer wants, and it is what the cron
+line fires.
 
-**`outsend send N` opens up to `N` first emails in this one call**, instead of the roughly-one-per-box
-a bare `outsend send` stops at. It sleeps through each box's own ~3.5–4.5 minute spacing clock to keep
-going — the same class of short, bounded wait the finder already sleeps through on a provider retry —
-but stops the moment the wall holding it up is the sending window or the day's headroom, since those
-are hours-to-a-day, not minutes, and sleeping through *that* inside one process is exactly the
-"residency" the daemon this project replaced was deleted for. So `find N emails --json | outsend &&
-outsend send N` needs no cron at all for a goal inside one day's headroom; past that, whatever
-re-invokes it next (a timer, or you) picks up where it stopped — nothing here is state a lost process
-would strand.
+**`outsend send 5` is a goal, and it waits.** Five means five new conversations, and the run keeps
+passing until they are open — sleeping out the spacing clock between sends, the daily ceiling, and the
+sending window, including overnight and across a weekend if that is what the guards say. Nothing
+polls: the pool is asked *when* it could next open one (`Mailbox.objects.next_first_email_at`) and the
+run sleeps until then, so the external cycler that used to check whether now was a good time has
+nothing left to do. The wait is spent working — every five minutes it wakes for a full pass, so
+replies are still answered on a mailbox's cadence while the openers are on hold. Only openers count
+toward the goal; a busy inbox cannot satisfy it. It stops short, and says so, when the lead pool is
+drained (waiting cannot refill it — ingest is a separate invocation), when no mailbox is connected, or
+when two passes in a row fail a send and open nothing, which is a receiver's answer rather than a
+clock. Ctrl-C hands back the conversations already opened.
+
+So `find N emails --json | outsend && outsend send N` needs no cron entry at all: the second command
+returns when the conversations are open, whether that takes four minutes or spans a weekend. A timer
+firing a bare `outsend send` remains the other way to run it, and the two do not conflict — the pass is
+the same either way, and nothing here is state a lost process would strand.
 
 **A lead who never answers gets two more emails, then the pursuit ends** — after three working days,
 then five, and the deal closes as `unresponsive`. A reply at any point ends the sequence and the
@@ -99,6 +108,7 @@ came across with the transport now assert against this side's own models.
 | `cold_outreach/docs/` | how the agent and its templating work |
 | `cold_outreach/settings.py` | this repo's own Django settings and the state dir |
 | `cold_outreach/send_pass.py` | one pass — read, answer, open — and the line saying what held it |
+| `cold_outreach/send_job.py` | `send N` — passes until the goal is open, waiting out the send clocks |
 | `cold_outreach/first_run.py` | what `init` collects — the campaign's fields, the operator, the mailbox |
 | `cold_outreach/__main__.py` | the `outsend` console script |
 | `roadmap/` | open work, mostly inherited from OpenOutreach along with the code it describes |

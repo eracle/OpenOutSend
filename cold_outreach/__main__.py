@@ -32,11 +32,9 @@ import sys
 
 USAGE = """outsend [--campaign NAME]        read JSON Lines on stdin, store them, exit
 outsend send [N] [--campaign NAME] [--prompt-line ID]
-                                 read the mail, answer replies, open what the guards allow.
-                                 With N: keep opening — sleeping through the spacing clock
-                                 between sends — until N are opened this call, or the wall
-                                 holding it up is the sending window or the day's headroom.
-                                 Omit N for the old one-send-per-box-and-stop shape.
+                                 one pass: read the mail, answer replies, open what the
+                                 guards allow right now. With N, keep at it until N
+                                 conversations are open, waiting out the send clocks
 outsend init [--campaign NAME]   collect what a first run needs — the campaign, who you
                                  are, and a mailbox to send from"""
 
@@ -59,16 +57,28 @@ def main(argv: list[str] | None = None) -> int:
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="outsend", usage=USAGE)
     parser.add_argument("command", nargs="?", choices=["init", "send"])
-    parser.add_argument("goal", nargs="?", type=int, default=None,
-                        help="`send` only: how many first emails to open this call. "
-                             "Omit for one send per free box, then stop.")
+    # `send 5` is a goal, `send` is a pass — see `_send`. Positional and optional
+    # because the count *is* the verb's object, the way `find 5`'s is.
+    parser.add_argument("count", nargs="?", type=_positive_count, default=None,
+                        help="how many conversations to open before returning; "
+                             "omit for a single pass")
     parser.add_argument("--campaign", default=None,
                         help="which campaign these leads belong to; required only if there are several")
     parser.add_argument("--prompt-line", default=None, dest="prompt_line",
                         help="open every email in this pass with one named prompt line; "
                              "omit to draw one at random per send")
     parser.add_argument("--debug", action="store_true", help="log what each step decided")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.count is not None and args.command != "send":
+        parser.error("a count belongs to `send` — `outsend send 5`")
+    return args
+
+
+def _positive_count(value: str) -> int:
+    """A goal is a number of conversations, so zero and minus one are not answers."""
+    if not value.isdigit() or int(value) < 1:
+        raise argparse.ArgumentTypeError(f"expected a number of conversations, got {value!r}")
+    return int(value)
 
 
 def _configure_logging(debug: bool) -> None:
@@ -133,7 +143,14 @@ def _ingest(args: argparse.Namespace) -> int:
 
 
 def _send(args: argparse.Namespace) -> int:
-    """One bounded pass: read the mail, answer what came back, open what fits.
+    """Mail what is stored — one pass, or as many as a goal of N conversations takes.
+
+    **The count is the difference between a pass and a run.** `outsend send` does what
+    the guards allow this instant and exits, which is what a timer wants and what the
+    cron line has always fired. `outsend send 5` is the same thing a goal at a time: it
+    keeps passing until five conversations are open, sleeping out the spacing clock, the
+    daily ceiling and the sending window in between — the clocks the state machine
+    already keeps, read as timestamps rather than polled from outside.
 
     **`init` runs implicitly here**, because a send is the first moment the campaign's
     fields, the operator's name and a mailbox actually have to be there — and an operator
@@ -141,32 +158,53 @@ def _send(args: argparse.Namespace) -> int:
     TTY that is the same prompts; headless it is the same error naming the variables,
     raised before any mail moves.
 
-    **With a goal, falling short of it is not a failure** — a wall the pass genuinely
-    cannot sleep through (the sending window, the day's headroom) is a normal place
-    to stop, the same way the finder's `find` prints its rows and exits non-zero on an
-    unmet goal without that meaning anything broke. Exit code stays the pass's own:
-    non-zero only when something actually failed on its way out.
+    Exit code: non-zero when something failed on its way out, and — for a goal — when
+    the run stopped short of it, so a timer's failure mail carries both. Falling short
+    is a real answer rather than a crash: the run says which wall it hit.
     """
-    from cold_outreach.errors import OutsendError
     from cold_outreach.first_run import ensure_ready
-    from cold_outreach.send_pass import run_send_pass
-
-    if args.goal is not None and args.goal < 0:
-        raise OutsendError("goal cannot be negative")
 
     campaign = _campaign_for(args)
     ensure_ready(campaign)
+    return _run_to_goal(campaign, args) if args.count else _run_one_pass(campaign, args)
 
-    result = run_send_pass(campaign, args.prompt_line, args.goal)
+
+def _run_one_pass(campaign, args: argparse.Namespace) -> int:
+    from cold_outreach.send_pass import run_send_pass
+
+    result = run_send_pass(campaign, args.prompt_line)
+    _report(result)
+    return 0 if result.ok else 1
+
+
+def _run_to_goal(campaign, args: argparse.Namespace) -> int:
+    """`outsend send N` — and the one line that says how the run ended.
+
+    A goal that was not reached is reported as its own sentence rather than folded into
+    the counts, because *3 of 5* and *5 of 5* are the same four counts and different
+    answers to "can I stop running this by hand now".
+    """
+    from cold_outreach.send_job import run_send_job
+
+    run = run_send_job(campaign, args.count, args.prompt_line)
+    _report(run.totals)
+    if run.reached:
+        print(f"opened {run.opened} of {run.goal} conversation(s) in {run.passes} pass(es)",
+              file=sys.stderr)
+    else:
+        print(f"stopped at {run.detail}", file=sys.stderr)
+    return 0 if run.ok else 1
+
+
+def _report(result) -> None:
+    """The counts a pass or a whole run produced, in the same words for both."""
     print(f"read {result.mirrored} new message(s) · answered {result.answered} · "
-          f"followed up {result.followed_up} · opened {result.opened}"
-          + (f" of {args.goal} asked for" if args.goal is not None else ""), file=sys.stderr)
+          f"followed up {result.followed_up} · opened {result.opened}", file=sys.stderr)
     if result.gave_up:
         print(f"{result.gave_up} lead(s) never answered and were closed", file=sys.stderr)
     if result.failed:
         print(f"{result.failed} send(s) failed — see above; the next pass tries them again",
               file=sys.stderr)
-    return 0 if result.ok else 1
 
 
 # ── First run ─────────────────────────────────────────────────────

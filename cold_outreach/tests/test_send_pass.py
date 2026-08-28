@@ -13,7 +13,7 @@ import pytest
 
 from cold_outreach.emails.models import Mailbox, Thread
 from cold_outreach.leads.models import DealState, Outcome
-from cold_outreach.send_pass import PassResult, _wait_for_spacing, _what_is_holding, run_send_pass
+from cold_outreach.send_pass import PassResult, _what_is_holding, run_send_pass
 from cold_outreach.tests.emails import maillog
 from cold_outreach.tests.factories import DealFactory, LeadFactory
 
@@ -264,123 +264,35 @@ def test_nothing_is_chased_outside_the_sending_window(campaign, steps):
     assert result.followed_up == 0
 
 
-# ── Goal-bounded opening ───────────────────────────────────────────
+# ── The pass does not wait ────────────────────────────────────────
 
 
-class TestGoalBoundedOpening:
-    """`run_send_pass(campaign, goal=N)` — the finder's `job.py` lesson applied here:
-    sleep through the short bound (spacing), stop at the long one (window/headroom)."""
+class TestAPassNeverSleeps:
+    """The waiting belongs to `send_job.py`, which owns the whole pass while it waits.
 
-    def test_with_no_goal_the_old_one_send_and_stop_shape_is_unchanged(self, campaign, steps):
-        """Regression: `goal=None` must not sleep, loop, or change behavior at all."""
+    Keeping it out of here is what leaves the pass firable by a timer — and what lets a
+    goal wait out the *window* and the day's headroom as well, which a sleep buried in
+    one step of the pass could not do without holding the mail pass hostage for hours.
+    """
+
+    def test_a_closed_pool_ends_the_pass_rather_than_waiting_for_a_box(self, campaign, steps):
+        """The box takes itself out of the pool on its way past, and that ends the pass
+        — whether the wait is worth taking is the job's question, asked one level up."""
         box = maillog.mailbox()
         _waiting(campaign)
         _waiting(campaign, "second@acme.com")
 
-        with _free(box), patch("cold_outreach.send_pass.time.sleep") as sleep:
-            result = run_send_pass(campaign, goal=None)
+        with _free(box):
+            result = run_send_pass(campaign)
 
         assert result.opened == 1
-        sleep.assert_not_called()
 
-    def test_a_goal_keeps_opening_across_the_spacing_clock(self, campaign, steps):
-        """The point of `goal`: more than one send in one call, by sleeping through
-        each box's own pacing gap rather than stopping at the first close."""
-        box = maillog.mailbox(daily_limit=10)
-        _waiting(campaign, "a@acme.com")
-        _waiting(campaign, "b@acme.com")
-        _waiting(campaign, "c@acme.com")
+    def test_the_module_has_no_clock_to_sleep_on(self):
+        """A regression guard with teeth: the loop that slept in here is gone, and so is
+        the `time` import it slept with."""
+        import cold_outreach.send_pass as module
 
-        # free, then "just spaced out" twice, then free again — `_wait_for_spacing`
-        # is stubbed too, so the test does not depend on real send-spacing timestamps.
-        with patch.object(Mailbox.objects, "free_for_first_email",
-                          side_effect=[box, None, box, None, box]), \
-                patch("cold_outreach.send_pass._wait_for_spacing", return_value=0.01), \
-                patch("cold_outreach.send_pass.time.sleep") as sleep:
-            result = run_send_pass(campaign, goal=3)
-
-        assert result.opened == 3
-        assert sleep.call_count == 2  # once for each of the two "not free yet" gaps
-
-    def test_a_goal_stops_exactly_at_the_count_even_with_more_waiting(self, campaign, steps):
-        box = maillog.mailbox(daily_limit=10)
-        _waiting(campaign, "a@acme.com")
-        _waiting(campaign, "b@acme.com")
-        _waiting(campaign, "c@acme.com")
-
-        with patch.object(Mailbox.objects, "free_for_first_email", return_value=box):
-            result = run_send_pass(campaign, goal=2)
-
-        assert result.opened == 2
-        assert steps.send.call_count == 2
-
-    def test_a_goal_stops_at_a_wall_it_cannot_sleep_through(self, campaign, steps):
-        """Outside the window (or headroom spent), `_wait_for_spacing` is `None` — the
-        pass reports how far it got rather than sleeping for hours."""
-        _waiting(campaign)
-
-        with patch.object(Mailbox.objects, "free_for_first_email", return_value=None), \
-                patch("cold_outreach.send_pass._wait_for_spacing", return_value=None), \
-                patch("cold_outreach.send_pass.time.sleep") as sleep:
-            result = run_send_pass(campaign, goal=5)
-
-        assert result.opened == 0
-        sleep.assert_not_called()
-
-    def test_a_failed_send_still_stops_the_goal_loop_for_this_pass(self, campaign, steps):
-        box = maillog.mailbox()
-        _waiting(campaign)
-        _waiting(campaign, "second@acme.com")
-        steps.send.side_effect = RuntimeError("smtp said no")
-
-        with patch.object(Mailbox.objects, "free_for_first_email", return_value=box):
-            result = run_send_pass(campaign, goal=5)
-
-        assert (result.opened, result.failed) == (0, 1)
-        assert steps.send.call_count == 1
-
-
-class TestWaitForSpacing:
-    """The helper deciding whether a closed pool is a few minutes from opening again,
-    or a wall (window/headroom) that a goal-bounded pass must not sleep through."""
-
-    def test_none_outside_the_sending_window(self):
-        maillog.mailbox()
-
-        with patch("cold_outreach.core.sending_window.within_sending_window",
-                   return_value=False):
-            assert _wait_for_spacing() is None
-
-    def test_none_when_no_box_has_headroom_left_today(self):
-        maillog.mailbox(daily_limit=0)
-
-        with patch("cold_outreach.core.sending_window.within_sending_window",
-                   return_value=True):
-            assert _wait_for_spacing() is None
-
-    def test_none_when_a_box_is_already_free(self):
-        """Nothing to wait for — the caller should have used it, not slept."""
-        maillog.mailbox(daily_limit=10)  # next_send_at is null: free now
-
-        with patch("cold_outreach.core.sending_window.within_sending_window",
-                   return_value=True):
-            assert _wait_for_spacing() is None
-
-    def test_a_positive_wait_when_a_box_is_only_waiting_on_spacing(self):
-        from datetime import timedelta
-
-        from django.utils import timezone
-
-        box = maillog.mailbox(daily_limit=10)
-        box.next_send_at = timezone.now() + timedelta(seconds=90)
-        box.save()
-
-        with patch("cold_outreach.core.sending_window.within_sending_window",
-                   return_value=True):
-            wait = _wait_for_spacing()
-
-        assert wait is not None
-        assert 88 <= wait <= 92  # ~90s plus the 1s safety margin
+        assert not hasattr(module, "time")
 
 
 # ── The verdict ───────────────────────────────────────────────────

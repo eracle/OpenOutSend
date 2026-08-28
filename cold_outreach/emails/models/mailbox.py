@@ -2,11 +2,17 @@
 """Mailbox: one SMTP sending inbox, imported from the provider's creds export."""
 from __future__ import annotations
 
+from datetime import timedelta
+
 from django.db import models
 from django.utils import timezone
 
 from cold_outreach.core.conf import WARM_FLOOR_SENDS
-from cold_outreach.core.sending_window import operator_timezone, within_sending_window
+from cold_outreach.core.sending_window import (
+    next_window_open,
+    operator_timezone,
+    within_sending_window,
+)
 
 
 def _local_midnight():
@@ -56,6 +62,33 @@ class MailboxManager(models.Manager):
         if not ranked:
             return None
         return max(ranked, key=lambda pair: pair[1])[0]
+
+    def next_first_email_at(self, now=None):
+        """When the pool could next open a conversation, or ``None`` if it never could.
+
+        ``free_for_first_email`` says *not now* and cannot say *why* or *for how long* —
+        which is all a bounded run needs to know before it decides to wait
+        (``send_job.py``). The same three gates, read as a clock instead of a boolean:
+
+            spacing   the box's own ``next_send_at``
+            window    the next 08:00 at or after that
+            cap       a box out of headroom is out until the ledger rolls, so it is
+                      asked about tomorrow morning rather than about today
+
+        The soonest box wins, because one free box is all a send needs. ``None`` means
+        no mailbox is connected — the one state no amount of waiting resolves. A drained
+        *lead* pool is not this method's business: it is about the boxes.
+        """
+        now = now or timezone.now()
+        tomorrow = _local_midnight() + timedelta(days=1)
+        return min(
+            (
+                next_window_open(max(now, box.next_send_at or now))
+                if box.headroom_today() > 0 else next_window_open(tomorrow)
+                for box in self.all()
+            ),
+            default=None,
+        )
 
     def create_verified(
         self,

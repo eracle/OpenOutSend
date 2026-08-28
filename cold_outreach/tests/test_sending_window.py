@@ -9,6 +9,7 @@ import pytest
 from cold_outreach.core.sending_window import (
     UTC,
     _zone_for_country,
+    next_window_open,
     operator_timezone,
     within_sending_window,
 )
@@ -65,6 +66,38 @@ class TestWeekends:
     def test_the_weekend_is_read_in_local_time(self):
         """23:00 UTC Friday is already Saturday in Rome, and stays shut."""
         assert _in_rome(_utc(SAT - 1, 23)) is False
+
+
+class TestWhenItOpensAgain:
+    """`within_sending_window` answers *may I now*; this answers *when may I* — the
+    question a run that is allowed to wait for the window has to ask."""
+
+    def _rome(self, now: datetime) -> datetime:
+        with patch("cold_outreach.core.sending_window.operator_timezone",
+                   return_value=ZoneInfo("Europe/Rome")):
+            return next_window_open(now).astimezone(ZoneInfo("Europe/Rome"))
+
+    def test_an_open_window_answers_now(self):
+        """So a caller can take the maximum of this and a spacing clock without a branch."""
+        assert self._rome(_utc(WED, 11)).hour == 12   # 12:00 Rome, unchanged
+
+    def test_before_the_morning_it_is_this_morning(self):
+        opens = self._rome(_utc(WED, 2))              # 03:00 Rome
+        assert (opens.day, opens.hour, opens.minute) == (WED, 8, 0)
+
+    def test_after_the_evening_it_is_tomorrow_morning(self):
+        opens = self._rome(_utc(WED, 21))             # 22:00 Rome
+        assert (opens.day, opens.hour) == (WED + 1, 8)
+
+    def test_a_friday_evening_is_monday_morning(self):
+        """The wait skips the weekend rather than answering Saturday 08:00."""
+        opens = self._rome(_utc(SAT - 1, 21))         # 22:00 Rome, Friday
+        assert (opens.day, opens.hour, opens.weekday()) == (SAT + 2, 8, 0)
+
+    def test_saturday_dawn_is_still_monday(self):
+        """Early enough that today's 08:00 has not passed — and still not a working day."""
+        opens = self._rome(_utc(SAT, 3))              # 04:00 Rome, Saturday
+        assert (opens.day, opens.hour, opens.weekday()) == (SAT + 2, 8, 0)
 
 
 class TestResolvingTheZone:

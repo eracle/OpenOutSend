@@ -1,7 +1,16 @@
 # tests/emails/test_mailbox.py
-"""MailboxManager.create_verified: SMTP auth is the gate for storing a box."""
+"""The pool's two answers: whether a box may be stored, and when one may next send.
+
+`create_verified` is the gate on storing a box — SMTP auth, because the provider has no
+health API. `next_first_email_at` is the guard set `free_for_first_email` enforces, read
+as a clock rather than as a boolean, which is what lets a bounded run wait for it.
+"""
+from datetime import timedelta
+
 import pytest
 from unittest.mock import patch
+
+from django.utils import timezone
 
 from cold_outreach.emails.models import Mailbox
 
@@ -50,3 +59,88 @@ def test_create_verified_repairs_existing_box_in_place():
 
     assert Mailbox.objects.count() == 1
     assert box.password == "new-pw"
+
+
+# ── When the pool could next open a conversation ──────────────────
+
+
+def _box(address="joe@acme.com", **kwargs):
+    return Mailbox.objects.create(
+        username=address, password="pw", from_address=address, **kwargs)
+
+
+def _open_window():
+    """Ask the clock with the window held open, so one gate is tested at a time."""
+    return patch("cold_outreach.emails.models.mailbox.next_window_open",
+                 side_effect=lambda moment: moment)
+
+
+@pytest.mark.django_db
+def test_no_mailbox_is_the_one_answer_no_clock_resolves():
+    """None, not a time: waiting cannot connect a box, so a run must stop instead."""
+    assert Mailbox.objects.next_first_email_at() is None
+
+
+@pytest.mark.django_db
+def test_a_free_box_could_send_now():
+    _box()
+    now = timezone.now()
+
+    with _open_window():
+        assert Mailbox.objects.next_first_email_at(now) == now
+
+
+@pytest.mark.django_db
+def test_a_spaced_box_is_free_when_its_clock_elapses():
+    now = timezone.now()
+    _box(next_send_at=now + timedelta(minutes=4))
+
+    with _open_window():
+        assert Mailbox.objects.next_first_email_at(now) == now + timedelta(minutes=4)
+
+
+@pytest.mark.django_db
+def test_an_elapsed_clock_does_not_answer_in_the_past():
+    """A `next_send_at` from yesterday means *now*, not a moment already gone."""
+    now = timezone.now()
+    _box(next_send_at=now - timedelta(hours=3))
+
+    with _open_window():
+        assert Mailbox.objects.next_first_email_at(now) == now
+
+
+@pytest.mark.django_db
+def test_the_soonest_box_wins():
+    """One free box is all a send needs, so the pool answers with its earliest."""
+    now = timezone.now()
+    _box("early@acme.com", next_send_at=now + timedelta(minutes=2))
+    _box("late@acme.com", next_send_at=now + timedelta(hours=2))
+
+    with _open_window():
+        assert Mailbox.objects.next_first_email_at(now) == now + timedelta(minutes=2)
+
+
+@pytest.mark.django_db
+def test_a_box_at_its_ceiling_is_asked_about_tomorrow():
+    """Headroom is a per-day ledger, so a capped box is free when the day rolls — the
+    difference between waiting four minutes and waiting for the morning."""
+    now = timezone.now()
+    _box(daily_limit=0)
+
+    with _open_window(), patch(
+            "cold_outreach.emails.models.mailbox._local_midnight",
+            return_value=now.replace(hour=0, minute=0, second=0, microsecond=0)):
+        assert Mailbox.objects.next_first_email_at(now).date() > now.date()
+
+
+@pytest.mark.django_db
+def test_the_window_is_applied_on_top_of_the_spacing_clock():
+    """A box whose spacing elapses at 21:00 is not free at 21:00 — the real composition,
+    with the window left unmocked."""
+    now = timezone.now()
+    _box(next_send_at=now + timedelta(minutes=4))
+
+    with patch("cold_outreach.emails.models.mailbox.next_window_open") as window:
+        Mailbox.objects.next_first_email_at(now)
+
+    window.assert_called_once_with(now + timedelta(minutes=4))

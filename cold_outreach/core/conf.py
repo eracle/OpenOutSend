@@ -155,3 +155,16 @@ SEND_WINDOW_SECONDS = (SEND_WINDOW_END_HOUR - SEND_WINDOW_START_HOUR) * 3600
 # for — the window halves the day, and a ceiling still derived from 24 hours
 # would promise volume the pacing cannot deliver before 20:00.
 WARM_CEILING_SENDS = int(SEND_WINDOW_SECONDS / MEAN_SEND_INTERVAL_SECONDS)
+
+# ----------------------------------------------------------------------
+# The wait (send_job.py) — how long `outsend send N` sleeps between passes when
+# the clocks above are all that stand between it and the next conversation.
+#
+# **Waiting is not idling.** A run holding out for a spacing clock, or for tomorrow's
+# window, still owns the mailbox — and a reply arriving during that wait must not sit
+# unread until whatever unblocks the goal. So the wait is spent in slices, each ending
+# in a whole pass: the mail is read, replies are answered, and only the *openers* are
+# on hold. Five minutes is the cadence a mailbox needs, and it is also the longest a
+# Ctrl-C can go unnoticed — the second reason not to sleep the wait in one go.
+# ----------------------------------------------------------------------
+WAIT_SLICE_SECONDS = 300

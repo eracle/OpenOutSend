@@ -19,7 +19,7 @@ know where the recipient is, and a campaign may target several countries at once
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from django.utils import timezone
@@ -39,6 +39,31 @@ def within_sending_window(now: datetime | None = None) -> bool:
         is_business_day(local.date())
         and SEND_WINDOW_START_HOUR <= local.hour < SEND_WINDOW_END_HOUR
     )
+
+
+def next_window_open(now: datetime | None = None) -> datetime:
+    """The first instant from *now* onwards at which a cold email may leave.
+
+    ``now`` itself when the window is already open, so a caller can take the maximum
+    of this and any other clock without special-casing "already". Otherwise the next
+    08:00 the operator will actually see: later this morning if the day has not
+    started, and the next working day's morning if the evening or a weekend is in the
+    way — a Friday 20:30 answer is Monday 08:00, not Saturday.
+
+    ``within_sending_window`` answers *may I send now*; this answers *when may I*, and
+    the second question only became worth asking when a run was allowed to wait for it
+    (``send_job.py``). They read the same two constants, so a widened window moves both.
+    """
+    local = timezone.localtime(now or timezone.now(), operator_timezone())
+    if within_sending_window(local):
+        return local
+
+    opening = local.replace(hour=SEND_WINDOW_START_HOUR, minute=0, second=0, microsecond=0)
+    if opening <= local:
+        opening += timedelta(days=1)
+    while not is_business_day(opening.date()):
+        opening += timedelta(days=1)
+    return opening
 
 
 def operator_timezone() -> ZoneInfo:

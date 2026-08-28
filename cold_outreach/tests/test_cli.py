@@ -35,8 +35,8 @@ def connected(campaign):
 
 
 def _args(**kwargs) -> Namespace:
-    return Namespace(**{"command": "send", "goal": None, "campaign": None, "prompt_line": None,
-                        "debug": False, **kwargs})
+    return Namespace(**{"command": "send", "campaign": None, "prompt_line": None,
+                        "count": None, "debug": False, **kwargs})
 
 
 # ── The surface ───────────────────────────────────────────────────
@@ -56,6 +56,27 @@ def test_an_unknown_verb_is_refused():
         _parse_args(["export"])
 
 
+def test_a_bare_send_has_no_count_and_is_one_pass():
+    """What the timer fires, and what it has always fired."""
+    assert _parse_args(["send"]).count is None
+
+
+def test_send_takes_a_goal_as_its_object():
+    assert _parse_args(["send", "5"]).count == 5
+
+
+@pytest.mark.parametrize("count", ["0", "-1", "some"])
+def test_a_goal_that_is_not_a_number_of_conversations_is_refused(count):
+    with pytest.raises(SystemExit):
+        _parse_args(["send", count])
+
+
+def test_a_count_belongs_to_send():
+    """`outsend init 5` means nothing, and silently ignoring the 5 is worse than saying so."""
+    with pytest.raises(SystemExit):
+        _parse_args(["init", "5"])
+
+
 # ── Sending ───────────────────────────────────────────────────────
 
 
@@ -64,24 +85,37 @@ def test_send_runs_one_pass_over_the_resolved_campaign(connected, capsys):
                return_value=PassResult(mirrored=2, answered=1, opened=3)) as run:
         assert _send(_args()) == 0
 
-    run.assert_called_once_with(connected, None, None)
+    run.assert_called_once_with(connected, None)
     narration = capsys.readouterr().err
     assert f"campaign: {connected.name}" in narration
     assert "read 2 new message(s) · answered 1 · followed up 0 · opened 3" in narration
 
 
-def test_a_goal_is_passed_through_and_named_in_the_narration(connected, capsys):
-    with patch("cold_outreach.send_pass.run_send_pass",
-               return_value=PassResult(opened=3)) as run:
-        assert _send(_args(goal=5)) == 0
+def test_a_count_runs_to_the_goal_instead_of_passing_once(connected, capsys):
+    """`send 5` hands the goal to the run; the pass is what the run calls, not the CLI."""
+    from cold_outreach.send_job import SendJobResult
 
-    run.assert_called_once_with(connected, None, 5)
-    assert "opened 3 of 5 asked for" in capsys.readouterr().err
+    run = SendJobResult(goal=5, passes=6, totals=PassResult(opened=5, answered=2))
+    with patch("cold_outreach.send_job.run_send_job", return_value=run) as job, \
+            patch("cold_outreach.send_pass.run_send_pass") as single:
+        assert _send(_args(count=5)) == 0
+
+    job.assert_called_once_with(connected, 5, None)
+    single.assert_not_called()
+    assert "opened 5 of 5 conversation(s) in 6 pass(es)" in capsys.readouterr().err
 
 
-def test_a_negative_goal_is_refused(connected):
-    with pytest.raises(OutsendError):
-        _send(_args(goal=-1))
+def test_a_goal_the_run_could_not_reach_is_said_and_carried_into_the_exit_code(
+        connected, capsys):
+    """*3 of 5* and *5 of 5* are the same counts; only this line tells them apart."""
+    from cold_outreach.send_job import DRAINED, SendJobResult
+
+    run = SendJobResult(goal=5, totals=PassResult(opened=3), stopped_because=DRAINED,
+                        detail="3 of 5 — nobody left to email")
+    with patch("cold_outreach.send_job.run_send_job", return_value=run):
+        assert _send(_args(count=5)) == 1
+
+    assert "stopped at 3 of 5 — nobody left to email" in capsys.readouterr().err
 
 
 def test_a_failed_send_is_reported_and_carried_into_the_exit_code(connected, capsys):
