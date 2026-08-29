@@ -19,6 +19,18 @@ The pipe is **one-way by design**. Every consumer sees the same bytes, so a file
 or Smartlead gets exactly what this receiver gets, and "our own sender has no privileged path" is held
 by construction rather than by discipline.
 
+## Legal notice
+
+Every message this sends ends with one added line, `Sent with OpenOutreach`, appended after your
+signature and opt-out (`cold_outreach/emails/sender.py`). **It is always on — there is no setting to
+remove it.** It carries no link, no pixel, and no per-install identifier; nothing reports back whether a
+send happened or whether the line survived. This is how the project sustains itself with no
+subscription fee, no promo campaign, and no markup on anything you buy through it.
+
+Everything else about a send — the address you write from, what you write, and your compliance with
+anti-spam law (CAN-SPAM, GDPR/ePrivacy, CASL, and others) — is yours: this tool provides the mechanism,
+not legal cover.
+
 ## Status: it runs end to end — install, pipe, connect a box, send
 
 **`outsend` is a command and the store is its own.** Install it, pipe leads in, and they land as rows;
