@@ -1,15 +1,14 @@
 """The schema on the receiving end of the pipe.
 
-Four tables, and each one answers a question the boundary contract asks:
+Three tables, and each one answers a question the boundary contract asks:
 
-- **Campaign** — what a message is written from (`product_docs`, `campaign_target`,
-  `booking_link`). It is per-campaign config, so it never crosses the pipe: repeating
-  it on fifty rows would be nonsense. `outsend --campaign` resolves the name.
 - **Lead** — the person, keyed on the producer's own `lead_id`. Every field on it is
   a field of the record, so nothing here is derived and nothing is inferred.
-- **Deal** — that person *under one campaign*, keyed on `(lead, campaign)` because the
-  same person can be a lead in two campaigns with two different answers, and `reason`
-  is the per-campaign one. This is also the row the send path walks.
+- **Deal** — that person's conversation, one row per lead, carrying the finder's
+  `reason`. This is also the row the send path walks. (What a message is written
+  from — `product_docs`, `campaign_target`, `booking_link` — lives on the install's
+  own `core.SiteConfig`, not here: this install has never run more than one
+  campaign, so there is nothing per-deal to store it against.)
 - **Suppression** — the addresses that may never be written to again. Address-keyed,
   terminal, and the one thing an erasure must not remove: forgetting that somebody
   opted out is how they get mailed again.
@@ -21,28 +20,6 @@ from __future__ import annotations
 
 from django.db import models
 from django.utils import timezone
-
-
-class Campaign(models.Model):
-    """One outreach campaign: the config a message is written from.
-
-    The name is the vocabulary the pipe shares — `find --campaign` and
-    `outsend --campaign` are two independent resolutions of the same word, which is
-    why `outsend` narrates the one it resolved rather than filing one campaign
-    silently under another's name.
-    """
-
-    name = models.CharField(max_length=200, unique=True)
-    # The three things `outsend init` collects. Blank rather than null: "not asked
-    # yet" and "deliberately empty" are the same state to a prompt template, and the
-    # template renders every one of them as text.
-    product_docs = models.TextField(blank=True, default="")
-    campaign_target = models.TextField(blank=True, default="")
-    booking_link = models.CharField(max_length=500, blank=True, default="")
-    created_at = models.DateTimeField(default=timezone.now)
-
-    def __str__(self):
-        return self.name
 
 
 class Lead(models.Model):
@@ -82,8 +59,7 @@ class Lead(models.Model):
     # **Per lead, not per deal.** The finder kept its version on the Deal and
     # conditioned the extraction on the campaign target, which is what made it tuned
     # for a verdict rather than for an opener. What an opener wants — the specific and
-    # the distinguishing — is a property of the person, and the same for every
-    # campaign they appear in, so it is extracted once and read by all of them.
+    # the distinguishing — is a property of the person, so it lives here.
     profile_summary = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
@@ -171,24 +147,19 @@ class Outcome(models.TextChoices):
 
 
 class Deal(models.Model):
-    """One lead under one campaign — the row ingest writes and the send path reads.
+    """One lead's conversation — the row ingest writes and the send path reads.
 
-    `(lead, campaign)` is the identity key, and the uniqueness is a constraint rather
-    than a convention because idempotency is the whole reason the pipe is allowed to
-    be lossy: a re-ingest has to land on the same row or recovery-by-re-running is a
-    way of mailing people twice.
+    `lead` is the identity key, one-to-one, because idempotency is the whole reason
+    the pipe is allowed to be lossy: a re-ingest has to land on the same row or
+    recovery-by-re-running is a way of mailing people twice.
     """
 
     class Meta:
-        constraints = [
-            models.UniqueConstraint(fields=["lead", "campaign"], name="unique_deal_per_campaign"),
-        ]
         indexes = [
             models.Index(fields=["state"], name="deal_state_idx"),
         ]
 
-    lead = models.ForeignKey(Lead, on_delete=models.CASCADE, related_name="deals")
-    campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name="deals")
+    lead = models.OneToOneField(Lead, on_delete=models.CASCADE, related_name="deal")
     state = models.CharField(max_length=32, choices=DealState.choices, default=DealState.READY)
     outcome = models.CharField(max_length=20, choices=Outcome.choices, blank=True, default="")
     # Why the LLM chose this lead, in its own words. **Operator-facing**: it is the
@@ -234,9 +205,9 @@ class Suppression(models.Model):
     """An address that may never be written to again. Terminal, by design.
 
     Keyed on the address rather than on the lead, because that is what the duty
-    attaches to: the same person can be a lead in two campaigns and an opt-out ends
-    both. It is also why ingest re-checks suppression whenever an address *changes* —
-    a corrected address is an unsuppressed one until something looks again.
+    attaches to. It is also why ingest re-checks suppression whenever an address
+    *changes* — a corrected address is an unsuppressed one until something looks
+    again.
 
     **Nothing deletes from this table.** An erasure request reaches every other store
     on this side; this one it must leave alone, since forgetting that somebody opted

@@ -39,8 +39,7 @@ def answer_reply(deal) -> DealState | None:
     """Read the new inbound messages, let the agent decide, execute. Returns next state."""
     from cold_outreach.core.agents.outreach import run_outreach_agent
 
-    logger.info("[%s] %s %s", deal.campaign,
-                colored("▶ reply", "green", attrs=["bold"]), deal.lead.public_id)
+    logger.info("%s %s", colored("▶ reply", "green", attrs=["bold"]), deal.lead.public_id)
 
     _fold_new_messages_into_summary(deal)
     decision = run_outreach_agent(deal)
@@ -50,8 +49,8 @@ def answer_reply(deal) -> DealState | None:
     if decision.action == "send_message":
         return _send_reply(deal, decision)
     if decision.action == "mark_completed":
-        logger.info("[%s] thread completed for %s: outcome=%s",
-                    deal.campaign, deal.lead.public_id, decision.outcome)
+        logger.info("thread completed for %s: outcome=%s",
+                    deal.lead.public_id, decision.outcome)
         deal.outcome = decision.outcome
         return DealState.COMPLETED
     return None
@@ -115,12 +114,10 @@ def _send_reply(deal, decision) -> DealState | None:
     from cold_outreach.emails.sender import operator_bcc, send_email, suppressed
 
     if suppressed(deal.lead):
-        logger.warning("[%s] %s was suppressed mid-run — not replying",
-                       deal.campaign, deal.lead.public_id)
+        logger.warning("%s was suppressed mid-run — not replying", deal.lead.public_id)
         return None
 
-    logger.info("[%s] reply to %s: %s",
-                deal.campaign, deal.lead.public_id, decision.message)
+    logger.info("reply to %s: %s", deal.lead.public_id, decision.message)
     chain = thread_ids(deal)
     send_email(
         deal.mailbox,
@@ -142,8 +139,7 @@ def _send_reply(deal, decision) -> DealState | None:
 def honour_opt_out(deal) -> DealState:
     """Honour a worded unsubscribe: suppress the address for good, send nothing.
 
-    Enforcement is address-level, so it reaches every campaign holding that address,
-    not just this thread's — and it is terminal: no later ingest can walk this person
+    Enforcement is address-level and terminal: no later ingest can walk this person
     back into the sendable set. No reply goes out either; someone who asked to stop
     hearing from us is not owed one more email.
 
@@ -154,8 +150,7 @@ def honour_opt_out(deal) -> DealState:
     from cold_outreach.leads.suppression import suppress_email
 
     suppress_email(deal.lead.email, reason="worded unsubscribe in a reply")
-    logger.info("[%s] %s asked to stop — suppressed for good",
-                deal.campaign, deal.lead.public_id)
+    logger.info("%s asked to stop — suppressed for good", deal.lead.public_id)
     deal.outcome = Outcome.UNSUBSCRIBED
     return DealState.COMPLETED
 

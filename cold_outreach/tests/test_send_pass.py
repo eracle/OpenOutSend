@@ -35,16 +35,16 @@ def steps():
         yield SimpleNamespace(mail=mail, reply=reply, chase=chase, send=send, order=order)
 
 
-def _waiting(campaign, address="lead@acme.com"):
+def _waiting(address="lead@acme.com"):
     """A deal ready for its first email."""
-    return DealFactory(campaign=campaign, lead=LeadFactory(email=address))
+    return DealFactory(lead=LeadFactory(email=address))
 
 
-def _replied(campaign, box):
+def _replied(box):
     """An EMAILED deal whose newest turn is theirs — the answer pool's whole trigger."""
     thread = Thread.objects.create(mailbox=box)
     deal = DealFactory(
-        campaign=campaign, lead=LeadFactory(email="lead@acme.com"),
+        lead=LeadFactory(email="lead@acme.com"),
         state=DealState.EMAILED, mailbox=box, thread=thread,
     )
     maillog.outbound(box, thread=thread)
@@ -60,21 +60,21 @@ def _free(box):
 # ── The order ─────────────────────────────────────────────────────
 
 
-def test_the_mail_is_read_before_anything_is_written(campaign, steps):
+def test_the_mail_is_read_before_anything_is_written(steps):
     box = maillog.mailbox()
-    _replied(campaign, box)
-    _waiting(campaign, "other@acme.com")
+    _replied(box)
+    _waiting("other@acme.com")
 
     with _free(box):
-        run_send_pass(campaign)
+        run_send_pass()
 
     assert steps.order == ["read", "answer", "open"]
 
 
-def test_the_counts_come_back_from_the_mail_pass(campaign, steps):
+def test_the_counts_come_back_from_the_mail_pass(steps):
     steps.mail.side_effect = lambda: (4, 3, 2)
 
-    result = run_send_pass(campaign)
+    result = run_send_pass()
 
     assert (result.mirrored, result.classified, result.projected) == (4, 3, 2)
 
@@ -82,51 +82,51 @@ def test_the_counts_come_back_from_the_mail_pass(campaign, steps):
 # ── Answering ─────────────────────────────────────────────────────
 
 
-def test_every_thread_that_replied_is_answered(campaign, steps):
+def test_every_thread_that_replied_is_answered(steps):
     box = maillog.mailbox()
-    _replied(campaign, box)
-    _replied(campaign, box)
+    _replied(box)
+    _replied(box)
 
-    result = run_send_pass(campaign)
+    result = run_send_pass()
 
     assert result.answered == 2
     assert steps.reply.call_count == 2
 
 
-def test_the_state_a_step_returns_is_saved_with_it(campaign, steps):
+def test_the_state_a_step_returns_is_saved_with_it(steps):
     box = maillog.mailbox()
-    deal = _replied(campaign, box)
+    deal = _replied(box)
 
     def complete(target):
         target.outcome = Outcome.NOT_INTERESTED
         return DealState.COMPLETED
 
     steps.reply.side_effect = complete
-    run_send_pass(campaign)
+    run_send_pass()
 
     deal.refresh_from_db()
     assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.NOT_INTERESTED)
 
 
-def test_a_step_that_stays_put_leaves_the_state_alone(campaign, steps):
+def test_a_step_that_stays_put_leaves_the_state_alone(steps):
     """`None` is a step deciding not to move — a lead suppressed while the agent wrote."""
     box = maillog.mailbox()
-    deal = _replied(campaign, box)
+    deal = _replied(box)
     steps.reply.side_effect = lambda target: None
 
-    run_send_pass(campaign)
+    run_send_pass()
 
     deal.refresh_from_db()
     assert deal.state == DealState.EMAILED
 
 
-def test_a_failed_reply_costs_only_its_own_conversation(campaign, steps):
+def test_a_failed_reply_costs_only_its_own_conversation(steps):
     box = maillog.mailbox()
-    _replied(campaign, box)
-    _replied(campaign, box)
+    _replied(box)
+    _replied(box)
     steps.reply.side_effect = [RuntimeError("smtp said no"), None]
 
-    result = run_send_pass(campaign)
+    result = run_send_pass()
 
     assert (result.answered, result.failed) == (1, 1)
     assert result.ok is False
@@ -135,47 +135,47 @@ def test_a_failed_reply_costs_only_its_own_conversation(campaign, steps):
 # ── Opening ───────────────────────────────────────────────────────
 
 
-def test_one_conversation_is_opened_per_free_box(campaign, steps):
+def test_one_conversation_is_opened_per_free_box(steps):
     """The guard is the bound: the box takes itself out of the pool as it sends."""
     box = maillog.mailbox()
-    _waiting(campaign)
-    _waiting(campaign, "second@acme.com")
+    _waiting()
+    _waiting("second@acme.com")
 
     with _free(box):
-        result = run_send_pass(campaign)
+        result = run_send_pass()
 
     assert result.opened == 1
 
 
-def test_a_free_box_with_nobody_waiting_opens_nothing(campaign, steps):
+def test_a_free_box_with_nobody_waiting_opens_nothing(steps):
     box = maillog.mailbox()
 
     with _free(box):
-        result = run_send_pass(campaign)
+        result = run_send_pass()
 
     assert result.opened == 0
     steps.send.assert_not_called()
 
 
-def test_a_failed_opener_stops_the_openers_for_this_pass(campaign, steps):
+def test_a_failed_opener_stops_the_openers_for_this_pass(steps):
     """A box that just refused a send is still 'free' — retrying would not terminate."""
     box = maillog.mailbox()
-    _waiting(campaign)
-    _waiting(campaign, "second@acme.com")
+    _waiting()
+    _waiting("second@acme.com")
     steps.send.side_effect = RuntimeError("smtp said no")
 
     with patch.object(Mailbox.objects, "free_for_first_email", return_value=box):
-        result = run_send_pass(campaign)
+        result = run_send_pass()
 
     assert (result.opened, result.failed) == (0, 1)
     assert steps.send.call_count == 1
 
 
-def test_no_free_box_means_no_openers(campaign, steps):
-    _waiting(campaign)
+def test_no_free_box_means_no_openers(steps):
+    _waiting()
 
     with patch.object(Mailbox.objects, "free_for_first_email", return_value=None):
-        result = run_send_pass(campaign)
+        result = run_send_pass()
 
     assert result.opened == 0
     steps.send.assert_not_called()
@@ -184,31 +184,31 @@ def test_no_free_box_means_no_openers(campaign, steps):
 # ── The line it prints ────────────────────────────────────────────
 
 
-def test_the_gate_is_named_as_its_consequence_when_no_box_is_connected(campaign):
-    _waiting(campaign)
+def test_the_gate_is_named_as_its_consequence_when_no_box_is_connected():
+    _waiting()
 
-    assert "no mailbox connected" in _what_is_holding(campaign)
+    assert "no mailbox connected" in _what_is_holding()
 
 
-def test_the_gate_is_named_when_the_day_is_spent(campaign):
+def test_the_gate_is_named_when_the_day_is_spent():
     maillog.mailbox(daily_limit=0)
 
-    assert "no send headroom left today" in _what_is_holding(campaign)
+    assert "no send headroom left today" in _what_is_holding()
 
 
-def test_the_gate_is_named_outside_sending_hours(campaign):
+def test_the_gate_is_named_outside_sending_hours():
     maillog.mailbox()
 
     with patch("cold_outreach.core.sending_window.within_sending_window", return_value=False):
-        assert "outside sending hours" in _what_is_holding(campaign)
+        assert "outside sending hours" in _what_is_holding()
 
 
-def test_the_counts_are_said_even_when_nothing_is_holding(campaign):
+def test_the_counts_are_said_even_when_nothing_is_holding():
     maillog.mailbox(daily_limit=5)
-    _waiting(campaign)
+    _waiting()
 
     with patch("cold_outreach.core.sending_window.within_sending_window", return_value=True):
-        line = _what_is_holding(campaign)
+        line = _what_is_holding()
 
     assert "1 waiting to be emailed" in line
     assert "5 first email(s) left today" in line
@@ -217,7 +217,7 @@ def test_the_counts_are_said_even_when_nothing_is_holding(campaign):
 # ── Follow-ups and openers share one budget ───────────────────────
 
 
-def _silent(campaign, box, days_ago=10):
+def _silent(box, days_ago=10):
     """An EMAILED deal, written to once, that never answered."""
     from datetime import timedelta
 
@@ -225,7 +225,7 @@ def _silent(campaign, box, days_ago=10):
 
     thread = Thread.objects.create(mailbox=box)
     deal = DealFactory(
-        campaign=campaign, lead=LeadFactory(email="silent@acme.com"),
+        lead=LeadFactory(email="silent@acme.com"),
         state=DealState.EMAILED, mailbox=box, thread=thread, email_subject="Hi",
     )
     maillog.outbound(box, thread=thread, message_id="old@infra.com",
@@ -233,7 +233,7 @@ def _silent(campaign, box, days_ago=10):
     return deal
 
 
-def test_a_follow_up_and_an_opener_compete_for_the_same_slot(campaign, steps):
+def test_a_follow_up_and_an_opener_compete_for_the_same_slot(steps):
     """The whole fix for 102-follow-ups-to-1-opener: one budget, not two.
 
     A box with room for exactly one cold email, one lead waiting to be opened and one
@@ -241,24 +241,24 @@ def test_a_follow_up_and_an_opener_compete_for_the_same_slot(campaign, steps):
     the opener waits for the next pass rather than being sent out of a reserve.
     """
     box = maillog.mailbox(daily_limit=1)
-    _silent(campaign, box)
-    _waiting(campaign, "new@acme.com")
+    _silent(box)
+    _waiting("new@acme.com")
 
     with patch("cold_outreach.core.sending_window.within_sending_window", return_value=True), \
             patch.object(Mailbox.objects, "free_for_first_email", side_effect=[box, None]):
-        result = run_send_pass(campaign)
+        result = run_send_pass()
 
     assert steps.order == ["read", "follow_up", "open"]
     assert result.followed_up == 1
 
 
-def test_nothing_is_chased_outside_the_sending_window(campaign, steps):
+def test_nothing_is_chased_outside_the_sending_window(steps):
     """A follow-up is cold volume, so the clock speaks for it as it does for an opener."""
     box = maillog.mailbox(daily_limit=5)
-    _silent(campaign, box)
+    _silent(box)
 
     with patch("cold_outreach.core.sending_window.within_sending_window", return_value=False):
-        result = run_send_pass(campaign)
+        result = run_send_pass()
 
     assert "follow_up" not in steps.order
     assert result.followed_up == 0
@@ -275,15 +275,15 @@ class TestAPassNeverSleeps:
     one step of the pass could not do without holding the mail pass hostage for hours.
     """
 
-    def test_a_closed_pool_ends_the_pass_rather_than_waiting_for_a_box(self, campaign, steps):
+    def test_a_closed_pool_ends_the_pass_rather_than_waiting_for_a_box(self, steps):
         """The box takes itself out of the pool on its way past, and that ends the pass
         — whether the wait is worth taking is the job's question, asked one level up."""
         box = maillog.mailbox()
-        _waiting(campaign)
-        _waiting(campaign, "second@acme.com")
+        _waiting()
+        _waiting("second@acme.com")
 
         with _free(box):
-            result = run_send_pass(campaign)
+            result = run_send_pass()
 
         assert result.opened == 1
 

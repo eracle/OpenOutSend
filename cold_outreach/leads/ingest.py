@@ -5,8 +5,8 @@ exits; it transmits nothing. Every rule here is the boundary contract's, and eac
 exists because the pipe is **at-least-once into an idempotent receiver**: recovery is
 running it again, so nothing may depend on a line arriving exactly once.
 
-- **Keyed on `(lead_id, campaign)`.** A re-ingest lands on the row it landed on last
-  time, or re-running the pipe is a way of mailing people twice.
+- **Keyed on `lead_id`.** A re-ingest lands on the row it landed on last time, or
+  re-running the pipe is a way of mailing people twice.
 - **Latest wins, field by field** — a re-ingest is a *correction*: a lead re-qualified
   under a changed ICP has a new `reason`, and an address filled in by a later
   enrichment beats the blank it replaces. An empty value never overwrites a stored
@@ -38,7 +38,7 @@ from cold_outreach.leads.suppression import is_suppressed, normalize
 logger = logging.getLogger(__name__)
 
 # The record's own field names, minus the two that are not the lead's own: `reason`
-# and `qualified_at` are per-campaign and live on the Deal.
+# and `qualified_at` are per-deal and live on the Deal.
 LEAD_FIELDS = (
     "email",
     "first_name",
@@ -65,8 +65,8 @@ class IngestResult:
         return self.skipped == 0
 
 
-def ingest(stream: IO[str], campaign) -> IngestResult:
-    """Read JSON Lines from *stream* into *campaign*. Returns what happened.
+def ingest(stream: IO[str]) -> IngestResult:
+    """Read JSON Lines from *stream*. Returns what happened.
 
     Line by line, so a stream that stops halfway has already delivered every complete
     record before the break — which is the property JSON Lines was chosen for, and the
@@ -81,7 +81,7 @@ def ingest(stream: IO[str], campaign) -> IngestResult:
         if record is None:
             result.skipped += 1
             continue
-        _store(record, campaign, result)
+        _store(record, result)
     return result
 
 
@@ -110,11 +110,11 @@ def _parse(line: str, number: int) -> dict | None:
     return record
 
 
-def _store(record: dict, campaign, result: IngestResult) -> None:
+def _store(record: dict, result: IngestResult) -> None:
     """Upsert one record's lead and deal, and count what it turned out to be."""
     lead, address_changed = _upsert_lead(record)
     suppressed = _check_the_door(lead, address_changed)
-    _upsert_deal(lead, campaign, record, suppressed)
+    _upsert_deal(lead, record, suppressed)
 
     result.stored += 1
     if suppressed:
@@ -162,12 +162,12 @@ def _check_the_door(lead: Lead, address_changed: bool) -> bool:
     return suppressed
 
 
-def _upsert_deal(lead: Lead, campaign, record: dict, suppressed: bool) -> Deal:
-    """This lead's row under this campaign, created or corrected.
+def _upsert_deal(lead: Lead, record: dict, suppressed: bool) -> Deal:
+    """This lead's row, created or corrected.
 
     `reason` is refreshed on every arrival — that is the correction a re-ingest most
     often *is*. The state is not: a conversation that has started or ended is this
-    side's own business, and a producer re-printing its whole campaign every night
+    side's own business, and a producer re-printing its whole export every night
     must never reset it. The one state ingest sets is the terminal one, and only
     downwards — and a deal that already reached it keeps the outcome it reached it
     with, exactly as `suppress_email` leaves one alone. Ending is not sendable, so
@@ -177,7 +177,7 @@ def _upsert_deal(lead: Lead, campaign, record: dict, suppressed: bool) -> Deal:
     if suppressed:
         opening = {"state": DealState.COMPLETED, "outcome": Outcome.UNSUBSCRIBED}
     deal, created = Deal.objects.get_or_create(
-        lead=lead, campaign=campaign, defaults=opening,
+        lead=lead, defaults=opening,
     )
 
     updated = []

@@ -1,6 +1,6 @@
 """What a first run has to collect before a message can be written or sent.
 
-Four things, and none of them is a preference. A campaign has to say what is being
+Four things, and none of them is a preference. This install has to say what is being
 sold and to whom, or the agent has nothing to write from. A model has to be reachable,
 or there is nothing to write it with. The mail has to be signed by somebody, and
 self-hosted means that somebody is the one operator this install runs as. And it has to
@@ -30,9 +30,8 @@ import logging
 import os
 import sys
 
-from cold_outreach.core.models import LLM_ENV
+from cold_outreach.core.models import LLM_ENV, MESSAGE_ENV
 from cold_outreach.errors import OutsendError
-from cold_outreach.leads.campaigns import CONFIG_ENV, hydrate_from_environment, missing_config
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +74,7 @@ _PROMPTS = {
 }
 
 
-def ensure_ready(campaign) -> None:
+def ensure_ready() -> None:
     """Collect everything a send needs, or stop naming the variables that would.
 
     One error at the end rather than one per round trip: a timer that is missing three
@@ -83,7 +82,7 @@ def ensure_ready(campaign) -> None:
     """
     interactive = sys.stdin.isatty()
     missing = [
-        *_ensure_campaign(campaign, interactive),
+        *_ensure_message(interactive),
         *_ensure_llm(interactive),
         *_ensure_operator(interactive),
         *_ensure_mailbox(interactive),
@@ -92,32 +91,35 @@ def ensure_ready(campaign) -> None:
         raise OutsendError(f"not ready to send — set {', '.join(missing)}")
 
 
-# ── The campaign ──────────────────────────────────────────────────
+# ── What a message is written from ──────────────────────────────────
 
 
-def _ensure_campaign(campaign, interactive: bool) -> list[str]:
-    """Fill the campaign's empty fields. Returns the variables still unanswered."""
-    hydrate_from_environment(campaign)
-    missing = missing_config(campaign)
+def _ensure_message(interactive: bool) -> list[str]:
+    """Fill this install's empty message fields. Returns the variables still unanswered."""
+    from cold_outreach.core.models import SiteConfig, hydrate_message_from_environment, missing_message_config
+
+    config = SiteConfig.load()
+    hydrate_message_from_environment(config)
+    missing = missing_message_config(config)
     if missing and interactive:
-        _prompt_campaign(campaign, missing)
-        missing = missing_config(campaign)
-    return [CONFIG_ENV[field] for field in missing]
+        _prompt_message(config, missing)
+        missing = missing_message_config(config)
+    return [MESSAGE_ENV[field] for field in missing]
 
 
-def _prompt_campaign(campaign, missing: list[str]) -> None:
+def _prompt_message(config, missing: list[str]) -> None:
     """Ask for the fields that are still empty, and save what the operator answers.
 
     `booking_link` rides along with them: it is never required, but an operator being
-    asked about this campaign anyway is the only moment it is cheap to ask.
+    asked about this anyway is the only moment it is cheap to ask.
     """
     for field in [*missing, "booking_link"]:
-        if getattr(campaign, field):
+        if getattr(config, field):
             continue
         answer = _ask(_PROMPTS[field])
         if answer:
-            setattr(campaign, field, answer)
-    campaign.save()
+            setattr(config, field, answer)
+    config.save()
 
 
 # ── The model ─────────────────────────────────────────────────────

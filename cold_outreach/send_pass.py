@@ -61,7 +61,7 @@ class PassResult:
         return self.failed == 0
 
 
-def run_send_pass(campaign, prompt_line_name: str | None = None,
+def run_send_pass(prompt_line_name: str | None = None,
                   narrate: bool = True) -> PassResult:
     """Read, answer, open — once — and report. Never raises for a failed send.
 
@@ -78,16 +78,16 @@ def run_send_pass(campaign, prompt_line_name: str | None = None,
 
     result = PassResult()
     result.mirrored, result.classified, result.projected = run_mail_pass()
-    _answer_replies(campaign, result)
-    _follow_up(campaign, result)
-    _open_conversations(campaign, result, prompt_line_name)
-    result.holding = _what_is_holding(campaign)
+    _answer_replies(result)
+    _follow_up(result)
+    _open_conversations(result, prompt_line_name)
+    result.holding = _what_is_holding()
     if narrate:
         logger.info("%s", result.holding)
     return result
 
 
-def _answer_replies(campaign, result: PassResult) -> None:
+def _answer_replies(result: PassResult) -> None:
     """Answer every thread whose newest turn is theirs.
 
     The pool is materialised before the loop rather than re-queried: a deal whose
@@ -98,7 +98,7 @@ def _answer_replies(campaign, result: PassResult) -> None:
     from cold_outreach.emails.steps.reply import answer_reply
     from cold_outreach.leads.pools import unanswered_replies
 
-    for deal in list(unanswered_replies(campaign)):
+    for deal in list(unanswered_replies()):
         try:
             _apply(deal, answer_reply(deal))
             result.answered += 1
@@ -107,7 +107,7 @@ def _answer_replies(campaign, result: PassResult) -> None:
             result.failed += 1
 
 
-def _follow_up(campaign, result: PassResult) -> None:
+def _follow_up(result: PassResult) -> None:
     """Write again to the ones who never answered, and end the ones out of touches.
 
     **Ordered before openers, and that is not a priority.** Both draw from the same
@@ -128,14 +128,14 @@ def _follow_up(campaign, result: PassResult) -> None:
     from cold_outreach.emails.steps.follow_up import give_up, send_follow_up
     from cold_outreach.leads.pools import awaiting_follow_up, exhausted_touches
 
-    for deal in exhausted_touches(campaign):
+    for deal in exhausted_touches():
         _apply(deal, give_up(deal))
         result.gave_up += 1
 
     if not within_sending_window():
         return
 
-    for deal in awaiting_follow_up(campaign):
+    for deal in awaiting_follow_up():
         box = deal.mailbox
         if box is None or not box.free_now() or box.headroom_today() <= 0:
             continue
@@ -148,7 +148,7 @@ def _follow_up(campaign, result: PassResult) -> None:
             return
 
 
-def _open_conversations(campaign, result: PassResult, prompt_line_name: str | None = None) -> None:
+def _open_conversations(result: PassResult, prompt_line_name: str | None = None) -> None:
     """Send first emails while a box is free and somebody is waiting.
 
     The loop's bound is the guards themselves: `free_for_first_email` answers `None`
@@ -174,7 +174,7 @@ def _open_conversations(campaign, result: PassResult, prompt_line_name: str | No
     from cold_outreach.emails.steps.send import send_first_email
     from cold_outreach.leads.pools import emailable_deals
 
-    waiting = emailable_deals(campaign).iterator()
+    waiting = emailable_deals().iterator()
     while (mailbox := Mailbox.objects.free_for_first_email()) is not None:
         deal = next(waiting, None)
         if deal is None:
@@ -201,7 +201,7 @@ def _apply(deal, next_state) -> None:
     deal.save()
 
 
-def _what_is_holding(campaign) -> str:
+def _what_is_holding() -> str:
     """One line of counts, and the gate holding them, said as its consequence.
 
     *"No mailbox connected, so nothing can be sent"* tells the operator why a pass did
@@ -212,8 +212,8 @@ def _what_is_holding(campaign) -> str:
     from cold_outreach.emails.models import Mailbox
     from cold_outreach.leads.pools import emailable_deals, unanswered_replies
 
-    waiting = emailable_deals(campaign).count()
-    to_answer = unanswered_replies(campaign).count()
+    waiting = emailable_deals().count()
+    to_answer = unanswered_replies().count()
     counts = f"{waiting} waiting to be emailed · {to_answer} reply(ies) to answer"
 
     if not Mailbox.objects.exists():

@@ -18,11 +18,11 @@ from django.db.models import Count, F, OuterRef, Q, Subquery
 from cold_outreach.leads.models import Deal, DealState
 
 
-def emailable_deals(campaign):
+def emailable_deals():
     """Deals waiting for their first email, oldest first.
 
-    Three conditions and no more: the state, an address to send to, and the campaign.
-    **Suppression is not a fourth filter** — an opt-out moves every open deal for that
+    Two conditions and no more: the state and an address to send to.
+    **Suppression is not a third filter** — an opt-out moves every open deal for that
     address to `UNSUBSCRIBED` when it lands, and ingest parks a suppressed row there on
     arrival, so the state already carries the answer. `emails/sender.suppressed` asks
     the list again after the agent has written, which is the check that catches an
@@ -32,14 +32,14 @@ def emailable_deals(campaign):
     ingested this morning.
     """
     return (
-        Deal.objects.filter(campaign=campaign, state=DealState.READY)
+        Deal.objects.filter(state=DealState.READY)
         .exclude(lead__email="")
-        .select_related("lead", "campaign")
+        .select_related("lead")
         .order_by("created_at")
     )
 
 
-def unanswered_replies(campaign):
+def unanswered_replies():
     """`EMAILED` deals whose newest inbound turn is newer than our newest outgoing one.
 
     **This is the entire follow-up trigger.** No timer, no flag, no bookkeeping: the
@@ -69,7 +69,6 @@ def unanswered_replies(campaign):
 
     return (
         Deal.objects.filter(
-            campaign=campaign,
             state=DealState.EMAILED,
             outcome="",
             thread__isnull=False,
@@ -77,12 +76,12 @@ def unanswered_replies(campaign):
         .annotate(last_in=newest(Direction.INBOUND), last_out=newest(Direction.OUTBOUND))
         .filter(last_in__isnull=False)
         .filter(Q(last_out__isnull=True) | Q(last_in__gt=F("last_out")))
-        .select_related("lead", "campaign", "mailbox")
+        .select_related("lead", "mailbox")
         .order_by("last_in")
     )
 
 
-def awaiting_follow_up(campaign, now=None):
+def awaiting_follow_up(now=None):
     """`EMAILED` deals nobody answered, due another touch. Longest-waiting first.
 
     **The mirror image of `unanswered_replies`**: same two timestamps, the opposite
@@ -128,7 +127,6 @@ def awaiting_follow_up(campaign, now=None):
 
     candidates = (
         Deal.objects.filter(
-            campaign=campaign,
             state=DealState.EMAILED,
             outcome="",
             thread__isnull=False,
@@ -146,13 +144,13 @@ def awaiting_follow_up(campaign, now=None):
         .filter(last_in__isnull=True, last_out__isnull=False)
         .filter(touches__lt=MAX_COLD_TOUCHES, touches__gt=0)
         .filter(last_out__lte=now - timedelta(days=min(FOLLOW_UP_GAPS_BUSINESS_DAYS)))
-        .select_related("lead", "campaign", "mailbox")
+        .select_related("lead", "mailbox")
         .order_by("last_out")
     )
     return [deal for deal in candidates if _follow_up_is_due(deal, now)]
 
 
-def exhausted_touches(campaign):
+def exhausted_touches():
     """`EMAILED` deals that have had every touch and answered none of them.
 
     The end of the pursuit. Separate from `awaiting_follow_up` because closing one
@@ -176,7 +174,6 @@ def exhausted_touches(campaign):
 
     return (
         Deal.objects.filter(
-            campaign=campaign,
             state=DealState.EMAILED,
             outcome="",
             thread__isnull=False,
@@ -191,7 +188,7 @@ def exhausted_touches(campaign):
             ),
         )
         .filter(last_in__isnull=True, touches__gte=MAX_COLD_TOUCHES)
-        .select_related("lead", "campaign")
+        .select_related("lead")
         .order_by("created_at")
     )
 

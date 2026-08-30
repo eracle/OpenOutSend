@@ -23,13 +23,28 @@ class UserFactory(factory.django.DjangoModelFactory):
     is_active = True
 
 
-class CampaignFactory(factory.django.DjangoModelFactory):
-    class Meta:
-        model = "leads.Campaign"
+class SiteConfigFactory(factory.django.DjangoModelFactory):
+    """Sets fields on the one `SiteConfig` row, creating it if it does not exist yet.
 
-    name = factory.Sequence(lambda n: f"campaign-{n}")
+    A singleton can't be `get_or_create`d by field values the way an ordinary model
+    can — a row from an earlier fixture in the same test (`stored_llm`, an autouse
+    `SiteConfig.load()`) already occupies `pk=1`, and `get_or_create` would return it
+    untouched rather than applying these defaults. `_create` loads-and-updates instead.
+    """
+
+    class Meta:
+        model = "core.SiteConfig"
+
     product_docs = "A self-hosted lead finder that writes down why each lead fits."
     campaign_target = "Founders and heads of growth at small B2B software companies."
+
+    @classmethod
+    def _create(cls, model_class, *args, **kwargs):
+        config = model_class.load()
+        for field, value in kwargs.items():
+            setattr(config, field, value)
+        config.save()
+        return config
 
 
 class LeadFactory(factory.django.DjangoModelFactory):
@@ -46,4 +61,3 @@ class DealFactory(factory.django.DjangoModelFactory):
         model = "leads.Deal"
 
     lead = factory.SubFactory(LeadFactory)
-    campaign = factory.SubFactory(CampaignFactory)

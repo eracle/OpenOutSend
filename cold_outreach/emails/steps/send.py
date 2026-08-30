@@ -51,7 +51,7 @@ def send_first_email(deal, mailbox, prompt_line) -> DealState | None:
     from cold_outreach.emails.sender import operator_bcc, send_email, suppressed
     from cold_outreach.leads.summaries import materialize_profile_summary_if_missing
 
-    logger.info("[%s] %s %s via %s (%s)", deal.campaign,
+    logger.info("%s %s via %s (%s)",
                 colored("▶ first email", "blue", attrs=["bold"]),
                 deal.lead.public_id, mailbox.from_address,
                 prompt_line.id if prompt_line else "no prompt line")
@@ -60,8 +60,7 @@ def send_first_email(deal, mailbox, prompt_line) -> DealState | None:
     opener = run_outreach_agent(deal, prompt_line)
 
     if suppressed(deal.lead):
-        logger.warning("[%s] %s was suppressed mid-run — not sending",
-                       deal.campaign, deal.lead.public_id)
+        logger.warning("%s was suppressed mid-run — not sending", deal.lead.public_id)
         return None
 
     sent = send_email(

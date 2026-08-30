@@ -30,10 +30,9 @@ def _box(email="a@b.com", daily_limit=10):
     return maillog.mailbox(email, daily_limit=daily_limit)
 
 
-def _ready(campaign, email="lead@corp.com"):
+def _ready(email="lead@corp.com"):
     """A deal waiting for its first email — ingested, with an address."""
     return DealFactory(
-        campaign=campaign,
         lead=LeadFactory(email=email),
         state=DealState.READY,
     )
@@ -69,37 +68,26 @@ def _record_reply_exchange(deal, box, when):
 class TestMailboxCap:
     """The cap counts *people first contacted today*, not messages sent today."""
 
-    def test_a_first_email_spends_one(self, campaign):
+    def test_a_first_email_spends_one(self):
         box = _box(daily_limit=10)
         assert box.sent_today() == 0
-        _record_send(_ready(campaign), box)
+        _record_send(_ready(), box)
         assert box.sent_today() == 1
         assert box.headroom_today() == 9
 
-    def test_replies_inside_an_older_thread_are_free(self, campaign):
+    def test_replies_inside_an_older_thread_are_free(self):
         """Answering someone who wrote back is not cold volume, so it costs no cap."""
         from datetime import timedelta
 
         box = _box(daily_limit=10)
         yesterday = timezone.now() - timedelta(days=1)
-        deal = _record_send(_ready(campaign), box, when=yesterday)
+        deal = _record_send(_ready(), box, when=yesterday)
         _record_reply_exchange(deal, box, when=timezone.now())
 
         assert box.sent_today() == 0
         assert box.headroom_today() == 10
 
-    def test_one_person_reached_twice_today_counts_once(self, campaign):
-        """Distinct leads, so a second campaign's touch is not a second person."""
-        from cold_outreach.leads.models import Campaign
-
-        box = _box(daily_limit=10)
-        lead = LeadFactory(email="lead@corp.com")
-        other = Campaign.objects.create(name="Second")
-        for c in (campaign, other):
-            _record_send(DealFactory(campaign=c, lead=lead, state=DealState.READY), box)
-        assert box.sent_today() == 1
-
-    def test_remaining_today_sums_headroom_across_boxes(self, campaign):
+    def test_remaining_today_sums_headroom_across_boxes(self):
         _box("a@b.com", daily_limit=3)
         _box("c@d.com", daily_limit=5)
         assert Mailbox.objects.remaining_today() == 8
@@ -110,20 +98,20 @@ class TestMailboxCap:
 
 @pytest.mark.django_db
 class TestPickingABox:
-    def test_picks_the_box_with_most_headroom(self, campaign):
+    def test_picks_the_box_with_most_headroom(self):
         light = _box("light@b.com", daily_limit=10)
         heavy = _box("heavy@b.com", daily_limit=10)
         for _ in range(4):
-            _record_send(_ready(campaign), heavy)
+            _record_send(_ready(), heavy)
         with patch("cold_outreach.emails.models.mailbox.within_sending_window", return_value=True):
             assert Mailbox.objects.free_for_first_email() == light
 
-    def test_none_when_every_box_is_capped(self, campaign):
+    def test_none_when_every_box_is_capped(self):
         box = _box(daily_limit=1)
-        _record_send(_ready(campaign), box)
+        _record_send(_ready(), box)
         assert Mailbox.objects.free_for_first_email() is None
 
-    def test_a_box_still_spacing_out_is_not_free(self, campaign):
+    def test_a_box_still_spacing_out_is_not_free(self):
         """The 3-minute floor between two cold emails, per box."""
         from datetime import timedelta
 
@@ -132,7 +120,7 @@ class TestPickingABox:
         box.save(update_fields=["next_send_at"])
         assert Mailbox.objects.free_for_first_email() is None
 
-    def test_a_box_past_its_spacing_is_free_again(self, campaign):
+    def test_a_box_past_its_spacing_is_free_again(self):
         from datetime import timedelta
 
         box = _box(daily_limit=10)
@@ -153,7 +141,7 @@ class TestPickingABox:
             midnight = _local_midnight()
         assert midnight.astimezone(zone).hour == 0
 
-    def test_no_box_is_free_outside_the_sending_window(self, campaign):
+    def test_no_box_is_free_outside_the_sending_window(self):
         """Out of hours nothing opens a conversation, however much headroom is left."""
         _box(daily_limit=10)
         with patch("cold_outreach.emails.models.mailbox.within_sending_window", return_value=False):
@@ -165,21 +153,21 @@ class TestPickingABox:
 
 @pytest.mark.django_db
 class TestEmailableDeals:
-    def test_returns_only_deals_waiting_for_a_first_email(self, campaign):
-        ready = _ready(campaign)
-        DealFactory(campaign=campaign, lead=LeadFactory(), state=DealState.EMAILED)
-        DealFactory(campaign=campaign, lead=LeadFactory(), state=DealState.COMPLETED)
-        assert list(emailable_deals(campaign)) == [ready]
+    def test_returns_only_deals_waiting_for_a_first_email(self):
+        ready = _ready()
+        DealFactory(lead=LeadFactory(), state=DealState.EMAILED)
+        DealFactory(lead=LeadFactory(), state=DealState.COMPLETED)
+        assert list(emailable_deals()) == [ready]
 
-    def test_excludes_a_lead_with_no_address(self, campaign):
+    def test_excludes_a_lead_with_no_address(self):
         """A row can arrive without one — an address is an enrichment, not a promise."""
-        _ready(campaign, email="")
-        assert list(emailable_deals(campaign)) == []
+        _ready(email="")
+        assert list(emailable_deals()) == []
 
-    def test_oldest_first(self, campaign):
-        first = _ready(campaign, "first@c.com")
-        second = _ready(campaign, "second@c.com")
-        assert list(emailable_deals(campaign)) == [first, second]
+    def test_oldest_first(self):
+        first = _ready("first@c.com")
+        second = _ready("second@c.com")
+        assert list(emailable_deals()) == [first, second]
 
 
 @pytest.mark.django_db
@@ -203,7 +191,7 @@ class TestSendEmailBcc:
 class TestSentBodyLogging:
     """What the agent wrote is logged; the boilerplate appended to it is not.
 
-    Every campaign is the operator's own — it is their outreach, from their box, and
+    Every send is the operator's own — it is their outreach, from their box, and
     they receive each of these in full by BCC — so the log discloses nothing they do
     not already hold.
     """
@@ -353,13 +341,13 @@ class TestSendFirstEmail:
         deal.save()
         return send, next_state
 
-    def test_sends_records_and_moves_to_emailed(self, campaign, operator):
+    def test_sends_records_and_moves_to_emailed(self, operator):
         box = _box(daily_limit=10)
-        deal = _ready(campaign, "lead@corp.com")
+        deal = _ready("lead@corp.com")
 
         send, next_state = self._run(deal, box)
 
-        # Every campaign is the operator's own, so they get a BCC of their outreach.
+        # Every send is the operator's own, so they get a BCC of their outreach.
         send.assert_called_once_with(
             box, "lead@corp.com", "Hi there", "Short opener.",
             bcc=operator.email,
@@ -372,11 +360,11 @@ class TestSendFirstEmail:
         assert deal.thread is not None
         assert deal.email_sent_at is not None
 
-    def test_the_deal_points_at_the_thread_the_send_opened(self, campaign, operator):
+    def test_the_deal_points_at_the_thread_the_send_opened(self, operator):
         """One record, not two: the deal borrows the log's thread rather than
         keeping its own copy of the conversation to drift from it."""
         box = _box(daily_limit=10)
-        deal = _ready(campaign, "lead@corp.com")
+        deal = _ready("lead@corp.com")
         self._run(deal, box)
 
         deal.refresh_from_db()
@@ -384,20 +372,20 @@ class TestSendFirstEmail:
         assert message.is_outbound
         assert message.message_id == "mid@corp.com"
 
-    def test_the_box_is_spaced_out_afterwards(self, campaign, operator):
+    def test_the_box_is_spaced_out_afterwards(self, operator):
         box = _box(daily_limit=10)
-        self._run(_ready(campaign, "lead@corp.com"), box)
+        self._run(_ready("lead@corp.com"), box)
 
         box.refresh_from_db()
         assert box.next_send_at > timezone.now()
         assert Mailbox.objects.free_for_first_email() is None
 
-    def test_the_gap_lands_in_the_jittered_band(self, campaign, operator):
+    def test_the_gap_lands_in_the_jittered_band(self, operator):
         """3 min + U[30s, 90s] — never the floor exactly, never past 4.5 minutes."""
         from datetime import timedelta
 
         box = _box(daily_limit=10)
-        deal = _ready(campaign, "lead@corp.com")
+        deal = _ready("lead@corp.com")
         self._run(deal, box)
 
         box.refresh_from_db()
@@ -405,12 +393,12 @@ class TestSendFirstEmail:
         gap = box.next_send_at - deal.email_sent_at
         assert timedelta(seconds=210) <= gap <= timedelta(seconds=270)
 
-    def test_a_lead_suppressed_mid_run_is_not_emailed(self, campaign, operator):
+    def test_a_lead_suppressed_mid_run_is_not_emailed(self, operator):
         """An unsubscribe can land in the seconds the agent takes to write."""
         from cold_outreach.leads.suppression import suppress_email
 
         box = _box(daily_limit=10)
-        deal = _ready(campaign, "lead@corp.com")
+        deal = _ready("lead@corp.com")
 
         with patch(
             "cold_outreach.leads.summaries.materialize_profile_summary_if_missing",

@@ -209,9 +209,10 @@ class Mailbox(models.Model):
         """People this box has *first contacted* since local midnight — the cap ledger.
 
         Counts each of the box's threads by its **first** outgoing message and keeps
-        the ones that begin today, then counts distinct *leads*. So a reply inside a
-        thread opened yesterday is free, and one person reached from two campaigns
-        counts once.
+        the ones that begin today. So a reply inside a thread opened yesterday is free.
+        Scoped to threads that actually belong to a deal — a message sent outside the
+        cold-email flow (a test fixture, a future feature) must not spend the cap of a
+        conversation that was never opened.
 
         Cold volume is what a receiver punishes, and answering someone who wrote to
         you is not cold volume — replying within minutes is more human, not less.
@@ -234,10 +235,7 @@ class Mailbox(models.Model):
             .filter(first_sent__gte=_local_midnight())
             .values_list("thread_id", flat=True)
         )
-        return (
-            Deal.objects.filter(thread_id__in=list(opened_today))
-            .values("lead_id").distinct().count()
-        )
+        return Deal.objects.filter(thread_id__in=list(opened_today)).count()
 
     def headroom_today(self) -> int:
         """Sends this box has left today before hitting its measured capacity.

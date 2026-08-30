@@ -1,17 +1,17 @@
 # cold_outreach/core/models.py
 """What this install writes with, kept where the install keeps everything else.
 
-The campaign's fields, the operator and the mailbox all live in the store and are
-*seeded* from `OUTSEND_*` on a first run. The model and its key were the one exception
-— read from the environment at the point of use — and the exception was the defect: an
-install whose timer unit had lost the variable got no answer at startup, it got a
-traceback in the middle of a pass, per lead, after a mailbox was already open and a
-lead was already chosen. Everything else a send needs is checked before any mail moves;
-this now is too.
+What the message is written from, the operator and the mailbox all live in the store
+and are *seeded* from `OUTSEND_*` on a first run. The model and its key were the one
+exception — read from the environment at the point of use — and the exception was the
+defect: an install whose timer unit had lost the variable got no answer at startup, it
+got a traceback in the middle of a pass, per lead, after a mailbox was already open and
+a lead was already chosen. Everything else a send needs is checked before any mail
+moves; this now is too.
 
 **The environment seeds an empty row and never overwrites a filled one.** A value the
 operator has edited is the answer, and re-reading a stale variable over it would be a
-silent revert — the same rule the campaign's fields already follow.
+silent revert — the same rule the message fields already follow.
 
 **Nothing is stored until the provider has answered to it**, the way a mailbox is
 stored only once its SMTP login succeeds. There is no other gate: a key is either one
@@ -39,6 +39,20 @@ LLM_ENV = {
 # install over a value it never looks at.
 REQUIRED_LLM_FIELDS = ("ai_model", "llm_api_key")
 
+# The three things `outsend init` collects beyond the model — what a message is
+# written from. Blank rather than null: "not asked yet" and "deliberately empty" are
+# the same state to a prompt template, and the template renders every one of them as
+# text.
+MESSAGE_ENV = {
+    "product_docs": "OUTSEND_PRODUCT_DOCS",
+    "campaign_target": "OUTSEND_CAMPAIGN_TARGET",
+    "booking_link": "OUTSEND_BOOKING_LINK",
+}
+
+# `booking_link` is not among them: the prompt renders its whole block only when there
+# is one, and an install that never offers a call is a normal install.
+REQUIRED_MESSAGE_FIELDS = ("product_docs", "campaign_target")
+
 
 class SiteConfig(models.Model):
     """The one row this install runs on.
@@ -59,6 +73,13 @@ class SiteConfig(models.Model):
     llm_api_key = models.CharField(max_length=500, blank=True, default="")
     # Only consulted for the openai_compatible provider (OpenRouter / Together / Ollama / vLLM).
     llm_api_base = models.CharField(max_length=500, blank=True, default="")
+
+    # What this install sells, and to whom — the two things the outreach agent
+    # cannot write a message without.
+    product_docs = models.TextField(blank=True, default="")
+    campaign_target = models.TextField(blank=True, default="")
+    # Never required: the prompt renders its whole booking block only when this is set.
+    booking_link = models.CharField(max_length=500, blank=True, default="")
 
     class Meta:
         verbose_name = "Site Configuration"
@@ -98,3 +119,27 @@ def hydrate_llm_from_environment(config: SiteConfig) -> list[str]:
 def missing_llm_config(config: SiteConfig) -> list[str]:
     """The required fields still empty, in the order a first run asks for them."""
     return [field for field in REQUIRED_LLM_FIELDS if not getattr(config, field)]
+
+
+def hydrate_message_from_environment(config: SiteConfig) -> list[str]:
+    """Fill this config's empty message fields from `OUTSEND_*`. Returns what it wrote.
+
+    Empty fields only: the environment seeds a config, it does not overwrite one an
+    operator has already edited. Silent and never fatal, because ingest runs behind a
+    timer and a message is not being written yet — what is missing surfaces at the
+    first send, where it matters.
+    """
+    written = []
+    for field, variable in MESSAGE_ENV.items():
+        value = (os.environ.get(variable) or "").strip()
+        if value and not getattr(config, field):
+            setattr(config, field, value)
+            written.append(field)
+    if written:
+        config.save(update_fields=written)
+    return written
+
+
+def missing_message_config(config: SiteConfig) -> list[str]:
+    """The fields a message cannot be written without, and that this config lacks."""
+    return [field for field in REQUIRED_MESSAGE_FIELDS if not getattr(config, field)]

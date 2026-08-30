@@ -117,9 +117,9 @@ class SendJobResult:
         return f"{self.opened} opened" if self.goal == ALL else f"{self.opened} of {self.goal}"
 
 
-def run_send_job(campaign, goal: int | str, prompt_line_name: str | None = None,
+def run_send_job(goal: int | str, prompt_line_name: str | None = None,
                  sleep=time.sleep) -> SendJobResult:
-    """Open *goal* conversations for *campaign*, waiting out the clocks in between.
+    """Open *goal* conversations, waiting out the clocks in between.
 
     ``goal`` is a count, or ``ALL`` to keep going until the pool is empty.
 
@@ -127,12 +127,12 @@ def run_send_job(campaign, goal: int | str, prompt_line_name: str | None = None,
     only clock this module holds: every *duration* comes from the pool's own timestamps.
     """
     started = time.monotonic()
-    result = _work_to_goal(campaign, goal, prompt_line_name, sleep)
+    result = _work_to_goal(goal, prompt_line_name, sleep)
     result.elapsed = time.monotonic() - started
     return result
 
 
-def _work_to_goal(campaign, goal: int | str, prompt_line_name: str | None, sleep) -> SendJobResult:
+def _work_to_goal(goal: int | str, prompt_line_name: str | None, sleep) -> SendJobResult:
     """The loop itself. Every exit is a ``SendJobResult``; none of them raises."""
     from django.utils import timezone
 
@@ -145,7 +145,7 @@ def _work_to_goal(campaign, goal: int | str, prompt_line_name: str | None, sleep
 
     while True:
         try:
-            done = _run_one_pass(campaign, prompt_line_name, result)
+            done = _run_one_pass(prompt_line_name, result)
         except KeyboardInterrupt:
             return _interrupted(result)
 
@@ -162,7 +162,7 @@ def _work_to_goal(campaign, goal: int | str, prompt_line_name: str | None, sleep
         if opening_at is None:
             return _stop(result, NO_MAILBOX,
                          "no mailbox connected, so nothing can be sent — run `outsend init`")
-        if not _anyone_waiting(campaign):
+        if not _anyone_waiting():
             return _stop(result, DRAINED,
                          "nobody left to email — pipe in more leads with "
                          "`openoutreach find N --json | outsend`")
@@ -177,9 +177,9 @@ def _work_to_goal(campaign, goal: int | str, prompt_line_name: str | None, sleep
 # ── One pass ──────────────────────────────────────────────────────
 
 
-def _run_one_pass(campaign, prompt_line_name: str | None, result: SendJobResult) -> PassResult:
+def _run_one_pass(prompt_line_name: str | None, result: SendJobResult) -> PassResult:
     """Run a pass and fold its counts into the run's totals. Returns the pass's own."""
-    done = run_send_pass(campaign, prompt_line_name, narrate=False)
+    done = run_send_pass(prompt_line_name, narrate=False)
     result.passes += 1
     for count in ("mirrored", "classified", "projected", "answered",
                   "opened", "followed_up", "gave_up", "failed"):
@@ -251,7 +251,7 @@ def _next_opening() -> datetime | None:
     return Mailbox.objects.next_first_email_at()
 
 
-def _anyone_waiting(campaign) -> bool:
+def _anyone_waiting() -> bool:
     """Whether a lead is still waiting for a first email.
 
     The one gate a wait cannot resolve: the pool grows by ingest, and ingest is a
@@ -260,7 +260,7 @@ def _anyone_waiting(campaign) -> bool:
     """
     from cold_outreach.leads.pools import emailable_deals
 
-    return emailable_deals(campaign).exists()
+    return emailable_deals().exists()
 
 
 # ── Endings ───────────────────────────────────────────────────────

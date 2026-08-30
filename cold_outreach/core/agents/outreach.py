@@ -24,7 +24,7 @@ action out re-read one unchanged context five times inside a single window.
 emailing me". It threads like any other reply, so the box-wide alias scan in
 ``emails/classify.py`` can never see it, and the agent reading every reply already
 can. It is a stronger statement than ``not_interested``: it ends the thread and
-suppresses the person account-wide, across every campaign.
+suppresses the person account-wide, for good.
 
 **It is one decision the model can word two ways**, so both are read as one. The
 action is ``suppress`` and the outcome it records is ``unsubscribed``; a decision that

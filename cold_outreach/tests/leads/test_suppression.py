@@ -1,7 +1,7 @@
 """The list that outlives everything else on this side."""
 import pytest
 
-from cold_outreach.leads.models import Campaign, Deal, DealState, Lead, Outcome, Suppression
+from cold_outreach.leads.models import Deal, DealState, Lead, Outcome, Suppression
 from cold_outreach.leads.suppression import is_suppressed, suppress_email
 
 pytestmark = pytest.mark.django_db
@@ -10,8 +10,7 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture
 def deal():
     lead = Lead.objects.create(lead_id="7", email="anna@example.com")
-    campaign = Campaign.objects.create(name="devtools")
-    return Deal.objects.create(lead=lead, campaign=campaign, state=DealState.EMAILED)
+    return Deal.objects.create(lead=lead, state=DealState.EMAILED)
 
 
 def test_suppressing_ends_the_open_deals(deal):
@@ -23,9 +22,9 @@ def test_suppressing_ends_the_open_deals(deal):
     assert is_suppressed("anna@example.com")
 
 
-def test_it_reaches_every_campaign_holding_the_address(deal):
-    second = Campaign.objects.create(name="agencies")
-    other = Deal.objects.create(lead=deal.lead, campaign=second)
+def test_it_reaches_every_lead_holding_the_address(deal):
+    other_lead = Lead.objects.create(lead_id="8", email="anna@example.com")
+    other = Deal.objects.create(lead=other_lead)
 
     assert suppress_email("anna@example.com") == 2
 

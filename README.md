@@ -38,20 +38,20 @@ a second, separate invocation is what mails them:
 
 ```bash
 pip install -e .
-outsend init --campaign devtools                            # once: what you sell, who you are, a box
-openoutreach find 50 --json | outsend --campaign devtools   # store
-outsend send --campaign devtools                            # one pass: read, answer, follow up, open
-outsend send 5 --campaign devtools                          # or: keep going until 5 are open
-outsend send all --campaign devtools                        # or: until nobody is left to email
+outsend init                            # once: what you sell, who you are, a box
+openoutreach find 50 --json | outsend   # store
+outsend send                            # one pass: read, answer, follow up, open
+outsend send 5                          # or: keep going until 5 are open
+outsend send all                        # or: until nobody is left to email
 ```
 
 The two invocations are separate on purpose: a pipe's right-hand side must not block on the network
 while a producer is still writing, and the cadences differ — leads arrive when `find` runs, mail moves
 on the mailbox's clock. So the cron line is two entries, not one command doing both.
 
-It reads JSON Lines on stdin, upserts on `(lead_id, campaign)`, checks every address against the
-suppression list at the door, skips and counts a malformed line, prints the campaign it resolved and
-the counts to **stderr**, and exits 0 when every line became a row. Its database is
+It reads JSON Lines on stdin, upserts on `lead_id`, checks every address against the
+suppression list at the door, skips and counts a malformed line, prints the counts to **stderr**,
+and exits 0 when every line became a row. Its database is
 `~/.openoutsend/data/db.sqlite3` (`OUTSEND_HOME` / `OUTSEND_DB` override it) and it migrates itself on
 first run, so a fresh install is an ingest that works rather than a traceback.
 
@@ -90,7 +90,7 @@ conversation takes over. **Follow-ups are cold volume and are treated as such**:
 cap, one spacing clock and one sending window with the openers, rather than claiming ahead of them out
 of a budget of their own. A reply obeys none of the three, because answering someone who wrote to you
 is not cold volume and holding the answer until Monday is worse than sending it at 21:00.
-**`outsend init` collects what a first run needs** — what the campaign sells and to whom, the name
+**`outsend init` collects what a first run needs** — what this install sells and to whom, the name
 that signs the mail, and a mailbox to send it from — and it runs implicitly on the first send, so a
 setup step is never something a timer discovers. The environment first, prompts second and **only on a
 terminal**; headless, whatever is still missing is one error naming every variable that would have
@@ -128,7 +128,7 @@ came across with the transport now assert against this side's own models.
 | `cold_outreach/settings.py` | this repo's own Django settings and the state dir |
 | `cold_outreach/send_pass.py` | one pass — read, answer, open — and the line saying what held it |
 | `cold_outreach/send_job.py` | `send N` — passes until the goal is open, waiting out the send clocks |
-| `cold_outreach/first_run.py` | what `init` collects — the campaign's fields, the model, the operator, the mailbox |
+| `cold_outreach/first_run.py` | what `init` collects — the message fields, the model, the operator, the mailbox |
 | `cold_outreach/__main__.py` | the `outsend` console script |
 | `roadmap/` | open work, mostly inherited from OpenOutreach along with the code it describes |
 
@@ -141,14 +141,14 @@ The environment is the operator seam — the only way in a timer has:
 | `OUTSEND_OPERATOR_COUNTRY` | ISO 3166 alpha-2; resolves the local clock the sending window is measured in |
 | `OUTSEND_AI_MODEL` | a pydantic-ai `provider:model` id, e.g. `anthropic:claude-sonnet-4-5-20250929` |
 | `OUTSEND_LLM_API_KEY` / `OUTSEND_LLM_API_BASE` | credentials for it; `outsend init` also asks for these on a terminal |
-| `OUTSEND_PRODUCT_DOCS` / `OUTSEND_CAMPAIGN_TARGET` / `OUTSEND_BOOKING_LINK` | what a campaign writes from; `outsend init` also asks for these on a terminal |
+| `OUTSEND_PRODUCT_DOCS` / `OUTSEND_CAMPAIGN_TARGET` / `OUTSEND_BOOKING_LINK` | what a message is written from; `outsend init` also asks for these on a terminal |
 | `OUTSEND_OPERATOR_NAME` / `OUTSEND_OPERATOR_EMAIL` | who signs the mail, and the address every send is blind-copied to (blank for none) |
 | `OUTSEND_MAILBOX_ADDRESS` / `OUTSEND_MAILBOX_PASSWORD` | the box to send from, and its **app password** — a Google box rejects the login password |
 | `OUTSEND_SMTP_HOST` / `OUTSEND_SMTP_PORT` / `OUTSEND_IMAP_HOST` / `OUTSEND_IMAP_PORT` | only for a box that is not on Google Workspace; those four default to Gmail's and are never prompted for |
 | `OUTSEND_SIGNATURE` | the sign-off appended to every send from that box; empty declines one for good |
 | `OUTSEND_HOME` / `OUTSEND_DB` | where the store lives |
 
-**Most of these are read once and then stored.** The campaign's fields, the model and its
+**Most of these are read once and then stored.** The message fields, the model and its
 key, the operator and the mailbox are collected by `outsend init` — which `outsend send`
 runs implicitly before any mail moves — and land in the store, where the operator can edit
 them. A variable seeds an empty field and never overwrites a filled one, so a stale unit
@@ -167,7 +167,7 @@ idempotent — lives in
 [`roadmap/p1-e2-find-send-boundary-contract.md`](https://github.com/eracle/openoutreach-docs/blob/main/roadmap/p1-e2-find-send-boundary-contract.md)
 in the `openoutreach-docs` repo. The parts this side owes:
 
-- **Ingest is idempotent**, keyed on `(lead_id, campaign)`, so the pipe is allowed to be lossy and
+- **Ingest is idempotent**, keyed on `lead_id`, so the pipe is allowed to be lossy and
   recovery is running it again.
 - **Suppression is checked at the door and is terminal** — the legal duty came here with `emails/`, and
   a re-ingest must never resurrect somebody who opted out. An address that *changed* is re-checked,

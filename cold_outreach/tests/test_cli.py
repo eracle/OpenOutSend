@@ -7,12 +7,10 @@ from unittest.mock import patch
 import pytest
 
 from cold_outreach.__main__ import _parse_args, _send
-from cold_outreach.core.models import LLM_ENV, SiteConfig
+from cold_outreach.core.models import LLM_ENV, MESSAGE_ENV
 from cold_outreach.errors import OutsendError
-from cold_outreach.leads.campaigns import CONFIG_ENV
 from cold_outreach.send_pass import PassResult
 from cold_outreach.tests.emails import maillog
-from cold_outreach.tests.factories import CampaignFactory
 
 pytestmark = pytest.mark.django_db
 
@@ -20,25 +18,26 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture(autouse=True)
 def unconfigured_environment(monkeypatch):
     """No `OUTSEND_*` in scope, so a test about a missing field is about that field."""
-    for variable in [*CONFIG_ENV.values(), *LLM_ENV.values()]:
+    for variable in [*MESSAGE_ENV.values(), *LLM_ENV.values()]:
         monkeypatch.delenv(variable, raising=False)
 
 
 @pytest.fixture
-def connected(campaign):
-    """A campaign, a model, an operator and a box — an install past its first run.
+def connected(site_config):
+    """A message config, a model, an operator and a box — an install past its first run.
 
     What that first run *collects* is `test_first_run.py`'s subject; what is tested here
     is only that a send refuses to move mail until it has been collected.
     """
-    SiteConfig.objects.create(
-        ai_model="anthropic:claude-sonnet-4-5-20250929", llm_api_key="sk-ada")
+    site_config.ai_model = "anthropic:claude-sonnet-4-5-20250929"
+    site_config.llm_api_key = "sk-ada"
+    site_config.save()
     maillog.mailbox()
-    return campaign
+    return site_config
 
 
 def _args(**kwargs) -> Namespace:
-    return Namespace(**{"command": "send", "campaign": None, "prompt_line": None,
+    return Namespace(**{"command": "send", "prompt_line": None,
                         "count": None, "debug": False, **kwargs})
 
 
@@ -91,14 +90,13 @@ def test_a_count_belongs_to_send():
 # ── Sending ───────────────────────────────────────────────────────
 
 
-def test_send_runs_one_pass_over_the_resolved_campaign(connected, capsys):
+def test_send_runs_one_pass(connected, capsys):
     with patch("cold_outreach.send_pass.run_send_pass",
                return_value=PassResult(mirrored=2, answered=1, opened=3)) as run:
         assert _send(_args()) == 0
 
-    run.assert_called_once_with(connected, None)
+    run.assert_called_once_with(None)
     narration = capsys.readouterr().err
-    assert f"campaign: {connected.name}" in narration
     assert "read 2 new message(s) · answered 1 · followed up 0 · opened 3" in narration
 
 
@@ -111,7 +109,7 @@ def test_a_count_runs_to_the_goal_instead_of_passing_once(connected, capsys):
             patch("cold_outreach.send_pass.run_send_pass") as single:
         assert _send(_args(count=5)) == 0
 
-    job.assert_called_once_with(connected, 5, None)
+    job.assert_called_once_with(5, None)
     single.assert_not_called()
     assert "opened 5 of 5 conversation(s) in 6 pass(es)" in capsys.readouterr().err
 
@@ -151,8 +149,6 @@ def test_a_failed_send_is_reported_and_carried_into_the_exit_code(connected, cap
 
 def test_a_headless_send_stops_on_an_install_nothing_configured(db, capsys):
     """`init` runs implicitly — and from a timer that means an error, never a prompt."""
-    CampaignFactory(product_docs="", campaign_target="")
-
     with patch("cold_outreach.send_pass.run_send_pass") as run, \
             patch("sys.stdin.isatty", return_value=False), \
             pytest.raises(OutsendError, match="OUTSEND_PRODUCT_DOCS"):
@@ -161,7 +157,7 @@ def test_a_headless_send_stops_on_an_install_nothing_configured(db, capsys):
     run.assert_not_called()
 
 
-def test_a_send_with_no_mailbox_never_reaches_the_pass(campaign, capsys):
+def test_a_send_with_no_mailbox_never_reaches_the_pass(site_config, capsys):
     """The one thing a pass cannot work around: nowhere to send from."""
     with patch("cold_outreach.send_pass.run_send_pass") as run, \
             patch("sys.stdin.isatty", return_value=False), \
@@ -171,7 +167,7 @@ def test_a_send_with_no_mailbox_never_reaches_the_pass(campaign, capsys):
     run.assert_not_called()
 
 
-def test_a_send_with_no_model_never_reaches_the_pass(campaign):
+def test_a_send_with_no_model_never_reaches_the_pass(site_config):
     """The key used to be missed until an agent asked for a model, mid-pass, per lead."""
     maillog.mailbox()
 

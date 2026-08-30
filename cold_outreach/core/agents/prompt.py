@@ -11,6 +11,7 @@ from __future__ import annotations
 import jinja2
 
 from cold_outreach.core.conf import PROMPTS_DIR
+from cold_outreach.core.models import SiteConfig
 from cold_outreach.core.operator import seller_full_name
 from cold_outreach.leads.summaries import facts_of
 
@@ -25,18 +26,19 @@ def render(template_name: str, **context) -> str:
 def base_context(deal) -> dict:
     """The channel-agnostic prompt variables shared by every outreach entrypoint.
 
-    Four of the five come from the campaign and the operator. The fifth is what we
-    know about the person: the facts extracted from the raw ``profile_text`` the pipe
-    carried (``leads/summaries.py``), falling back to that text itself if the
-    extraction has not run — the same information either way, and a lead is never
-    described to the agent as *(none yet)* while the sentences are sitting in the row.
+    Four of the five come from the install's own config and the operator. The fifth
+    is what we know about the person: the facts extracted from the raw
+    ``profile_text`` the pipe carried (``leads/summaries.py``), falling back to that
+    text itself if the extraction has not run — the same information either way, and
+    a lead is never described to the agent as *(none yet)* while the sentences are
+    sitting in the row.
     """
-    campaign = deal.campaign
+    config = SiteConfig.load()
     return {
         "self_name": seller_full_name(),
-        "product_docs": campaign.product_docs or "",
-        "campaign_target": campaign.campaign_target or "",
-        "booking_link": campaign.booking_link or "",
+        "product_docs": config.product_docs or "",
+        "campaign_target": config.campaign_target or "",
+        "booking_link": config.booking_link or "",
         "profile_summary": _format_profile(deal.lead),
     }
 

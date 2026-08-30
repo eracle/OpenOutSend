@@ -11,12 +11,12 @@ from cold_outreach.tests.factories import DealFactory, LeadFactory
 
 
 @pytest.fixture
-def deal_with_summaries(db, campaign):
+def deal_with_summaries(db, site_config):
     """A deal whose lead has facts and whose thread has learned some.
 
-    The profile facts sit on the **lead** — they describe the person, not the campaign
-    they are being written to about — while the chat facts sit on the deal, because a
-    conversation is per campaign.
+    The profile facts sit on the **lead** — they describe the person, not what they
+    are being written to about — while the chat facts sit on the deal, because a
+    conversation is per deal.
     """
     lead = LeadFactory(profile_summary={"facts": [
         "Senior engineer at Acme Corp.",
@@ -25,7 +25,6 @@ def deal_with_summaries(db, campaign):
     ]})
     return DealFactory(
         lead=lead,
-        campaign=campaign,
         thread=Thread.objects.create(mailbox=maillog.mailbox()),
         chat_summary={"facts": [
             "Lead is curious about pricing.",
@@ -43,7 +42,7 @@ def _msg(content, is_outgoing):
 
 
 class TestRenderSystemPrompt:
-    def test_in_thread_includes_three_summary_blocks(self, db, campaign, deal_with_summaries):
+    def test_in_thread_includes_three_summary_blocks(self, db, site_config, deal_with_summaries):
         from cold_outreach.core.agents.outreach import _render_system_prompt
 
         recent = [_msg("Hi, what do you do?", is_outgoing=True), _msg("Sales tooling.", is_outgoing=False)]
@@ -61,7 +60,7 @@ class TestRenderSystemPrompt:
         assert "Headline:" not in prompt
         assert "Company:" not in prompt
 
-    def test_in_thread_offers_the_three_reply_actions(self, db, campaign, deal_with_summaries):
+    def test_in_thread_offers_the_three_reply_actions(self, db, site_config, deal_with_summaries):
         """In-thread choices are reply / suppress / complete. There is no `wait`:
         the agent only ever runs on a thread that has an unanswered reply, and
         silence is the absence of work rather than a decision."""
@@ -75,7 +74,7 @@ class TestRenderSystemPrompt:
         assert "**wait**" not in prompt
         assert "having an email conversation" in prompt
 
-    def test_first_touch_drops_the_conversation_blocks(self, db, campaign, deal_with_summaries):
+    def test_first_touch_drops_the_conversation_blocks(self, db, site_config, deal_with_summaries):
         """No thread yet — no chat summary, no transcript, and no complete/suppress choice."""
         from cold_outreach.core.agents.outreach import _render_system_prompt
 
@@ -90,7 +89,7 @@ class TestRenderSystemPrompt:
         assert "`subject`" in prompt
         assert "**mark_completed**" not in prompt
 
-    def test_both_ends_carry_the_research_framing(self, db, campaign, deal_with_summaries):
+    def test_both_ends_carry_the_research_framing(self, db, site_config, deal_with_summaries):
         from cold_outreach.core.agents.outreach import _render_system_prompt
 
         for stage in ("open", "follow_up", "reply"):
@@ -101,7 +100,7 @@ class TestRenderSystemPrompt:
             assert "### Pitching (only when the lead pulls you there)" in prompt
             assert "Never volunteer the product" in prompt
 
-    def test_an_unextracted_lead_falls_back_to_the_raw_profile_text(self, db, campaign):
+    def test_an_unextracted_lead_falls_back_to_the_raw_profile_text(self, db, site_config):
         """The facts are a cache over ``profile_text``; until it is built, the text itself goes in.
 
         A lead is never described to the agent as *(none yet)* while the sentences the
@@ -110,7 +109,7 @@ class TestRenderSystemPrompt:
         from cold_outreach.core.agents.outreach import _render_system_prompt
 
         lead = LeadFactory(profile_text="cto at acme, milan, 50 employees")
-        deal = DealFactory(lead=lead, campaign=campaign,
+        deal = DealFactory(lead=lead,
                            thread=Thread.objects.create(mailbox=maillog.mailbox()))
 
         prompt = _render_system_prompt(deal, [], stage="reply")
@@ -120,10 +119,10 @@ class TestRenderSystemPrompt:
         assert "(none yet)" in prompt
         assert "No recent messages." in prompt
 
-    def test_a_lead_with_nothing_on_file_still_renders(self, db, campaign):
+    def test_a_lead_with_nothing_on_file_still_renders(self, db, site_config):
         from cold_outreach.core.agents.outreach import _render_system_prompt
 
-        deal = DealFactory(lead=LeadFactory(profile_text=""), campaign=campaign)
+        deal = DealFactory(lead=LeadFactory(profile_text=""))
 
         prompt = _render_system_prompt(deal, [], stage="open")
 
@@ -155,7 +154,7 @@ class TestValidateOpener:
 
 
 class TestLoadRecentMessages:
-    def test_returns_last_n_in_chronological_order(self, db, campaign, operator):
+    def test_returns_last_n_in_chronological_order(self, db, operator):
         from django.utils import timezone
         from datetime import timedelta
 
@@ -163,7 +162,7 @@ class TestLoadRecentMessages:
 
         box = maillog.mailbox()
         thread = Thread.objects.create(mailbox=box)
-        deal = DealFactory(lead=LeadFactory(), campaign=campaign, thread=thread)
+        deal = DealFactory(lead=LeadFactory(), thread=thread)
 
         base = timezone.now()
         for i in range(RECENT_MESSAGES_WINDOW + 3):
@@ -234,11 +233,11 @@ class TestOpenerBreach:
 
 @pytest.mark.django_db
 class TestThePromptLineReachesThePrompt:
-    def test_a_first_touch_carries_the_line(self, campaign):
+    def test_a_first_touch_carries_the_line(self, site_config):
         from cold_outreach.core.agents.outreach import _render_system_prompt
         from cold_outreach.core.prompt_lines import choose
 
-        deal = DealFactory(lead=LeadFactory(), campaign=campaign)
+        deal = DealFactory(lead=LeadFactory())
         line = choose("plain-ask")
 
         prompt = _render_system_prompt(deal, [], stage="open", prompt_line=line)
@@ -257,12 +256,12 @@ class TestThePromptLineReachesThePrompt:
 
         assert line.prompt not in prompt
 
-    def test_the_hard_rules_are_in_the_prompt_whatever_the_line_says(self, campaign):
+    def test_the_hard_rules_are_in_the_prompt_whatever_the_line_says(self, site_config):
         """They live in the template, so no prompt-line file has to remember them."""
         from cold_outreach.core.agents.outreach import _render_system_prompt
         from cold_outreach.core.prompt_lines import choose
 
-        deal = DealFactory(lead=LeadFactory(), campaign=campaign)
+        deal = DealFactory(lead=LeadFactory())
 
         prompt = _render_system_prompt(
             deal, [], stage="open", prompt_line=choose("plain-ask"))
@@ -271,10 +270,10 @@ class TestThePromptLineReachesThePrompt:
         assert "No meeting request" in prompt
         assert "Only claims the facts above can source" in prompt
 
-    def test_an_install_with_no_lines_still_renders_an_opener(self, campaign):
+    def test_an_install_with_no_lines_still_renders_an_opener(self, site_config):
         from cold_outreach.core.agents.outreach import _render_system_prompt
 
-        deal = DealFactory(lead=LeadFactory(), campaign=campaign)
+        deal = DealFactory(lead=LeadFactory())
 
         prompt = _render_system_prompt(deal, [], stage="open", prompt_line=None)
 

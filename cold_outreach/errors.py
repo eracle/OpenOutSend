@@ -1,6 +1,6 @@
 """The one exception the command line answers with.
 
-An expected failure is an *answer*, not a bug: a campaign name that matches nothing,
+An expected failure is an *answer*, not a bug: a required credential missing,
 a headless run with no configuration to read. It prints as one line on stderr and
 exits non-zero, with no traceback — the finder learned this the hard way, and a
 sender parsed by the same cron entry owes the same manners.

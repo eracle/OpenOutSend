@@ -147,7 +147,7 @@ def _dsn_status(ndr: Message) -> str:
 
 
 def _honour_opt_out(message: Message) -> None:
-    """Suppress the address this opt-out came from, in every campaign holding it.
+    """Suppress the address this opt-out came from, for good.
 
     Enforcement is address-level and terminal: the list outlives the deals it ends,
     so no later ingest can resurrect somebody who asked to stop.

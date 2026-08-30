@@ -49,8 +49,7 @@ def send_follow_up(deal) -> DealState | None:
     from cold_outreach.emails.steps.send import space_out
 
     prompt_line = opening_prompt_line(deal)
-    logger.info("[%s] %s %s (%s)", deal.campaign,
-                colored("▶ follow-up", "cyan", attrs=["bold"]),
+    logger.info("%s %s (%s)", colored("▶ follow-up", "cyan", attrs=["bold"]),
                 deal.lead.public_id, prompt_line.id if prompt_line else "no prompt line")
 
     decision = run_outreach_agent(deal, prompt_line, stage=FOLLOW_UP)
@@ -62,21 +61,20 @@ def send_follow_up(deal) -> DealState | None:
     if ends_in_an_opt_out(decision):
         return honour_opt_out(deal)
     if decision.action == "mark_completed":
-        logger.info("[%s] %s judged not worth another email: %s",
-                    deal.campaign, deal.lead.public_id, decision.outcome)
+        logger.info("%s judged not worth another email: %s",
+                    deal.lead.public_id, decision.outcome)
         deal.outcome = decision.outcome
         return DealState.COMPLETED
     if decision.action != "send_message":
-        logger.warning("[%s] follow-up agent for %s answered %s — sending nothing",
-                       deal.campaign, deal.lead.public_id, decision.action)
+        logger.warning("follow-up agent for %s answered %s — sending nothing",
+                       deal.lead.public_id, decision.action)
         return None
 
     # Last gate before the message goes, exactly as the opener has: an opt-out can
     # land in the seconds an LLM call takes, and a bounce may have suppressed the
     # address since the pool was built.
     if suppressed(deal.lead):
-        logger.warning("[%s] %s was suppressed mid-run — not following up",
-                       deal.campaign, deal.lead.public_id)
+        logger.warning("%s was suppressed mid-run — not following up", deal.lead.public_id)
         return None
 
     chain = thread_ids(deal)
@@ -104,10 +102,9 @@ def give_up(deal) -> DealState:
     `unresponsive` already exists for the lead who replies once and goes quiet; this
     is the same fact one touch earlier. **Deliberately not a suppression** — silence is
     not a request to stop, and putting a silent lead on the list would forbid a later
-    campaign that might actually suit them.
+    approach that might actually suit them.
     """
-    logger.info("[%s] %s never answered — ending the pursuit", deal.campaign,
-                deal.lead.public_id)
+    logger.info("%s never answered — ending the pursuit", deal.lead.public_id)
     deal.outcome = "unresponsive"
     return DealState.COMPLETED
 

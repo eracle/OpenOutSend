@@ -11,8 +11,8 @@ history belongs there.
 A variable that only ever configures the process — where the state dir is, which local
 clock the sending window is measured in — is read here and lands as a setting. A
 variable that answers something a send cannot run without is read once into a row the
-operator can then edit: the campaign's fields, the mailbox, and the model and key on
-`core.SiteConfig`. The split is not tidiness. A setting missing at the point of use is
+operator can then edit: what a message is written from, the mailbox, and the model
+and key on `core.SiteConfig`. The split is not tidiness. A setting missing at the point of use is
 discovered mid-pass, per lead, with a mailbox already open; a stored answer is checked
 before any mail moves.
 """

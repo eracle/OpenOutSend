@@ -2,12 +2,12 @@
 
     openoutreach find 50 --json | outsend
 
-**On the pipe it takes no verb.** Things on the right of a pipe conventionally take
-none: `| less`, `| jq`, `| tee`. The one argument it has is the campaign, and that one
-is usually absent too. The two verbs it does have are the ones that are not on the pipe
-at all: `send`, which reads no stdin and mails what is already stored, and `init`,
-which asks for what a first run needs — what the campaign sells and to whom, the model
-that writes it, who is signing the mail, and the mailbox it leaves from.
+**On the pipe it takes no verb and no arguments.** Things on the right of a pipe
+conventionally take none: `| less`, `| jq`, `| tee`. The two verbs it does have are the
+ones that are not on the pipe at all: `send`, which reads no stdin and mails what is
+already stored, and `init`, which asks for what a first run needs — what this install
+sells and to whom, the model that writes it, who is signing the mail, and the mailbox
+it leaves from.
 
 **Ingesting and sending are separate invocations on purpose.** A pipe's right-hand side
 must not block on the network while a producer is still writing, and the cadence the two
@@ -15,8 +15,8 @@ want is different — leads arrive when `find` runs, mail moves on the mailbox's
 the cron line is two entries, not one command doing both.
 
 **stdout is reserved and stays clean**, so the stream composes and a receipt can
-never corrupt it. Everything narrated — the campaign resolved, the counts, a skipped
-line, Django's own migration chatter — goes to stderr.
+never corrupt it. Everything narrated — the counts, a skipped line, Django's own
+migration chatter — goes to stderr.
 
 **The exit code is the only acknowledgement a pipe can carry**: 0 means the rows are
 durably persisted. Non-zero after a skipped line does *not* mean *nothing to
@@ -30,14 +30,15 @@ import logging
 import os
 import sys
 
-USAGE = """outsend [--campaign NAME]        read JSON Lines on stdin, store them, exit
-outsend send [N|all] [--campaign NAME] [--prompt-line ID]
+USAGE = """outsend                          read JSON Lines on stdin, store them, exit
+outsend send [N|all] [--prompt-line ID]
                                  one pass: read the mail, answer replies, open what the
                                  guards allow right now. With N, keep at it until N
                                  conversations are open, waiting out the send clocks;
                                  with `all`, until nobody is left to email
-outsend init [--campaign NAME]   collect what a first run needs — the campaign, the model
-                                 that writes it, who you are, and a mailbox to send from"""
+outsend init                     collect what a first run needs — what you sell and to
+                                 whom, the model that writes it, who you are, and a
+                                 mailbox to send from"""
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -63,8 +64,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("count", nargs="?", type=_goal, default=None,
                         help="how many conversations to open before returning, or `all` "
                              "to empty the pool; omit for a single pass")
-    parser.add_argument("--campaign", default=None,
-                        help="which campaign these leads belong to; required only if there are several")
     parser.add_argument("--prompt-line", default=None, dest="prompt_line",
                         help="open every email in this pass with one named prompt line; "
                              "omit to draw one at random per send")
@@ -122,25 +121,11 @@ def _boot() -> None:
 # ── The pipe ──────────────────────────────────────────────────────
 
 
-def _campaign_for(args: argparse.Namespace):
-    """The campaign this invocation acts on, hydrated from the environment and narrated.
-
-    Every command starts here, so `--campaign` means the same thing to all of them and
-    the operator reads which one was chosen before anything else is printed.
-    """
-    from cold_outreach.leads.campaigns import hydrate_from_environment, resolve_campaign
-
-    campaign = resolve_campaign(args.campaign)
-    hydrate_from_environment(campaign)
-    print(f"campaign: {campaign.name}", file=sys.stderr)
-    return campaign
-
-
 def _ingest(args: argparse.Namespace) -> int:
-    """Read stdin into the resolved campaign and report what happened."""
+    """Read stdin and report what happened."""
     from cold_outreach.leads.ingest import ingest
 
-    result = ingest(sys.stdin, _campaign_for(args))
+    result = ingest(sys.stdin)
     print(f"stored {result.stored} lead(s)", file=sys.stderr)
     if result.suppressed:
         print(f"{result.suppressed} of them are suppressed and will not be emailed", file=sys.stderr)
@@ -162,7 +147,7 @@ def _send(args: argparse.Namespace) -> int:
     daily ceiling and the sending window in between — the clocks the state machine
     already keeps, read as timestamps rather than polled from outside.
 
-    **`init` runs implicitly here**, because a send is the first moment the campaign's
+    **`init` runs implicitly here**, because a send is the first moment the message
     fields, a reachable model, the operator's name and a mailbox actually have to be
     there — and an operator
     who wired the pipe into a timer should not discover a setup step they never ran. On a
@@ -175,20 +160,19 @@ def _send(args: argparse.Namespace) -> int:
     """
     from cold_outreach.first_run import ensure_ready
 
-    campaign = _campaign_for(args)
-    ensure_ready(campaign)
-    return _run_to_goal(campaign, args) if args.count else _run_one_pass(campaign, args)
+    ensure_ready()
+    return _run_to_goal(args) if args.count else _run_one_pass(args)
 
 
-def _run_one_pass(campaign, args: argparse.Namespace) -> int:
+def _run_one_pass(args: argparse.Namespace) -> int:
     from cold_outreach.send_pass import run_send_pass
 
-    result = run_send_pass(campaign, args.prompt_line)
+    result = run_send_pass(args.prompt_line)
     _report(result)
     return 0 if result.ok else 1
 
 
-def _run_to_goal(campaign, args: argparse.Namespace) -> int:
+def _run_to_goal(args: argparse.Namespace) -> int:
     """`outsend send N` (or `all`) — and the one line that says how the run ended.
 
     A goal that was not reached is reported as its own sentence rather than folded into
@@ -200,7 +184,7 @@ def _run_to_goal(campaign, args: argparse.Namespace) -> int:
     """
     from cold_outreach.send_job import run_send_job
 
-    run = run_send_job(campaign, args.count, args.prompt_line)
+    run = run_send_job(args.count, args.prompt_line)
     _report(run.totals)
     if run.reached and run.drained_the_pool:
         print(f"opened {run.opened} conversation(s) in {run.passes} pass(es) — "
@@ -238,9 +222,8 @@ def _init(args: argparse.Namespace) -> int:
     from cold_outreach.emails.models import Mailbox
     from cold_outreach.first_run import ensure_ready
 
-    campaign = _campaign_for(args)
-    ensure_ready(campaign)
-    print(f"campaign {campaign.name} is ready: written by {SiteConfig.load().ai_model}, "
+    ensure_ready()
+    print(f"ready: written by {SiteConfig.load().ai_model}, "
           f"signed by {seller_full_name()}, sending from {Mailbox.objects.first()}",
           file=sys.stderr)
     return 0
