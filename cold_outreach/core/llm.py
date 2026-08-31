@@ -4,7 +4,7 @@
 Two public entry points:
 
 - `get_llm_model()` — builds a `pydantic_ai.Model` from the stored
-  `core.SiteConfig`, routing to the right provider.
+  `outsend_core.SiteConfig`, routing to the right provider.
 - `run_agent_sync(coro)` — drives a pydantic-ai coroutine to completion
   from sync code, on a dedicated worker thread with a long-lived event
   loop. Used everywhere instead of `Agent.run_sync`.

@@ -33,7 +33,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from cold_outreach.settings import state_dir
+from cold_outreach.defaults import state_dir
 
 logger = logging.getLogger(__name__)
 

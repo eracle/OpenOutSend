@@ -33,7 +33,7 @@ class SiteConfigFactory(factory.django.DjangoModelFactory):
     """
 
     class Meta:
-        model = "core.SiteConfig"
+        model = "outsend_core.SiteConfig"
 
     product_docs = "A self-hosted lead finder that writes down why each lead fits."
     campaign_target = "Founders and heads of growth at small B2B software companies."
@@ -49,7 +49,7 @@ class SiteConfigFactory(factory.django.DjangoModelFactory):
 
 class LeadFactory(factory.django.DjangoModelFactory):
     class Meta:
-        model = "leads.Lead"
+        model = "outsend_leads.Lead"
 
     lead_id = factory.Sequence(lambda n: str(n))
     linkedin_url = factory.Sequence(lambda n: f"https://www.linkedin.com/in/lead-{n}/")
@@ -58,6 +58,6 @@ class LeadFactory(factory.django.DjangoModelFactory):
 
 class DealFactory(factory.django.DjangoModelFactory):
     class Meta:
-        model = "leads.Deal"
+        model = "outsend_leads.Deal"
 
     lead = factory.SubFactory(LeadFactory)

@@ -121,16 +121,23 @@ came across with the transport now assert against this side's own models.
 
 | Path | What it is |
 | --- | --- |
-| `cold_outreach/leads/` | what comes through the pipe — the models, ingest, suppression, the facts extraction |
-| `cold_outreach/emails/` | the transport — SMTP, IMAP sync, the mail pass, threads, delivery policy, warmth |
-| `cold_outreach/core/` | the outreach agent, its templates, the sending window, and the stored site configuration |
+| `cold_outreach/leads/` | app `outsend_leads` — what comes through the pipe: the models, ingest, suppression, the facts extraction |
+| `cold_outreach/emails/` | app `outsend_emails` — the transport: SMTP, IMAP sync, the mail pass, threads, delivery policy, warmth |
+| `cold_outreach/core/` | app `outsend_core` — the outreach agent, its templates, the sending window, and the stored site configuration |
 | `cold_outreach/docs/` | how the agent and its templating work |
-| `cold_outreach/settings.py` | this repo's own Django settings and the state dir |
+| `cold_outreach/settings.py` | this repo's own Django settings — one host of the apps, not the only one |
+| `cold_outreach/defaults.py` | what any host must splat: `APPS`, `state_dir()`, `app_settings()` |
 | `cold_outreach/send_pass.py` | one pass — read, answer, open — and the line saying what held it |
 | `cold_outreach/send_job.py` | `send N` — passes until the goal is open, waiting out the send clocks |
 | `cold_outreach/first_run.py` | what `init` collects — the message fields, the model, the operator, the mailbox |
 | `cold_outreach/__main__.py` | the `outsend` console script |
 | `roadmap/` | open work, mostly inherited from OpenOutreach along with the code it describes |
+
+The app labels are namespaced `outsend_*` because these apps are hosted twice: by this
+repo's `settings.py`, and by OpenOutreach, which installs them in one registry beside
+OpenOutFind's — whose own engine app is also called `core`, and two apps cannot share a
+label. So write cross-app model references label-first (`"outsend_emails.Mailbox"`), and
+never write a table name as a literal — ask the model (`Mailbox._meta.db_table`).
 
 ## Configuration
 

@@ -7,7 +7,7 @@ Three tables, and each one answers a question the boundary contract asks:
 - **Deal** — that person's conversation, one row per lead, carrying the finder's
   `reason`. This is also the row the send path walks. (What a message is written
   from — `product_docs`, `campaign_target`, `booking_link` — lives on the install's
-  own `core.SiteConfig`, not here: this install has never run more than one
+  own `outsend_core.SiteConfig`, not here: this install has never run more than one
   campaign, so there is nothing per-deal to store it against.)
 - **Suppression** — the addresses that may never be written to again. Address-keyed,
   terminal, and the one thing an erasure must not remove: forgetting that somebody
@@ -177,10 +177,10 @@ class Deal(models.Model):
     # box, so nothing about a message is stored twice and nothing can disagree with
     # itself later.
     mailbox = models.ForeignKey(
-        "emails.Mailbox", null=True, blank=True, on_delete=models.SET_NULL, related_name="deals",
+        "outsend_emails.Mailbox", null=True, blank=True, on_delete=models.SET_NULL, related_name="deals",
     )
     thread = models.ForeignKey(
-        "emails.Thread", null=True, blank=True, on_delete=models.SET_NULL, related_name="deals",
+        "outsend_emails.Thread", null=True, blank=True, on_delete=models.SET_NULL, related_name="deals",
     )
     email_subject = models.CharField(max_length=500, blank=True, default="")
     email_sent_at = models.DateTimeField(null=True, blank=True)

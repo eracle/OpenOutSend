@@ -64,7 +64,7 @@ class Thread(models.Model):
     """
 
     mailbox = models.ForeignKey(
-        "emails.Mailbox", on_delete=models.CASCADE, related_name="threads",
+        "outsend_emails.Mailbox", on_delete=models.CASCADE, related_name="threads",
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -92,7 +92,7 @@ class Message(models.Model):
     """
 
     mailbox = models.ForeignKey(
-        "emails.Mailbox", on_delete=models.CASCADE, related_name="messages",
+        "outsend_emails.Mailbox", on_delete=models.CASCADE, related_name="messages",
     )
     thread = models.ForeignKey(
         Thread, null=True, blank=True, on_delete=models.SET_NULL, related_name="messages",
@@ -252,7 +252,7 @@ class FolderCoverage(models.Model):
     """
 
     mailbox = models.ForeignKey(
-        "emails.Mailbox", on_delete=models.CASCADE, related_name="coverage",
+        "outsend_emails.Mailbox", on_delete=models.CASCADE, related_name="coverage",
     )
     folder = models.CharField(max_length=255)
     # The server's declared UID epoch. When it changes the server has reissued its
