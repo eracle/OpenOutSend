@@ -2,13 +2,15 @@
 
 # OpenOutSend
 
-The **sending half** of [OpenOutreach](https://github.com/eracle/OpenOutreach). OpenOutreach finds and
-qualifies B2B leads and prints them; it does not send email. This is what sends them.
+The **sending half** of OpenOutreach. [OpenOutFind](https://github.com/eracle/OpenOutFind) finds and
+qualifies B2B leads and prints them; this is what sends them. Want both in one install, with one
+wizard and one command? That is [OpenOutreach](https://github.com/eracle/OpenOutreach), which requires
+both packages and hosts them in one process — this repo stays a program of its own underneath it.
 
-The boundary between the two is a pipe, and nothing else crosses it:
+The boundary between the two halves is a pipe, and nothing else crosses it:
 
 ```bash
-openoutreach find 50 --json | outsend
+outfind find 50 --json | outsend
 ```
 
 `find` writes qualified leads as JSON Lines on stdout. `outsend` reads them, stores them in its own
@@ -37,9 +39,9 @@ not legal cover.
 a second, separate invocation is what mails them:
 
 ```bash
-pip install -e .
+uv tool install openoutsend             # or pip install -e . from a checkout
 outsend init                            # once: what you sell, who you are, a box
-openoutreach find 50 --json | outsend   # store
+outfind find 50 --json | outsend        # store
 outsend send                            # one pass: read, answer, follow up, open
 outsend send 5                          # or: keep going until 5 are open
 outsend send all                        # or: until nobody is left to email
@@ -103,9 +105,9 @@ committed — the finder's rule, for the reason it went there, since a release n
 cannot drift. No token is stored anywhere; the publisher is registered against the workflow filename
 and the `pypi` environment, so neither may be renamed.
 
-Still open: arming that (a PyPI pending publisher and the `pypi` environment are two browser steps),
-and then `pip install openoutreach[send]`, which can only be declared once this distribution is on
-PyPI.
+The package is on PyPI as **`openoutsend`** — `uv tool install openoutsend`, or
+`uvx --from openoutsend outsend init` to try it without installing anything. `openoutreach` pins it
+exactly and installs it for you.
 
 ## Tests
 
