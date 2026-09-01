@@ -40,7 +40,7 @@ a second, separate invocation is what mails them:
 
 ```bash
 uv tool install openoutsend             # or pip install -e . from a checkout
-outsend init                            # once: what you sell, who you are, a box
+outsend check                           # confirm the environment can send from a box
 outfind find 50 --json | outsend        # store
 outsend send                            # one pass: read, answer, follow up, open
 outsend send 5                          # or: keep going until 5 are open
@@ -92,12 +92,13 @@ conversation takes over. **Follow-ups are cold volume and are treated as such**:
 cap, one spacing clock and one sending window with the openers, rather than claiming ahead of them out
 of a budget of their own. A reply obeys none of the three, because answering someone who wrote to you
 is not cold volume and holding the answer until Monday is worse than sending it at 21:00.
-**`outsend init` collects what a first run needs** — what this install sells and to whom, the name
-that signs the mail, and a mailbox to send it from — and it runs implicitly on the first send, so a
-setup step is never something a timer discovers. The environment first, prompts second and **only on a
-terminal**; headless, whatever is still missing is one error naming every variable that would have
-answered it. The mailbox is stored only once its credentials pass an SMTP login, because the provider
-has no health API and that login is the only gate there is.
+**`outsend check` verifies what a run needs** — what this install sells and to whom, the name that
+signs the mail, and a mailbox to send it from — and it runs implicitly on every send, so a setup step
+is never something a timer discovers. **It comes from the environment and nothing is asked**, on a
+terminal as much as headless: this is the right-hand side of a pipe, where a question has nobody to
+answer it. Whatever is missing is one error naming every variable that would have satisfied it. The
+mailbox is connected only once its credentials pass an SMTP login, because the provider has no health
+API and that login is the only gate there is.
 
 **Releases are every green push to `main`** (`.github/workflows/deploy.yml`): tests, then a build and a
 PyPI upload over trusted publishing, with the version derived from the commit count rather than
@@ -106,7 +107,7 @@ cannot drift. No token is stored anywhere; the publisher is registered against t
 and the `pypi` environment, so neither may be renamed.
 
 The package is on PyPI as **`openoutsend`** — `uv tool install openoutsend`, or
-`uvx --from openoutsend outsend init` to try it without installing anything. `openoutreach` pins it
+`uvx --from openoutsend outsend check` to try it without installing anything. `openoutreach` pins it
 exactly and installs it for you.
 
 ## Tests
@@ -131,7 +132,8 @@ came across with the transport now assert against this side's own models.
 | `cold_outreach/defaults.py` | what any host must splat: `APPS`, `state_dir()`, `app_settings()` |
 | `cold_outreach/send_pass.py` | one pass — read, answer, open — and the line saying what held it |
 | `cold_outreach/send_job.py` | `send N` — passes until the goal is open, waiting out the send clocks |
-| `cold_outreach/first_run.py` | what `init` collects — the message fields, the model, the operator, the mailbox |
+| `cold_outreach/first_run.py` | what `check` verifies — the message fields, the model, the operator, the mailbox |
+| `cold_outreach/core/config.py` | the `OUTSEND_*` a message is written from, read fresh on every run |
 | `cold_outreach/__main__.py` | the `outsend` console script |
 | `roadmap/` | open work, mostly inherited from OpenOutreach along with the code it describes |
 
@@ -149,24 +151,29 @@ The environment is the operator seam — the only way in a timer has:
 | --- | --- |
 | `OUTSEND_OPERATOR_COUNTRY` | ISO 3166 alpha-2; resolves the local clock the sending window is measured in |
 | `OUTSEND_AI_MODEL` | a pydantic-ai `provider:model` id, e.g. `anthropic:claude-sonnet-4-5-20250929` |
-| `OUTSEND_LLM_API_KEY` / `OUTSEND_LLM_API_BASE` | credentials for it; `outsend init` also asks for these on a terminal |
-| `OUTSEND_PRODUCT_DOCS` / `OUTSEND_CAMPAIGN_TARGET` / `OUTSEND_BOOKING_LINK` | what a message is written from; `outsend init` also asks for these on a terminal |
+| `OUTSEND_LLM_API_KEY` / `OUTSEND_LLM_API_BASE` | credentials for it; pinged once per run before any mail moves |
+| `OUTSEND_PRODUCT_DOCS` / `OUTSEND_CAMPAIGN_TARGET` / `OUTSEND_BOOKING_LINK` | what a message is written from; the first two are required |
 | `OUTSEND_OPERATOR_NAME` / `OUTSEND_OPERATOR_EMAIL` | who signs the mail, and the address every send is blind-copied to (blank for none) |
 | `OUTSEND_MAILBOX_ADDRESS` / `OUTSEND_MAILBOX_PASSWORD` | the box to send from, and its **app password** — a Google box rejects the login password |
 | `OUTSEND_SMTP_HOST` / `OUTSEND_SMTP_PORT` / `OUTSEND_IMAP_HOST` / `OUTSEND_IMAP_PORT` | only for a box that is not on Google Workspace; those four default to Gmail's and are never prompted for |
 | `OUTSEND_SIGNATURE` | the sign-off appended to every send from that box; empty declines one for good |
 | `OUTSEND_HOME` / `OUTSEND_DB` | where the store lives |
 
-**Most of these are read once and then stored.** The message fields, the model and its
-key, the operator and the mailbox are collected by `outsend init` — which `outsend send`
-runs implicitly before any mail moves — and land in the store, where the operator can edit
-them. A variable seeds an empty field and never overwrites a filled one, so a stale unit
-file cannot silently revert an answer changed in the store. Two of them are checked before
-they are kept: the mailbox by its SMTP login, the model by one ping. `OUTSEND_HOME`,
-`OUTSEND_DB` and `OUTSEND_OPERATOR_COUNTRY` are the ones that stay settings — they
-configure the process, not the outreach.
+**These are read on every run, and none of them is remembered.** Remembering what
+somebody typed is a convenience for somebody who types; this program is an agent's, and
+an agent supplies its environment every time. So `outsend check` — which `outsend send`
+runs implicitly before any mail moves — verifies them and stops with one error naming
+every variable that is missing. Two are verified against the provider rather than merely
+read: the mailbox by its SMTP login, the model by one ping, neither of which has a health
+API. Changing a variable changes the next run, with nothing stale to clear out first.
 
-The store therefore holds credentials — the mailbox's app password and the LLM key.
+**Two things are still rows, because neither is an answer somebody gave.** The operator
+is a Django `User`, written once — identity, not configuration. And the mailbox keeps
+what it *measured*: its spacing clock and the daily capacity it learned from the
+provider. Its credentials are seeded from the environment on the run that connects it,
+because a box is connected by an accepted SMTP login rather than by a variable.
+
+The store therefore still holds the mailbox's app password.
 `~/.openoutsend/data/db.sqlite3` is a file to keep: back it up, and do not copy it around.
 
 ## The contract it has to implement

@@ -217,7 +217,7 @@ def _what_is_holding() -> str:
     counts = f"{waiting} waiting to be emailed · {to_answer} reply(ies) to answer"
 
     if not Mailbox.objects.exists():
-        return f"{counts} · no mailbox connected, so nothing can be sent — run `outsend init`"
+        return f"{counts} · no mailbox connected, so nothing can be sent — run `outsend check`"
     headroom = Mailbox.objects.remaining_today()
     if not headroom:
         return f"{counts} · no send headroom left today, so no first emails"

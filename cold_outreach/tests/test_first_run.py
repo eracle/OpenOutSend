@@ -1,9 +1,9 @@
-"""What a first run collects: the message fields, the model, the operator, a mailbox.
+"""What a run has to be given: the message fields, the model, the operator, a mailbox.
 
-The rule under all of it is the same one twice: the environment first, the terminal
-second and only if there is one — and a headless run that is still short of something
-stops with the variables that would have answered it, rather than asking a timer a
-question.
+The rule under all of it is one rule: **the environment, and nothing else**. A run short
+of something stops naming every variable that would have answered it, and never asks —
+not headless, and not on a terminal either, because this program is the right-hand side
+of a pipe and a question there has nobody to answer it.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from cold_outreach.core.models import LLM_ENV, MESSAGE_ENV, SiteConfig
+from cold_outreach.core.config import LLM_ENV, MESSAGE_ENV, SiteConfig
 from cold_outreach.core.operator import get_active_user, seller_full_name
 from cold_outreach.emails.models import Mailbox
 from cold_outreach.errors import OutsendError
@@ -20,10 +20,10 @@ from cold_outreach.first_run import (
     OPERATOR_ENV,
     SIGNATURE_ENV,
     TRANSPORT_ENV,
-    ensure_ready,
+    check_ready,
 )
 from cold_outreach.tests.emails import maillog
-from cold_outreach.tests.factories import SiteConfigFactory, UserFactory
+from cold_outreach.tests.factories import UserFactory
 
 pytestmark = pytest.mark.django_db
 
@@ -47,36 +47,18 @@ def unconfigured_environment(monkeypatch):
         monkeypatch.delenv(variable, raising=False)
 
 
+@pytest.fixture
+def configured(monkeypatch):
+    """Everything a send needs, in the environment — the ordinary case."""
+    for variable, value in _EVERYTHING.items():
+        monkeypatch.setenv(variable, value)
+
+
 @pytest.fixture(autouse=True)
 def llm():
-    """The provider's ping, answered without a network.
-
-    Autouse because storing credentials is now part of nearly every path through
-    `ensure_ready`; the tests that are *about* the ping patch it themselves.
-    """
+    """The provider's ping, answered without a network."""
     with patch("cold_outreach.core.llm.verify_llm_credentials", return_value=None) as ping:
         yield ping
-
-
-@pytest.fixture
-def stored_llm(db):
-    """An install whose model is already configured, so that step asks nothing."""
-    return SiteConfig.objects.create(
-        ai_model="anthropic:claude-sonnet-4-5-20250929", llm_api_key="sk-ada")
-
-
-@pytest.fixture
-def headless():
-    """No terminal to ask, which is what a timer looks like."""
-    with patch("sys.stdin.isatty", return_value=False):
-        yield
-
-
-@pytest.fixture
-def terminal():
-    """A terminal, so the prompts are allowed to run."""
-    with patch("sys.stdin.isatty", return_value=True):
-        yield
 
 
 @pytest.fixture
@@ -86,13 +68,13 @@ def smtp():
         yield auth
 
 
-# ── Headless ──────────────────────────────────────────────────────
+# ── What a run is given ───────────────────────────────────────────
 
 
-def test_a_headless_run_names_everything_it_is_missing_at_once(headless):
+def test_a_run_names_everything_it_is_missing_at_once():
     """One error, not one per round trip: a timer's failure mail is the only report."""
     with pytest.raises(OutsendError) as stopped:
-        ensure_ready()
+        check_ready()
 
     message = str(stopped.value)
     for variable in [MESSAGE_ENV["product_docs"], MESSAGE_ENV["campaign_target"],
@@ -101,11 +83,8 @@ def test_a_headless_run_names_everything_it_is_missing_at_once(headless):
         assert variable in message
 
 
-def test_the_environment_is_enough_to_be_ready(headless, smtp, monkeypatch):
-    for variable, value in _EVERYTHING.items():
-        monkeypatch.setenv(variable, value)
-
-    ensure_ready()
+def test_the_environment_is_enough_to_be_ready(configured, smtp):
+    check_ready()
 
     config = SiteConfig.load()
     assert config.product_docs and config.campaign_target
@@ -116,235 +95,186 @@ def test_the_environment_is_enough_to_be_ready(headless, smtp, monkeypatch):
     smtp.assert_called_once_with("smtp.gmail.com", 587, "ada@corp.com", "app-pw")
 
 
-def test_nothing_is_asked_of_a_timer_that_already_has_it_all(headless, smtp, llm, stored_llm):
-    """An install that is set up costs a send pass nothing — no SMTP login, no ping."""
-    UserFactory()
-    maillog.mailbox()
-    SiteConfigFactory()
+def test_nothing_a_human_answered_is_written_to_the_store(configured, smtp):
+    """The config is read, used and dropped — there is no row for it to land in."""
+    from django.apps import apps
 
-    ensure_ready()
+    check_ready()
+
+    assert list(apps.get_app_config("outsend_core").get_models()) == []
+
+
+def test_a_second_pass_reconnects_nothing(configured, smtp):
+    """A box already stored costs no SMTP login: connecting is a first-run expense."""
+    check_ready()
+    smtp.reset_mock()
+
+    check_ready()
 
     smtp.assert_not_called()
-    llm.assert_not_called()
 
 
 # ── The model ─────────────────────────────────────────────────────
 
 
-def test_the_model_and_its_key_are_stored_not_re_read(headless, smtp, monkeypatch):
-    """The environment seeds the row once; the run then works from the row."""
-    for variable, value in _EVERYTHING.items():
-        monkeypatch.setenv(variable, value)
+def test_the_model_is_read_fresh_on_every_run(configured, smtp, monkeypatch):
+    """The environment is the answer, so changing it changes the next run — no revert."""
+    check_ready()
+    assert SiteConfig.load().ai_model == "anthropic:claude-sonnet-4-5-20250929"
 
-    ensure_ready()
-
-    config = SiteConfig.load()
-    assert (config.ai_model, config.llm_api_key) == (
-        "anthropic:claude-sonnet-4-5-20250929", "sk-ada")
-
-
-def test_a_variable_never_overwrites_what_the_operator_edited(headless, smtp, stored_llm,
-                                                              monkeypatch):
-    """A stale unit file must not silently revert a model changed in the store."""
-    for variable, value in _EVERYTHING.items():
-        monkeypatch.setenv(variable, value)
-    SiteConfig.objects.filter(pk=stored_llm.pk).update(ai_model="openai:gpt-4o")
-    UserFactory()
-    maillog.mailbox()
-
-    ensure_ready()
+    monkeypatch.setenv(LLM_ENV["ai_model"], "openai:gpt-4o")
+    check_ready()
 
     assert SiteConfig.load().ai_model == "openai:gpt-4o"
 
 
-def test_a_missing_key_stops_the_run_before_any_mail_moves(headless, smtp, monkeypatch):
+def test_the_key_is_pinged_on_every_run(configured, smtp, llm):
+    """The price of not storing it: a key rotated under a timer fails here, not mid-pass."""
+    check_ready()
+    check_ready()
+
+    assert llm.call_count == 2
+
+
+def test_a_missing_key_stops_the_run_before_any_mail_moves(configured, smtp, llm, monkeypatch):
     """The failure this step exists for: named up front, not raised mid-pass per lead."""
-    for variable, value in _EVERYTHING.items():
-        monkeypatch.setenv(variable, value)
     monkeypatch.delenv(LLM_ENV["llm_api_key"])
 
     with pytest.raises(OutsendError, match=LLM_ENV["llm_api_key"]):
-        ensure_ready()
+        check_ready()
 
-    assert not SiteConfig.objects.exclude(ai_model="").exists()
+    llm.assert_not_called()
 
 
-def test_a_key_the_provider_refuses_stores_nothing_and_says_why(headless, smtp, monkeypatch):
-    """Same bargain as the mailbox: an accepted credential is the only one worth keeping."""
-    for variable, value in _EVERYTHING.items():
-        monkeypatch.setenv(variable, value)
-
+def test_a_key_the_provider_refuses_says_why(configured, smtp):
+    """An accepted credential is the only one worth going on with."""
     with patch("cold_outreach.core.llm.verify_llm_credentials",
                return_value="invalid x-api-key"), \
             pytest.raises(OutsendError, match="invalid x-api-key"):
-        ensure_ready()
+        check_ready()
 
-    assert SiteConfig.load().llm_api_key == ""
-
-
-def test_the_key_is_asked_for_without_echoing_it(terminal, smtp, monkeypatch):
-    monkeypatch.setenv(SIGNATURE_ENV, "")
-    for variable in [MAILBOX_ENV["address"], OPERATOR_ENV["name"]]:
-        monkeypatch.setenv(variable, "ada@corp.com")
-    monkeypatch.setenv(MAILBOX_ENV["password"], "app-pw")
-    UserFactory()
-    SiteConfigFactory()
-
-    with patch("builtins.input", return_value="anthropic:claude-sonnet-4-5-20250929"), \
-            patch("getpass.getpass", return_value="sk-ada") as secret:
-        ensure_ready()
-
-    secret.assert_called_once()
-    assert SiteConfig.load().ai_model == "anthropic:claude-sonnet-4-5-20250929"
+    assert not Mailbox.objects.exists()
 
 
 # ── The operator ──────────────────────────────────────────────────
 
 
-def test_the_operator_is_asked_once_and_never_again(terminal, smtp, stored_llm, monkeypatch):
-    monkeypatch.setenv(MAILBOX_ENV["address"], "ada@corp.com")
-    monkeypatch.setenv(MAILBOX_ENV["password"], "app-pw")
-    monkeypatch.setenv(SIGNATURE_ENV, "")
-    SiteConfigFactory()
+def test_the_operator_is_recorded_once_and_never_re_read(configured, smtp, monkeypatch):
+    """Identity is a row, not a variable: the `User` both children read is written once."""
+    check_ready()
 
-    with patch("builtins.input", side_effect=["Ada Lovelace", "ada@corp.com"]):
-        ensure_ready()
+    monkeypatch.setenv(OPERATOR_ENV["name"], "Grace Hopper")
+    check_ready()
 
-    # A second pass asks nothing: identity is not re-collected, and the box is connected.
-    with patch("builtins.input", side_effect=AssertionError("asked again")):
-        ensure_ready()
-
-    assert get_active_user().first_name == "Ada"
+    assert seller_full_name() == "Ada Lovelace"
 
 
-def test_an_operator_who_declines_a_bcc_address_is_still_complete(
-        terminal, smtp, stored_llm, monkeypatch):
-    monkeypatch.setenv(MAILBOX_ENV["address"], "ada@corp.com")
-    monkeypatch.setenv(MAILBOX_ENV["password"], "app-pw")
-    monkeypatch.setenv(SIGNATURE_ENV, "")
-    SiteConfigFactory()
+def test_an_operator_who_declines_a_bcc_address_is_still_complete(configured, smtp, monkeypatch):
+    monkeypatch.delenv(OPERATOR_ENV["email"])
 
-    with patch("builtins.input", side_effect=["Ada", ""]):
-        ensure_ready()
+    check_ready()
 
     assert get_active_user().email == ""
-    assert seller_full_name() == "Ada"
+    assert seller_full_name() == "Ada Lovelace"
+
+
+def test_a_run_with_no_operator_name_names_the_variable(configured, smtp, monkeypatch):
+    monkeypatch.delenv(OPERATOR_ENV["name"])
+
+    with pytest.raises(OutsendError, match=OPERATOR_ENV["name"]):
+        check_ready()
 
 
 # ── The mailbox ───────────────────────────────────────────────────
 
 
-def test_rejected_credentials_store_nothing_and_say_why(headless, monkeypatch):
-    for variable, value in _EVERYTHING.items():
-        monkeypatch.setenv(variable, value)
-
+def test_rejected_credentials_store_nothing_and_say_why(configured):
     with patch("cold_outreach.emails.smtp.verify_auth",
                return_value=(False, "auth rejected (535)")), \
             pytest.raises(OutsendError, match="auth rejected"):
-        ensure_ready()
+        check_ready()
 
     assert not Mailbox.objects.exists()
 
 
-def test_a_box_that_is_not_on_google_names_its_own_transport(headless, smtp, monkeypatch):
-    for variable, value in _EVERYTHING.items():
-        monkeypatch.setenv(variable, value)
+def test_a_box_that_is_not_on_google_names_its_own_transport(configured, smtp, monkeypatch):
     monkeypatch.setenv(TRANSPORT_ENV["host"], "smtp.fastmail.com")
     monkeypatch.setenv(TRANSPORT_ENV["port"], "465")
     monkeypatch.setenv(TRANSPORT_ENV["imap_host"], "imap.fastmail.com")
     monkeypatch.setenv(TRANSPORT_ENV["imap_port"], "993")
 
-    ensure_ready()
+    check_ready()
 
     box = Mailbox.objects.get()
     assert (box.host, box.port, box.imap_host, box.imap_port) == (
         "smtp.fastmail.com", 465, "imap.fastmail.com", 993)
 
 
-def test_a_port_that_is_not_a_number_stops_before_the_connection(headless, smtp, monkeypatch):
-    for variable, value in _EVERYTHING.items():
-        monkeypatch.setenv(variable, value)
+def test_a_port_that_is_not_a_number_stops_before_the_connection(configured, smtp, monkeypatch):
     monkeypatch.setenv(TRANSPORT_ENV["port"], "five-eight-seven")
 
     with pytest.raises(OutsendError, match=TRANSPORT_ENV["port"]):
-        ensure_ready()
+        check_ready()
 
     smtp.assert_not_called()
 
 
-def test_the_password_is_asked_for_without_echoing_it(terminal, smtp, stored_llm, monkeypatch):
-    monkeypatch.setenv(SIGNATURE_ENV, "")
+def test_a_stored_box_keeps_what_it_measured(configured, smtp):
+    """The row is the pipeline's: its clock and its learned ceiling outlive any variable."""
     UserFactory()
-    SiteConfigFactory()
+    box = maillog.mailbox()
+    box.daily_limit = 17
+    box.save(update_fields=["daily_limit"])
 
-    with patch("builtins.input", return_value="ada@corp.com"), \
-            patch("getpass.getpass", return_value="app-pw") as secret:
-        ensure_ready()
+    check_ready()
 
-    secret.assert_called_once()
-    assert Mailbox.objects.get().from_address == "ada@corp.com"
+    box.refresh_from_db()
+    assert box.daily_limit == 17
+    smtp.assert_not_called()
 
 
 # ── The sign-off ──────────────────────────────────────────────────
 
 
-def test_a_declined_sign_off_sticks_and_is_not_asked_again(terminal, smtp, stored_llm):
-    """NULL is never asked, "" is declined — collapsing them re-asks forever."""
-    UserFactory()
-    SiteConfigFactory()
-
-    with patch("builtins.input", side_effect=["ada@corp.com", ""]), \
-            patch("getpass.getpass", return_value="app-pw"):
-        ensure_ready()
-
-    assert Mailbox.objects.get().signature == ""
-
-
-def test_a_sign_off_from_the_environment_lands_on_the_box(headless, smtp, monkeypatch):
-    for variable, value in _EVERYTHING.items():
-        monkeypatch.setenv(variable, value)
+def test_a_sign_off_from_the_environment_lands_on_the_box(configured, smtp, monkeypatch):
     monkeypatch.setenv(SIGNATURE_ENV, "Ada\nCorp")
 
-    ensure_ready()
+    check_ready()
 
     assert Mailbox.objects.get().signature == "Ada\nCorp"
 
 
-def test_a_headless_run_leaves_an_unasked_sign_off_unasked(headless, smtp, monkeypatch):
-    for variable, value in _EVERYTHING.items():
-        monkeypatch.setenv(variable, value)
+def test_an_empty_sign_off_is_an_answer_and_not_an_absence(configured, smtp, monkeypatch):
+    """NULL means nothing was given, "" means an empty sign-off was asked for."""
+    monkeypatch.setenv(SIGNATURE_ENV, "")
 
-    ensure_ready()
+    check_ready()
+
+    assert Mailbox.objects.get().signature == ""
+
+
+def test_a_run_with_no_sign_off_variable_leaves_it_unset(configured, smtp):
+    check_ready()
 
     assert Mailbox.objects.get().signature is None
 
 
-# ── What a message is written from ──────────────────────────────────
+# ── Nothing is asked ──────────────────────────────────────────────
 
 
-def test_the_message_fields_are_asked_for_on_a_terminal(terminal, smtp, stored_llm, monkeypatch):
-    monkeypatch.setenv(MAILBOX_ENV["address"], "ada@corp.com")
-    monkeypatch.setenv(MAILBOX_ENV["password"], "app-pw")
-    monkeypatch.setenv(SIGNATURE_ENV, "")
-    UserFactory()
+def test_a_terminal_is_never_prompted(smtp, monkeypatch):
+    """A TTY is not a licence to block: the pipe's right-hand side asks nobody anything."""
+    monkeypatch.setenv(MESSAGE_ENV["product_docs"], "A self-hosted lead finder.")
 
-    with patch("builtins.input", side_effect=["A lead finder", "Founders", "cal.com/ada"]):
-        ensure_ready()
-
-    config = SiteConfig.load()
-    assert (config.product_docs, config.campaign_target, config.booking_link) == (
-        "A lead finder", "Founders", "cal.com/ada")
+    with patch("sys.stdin.isatty", return_value=True), \
+            patch("builtins.input", side_effect=AssertionError("asked a question")), \
+            patch("getpass.getpass", side_effect=AssertionError("asked for a secret")), \
+            pytest.raises(OutsendError, match=MESSAGE_ENV["campaign_target"]):
+        check_ready()
 
 
-def test_nothing_it_asks_reaches_stdout(terminal, smtp, stored_llm, capsys, monkeypatch):
-    """stdout is the pipe's, so the questions and their carets both go to stderr."""
-    monkeypatch.setenv(SIGNATURE_ENV, "")
-    SiteConfigFactory()
+def test_nothing_it_says_reaches_stdout(configured, smtp, capsys):
+    """stdout is the pipe's, so what a check narrates goes to stderr or to the log."""
+    check_ready()
 
-    with patch("builtins.input", side_effect=["Ada", "", "ada@corp.com"]), \
-            patch("getpass.getpass", return_value="app-pw"):
-        ensure_ready()
-
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "Who is sending this mail?" in captured.err
+    assert capsys.readouterr().out == ""

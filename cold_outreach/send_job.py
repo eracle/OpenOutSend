@@ -161,7 +161,7 @@ def _work_to_goal(goal: int | str, prompt_line_name: str | None, sleep) -> SendJ
         opening_at = _next_opening()
         if opening_at is None:
             return _stop(result, NO_MAILBOX,
-                         "no mailbox connected, so nothing can be sent — run `outsend init`")
+                         "no mailbox connected, so nothing can be sent — run `outsend check`")
         if not _anyone_waiting():
             return _stop(result, DRAINED,
                          "nobody left to email — pipe in more leads with "

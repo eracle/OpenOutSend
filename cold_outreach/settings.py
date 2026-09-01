@@ -12,15 +12,14 @@ OpenOutFind's, which is why the labels are namespaced `outsend_*` — OpenOutFin
 own `core` — and why what the apps require of a host lives in `defaults.py` and is
 splatted here rather than spelled out in two settings modules that can drift.
 
-**The operator seam is the environment, and most of what it carries seeds the store.**
-A variable that only ever configures the process — where the state dir is, which local
-clock the sending window is measured in — is read here and lands as a setting. A
-variable that answers something a send cannot run without is read once into a row the
-operator can then edit: what a message is written from, the mailbox, and the model
-and key on `outsend_core.SiteConfig`. The split is not tidiness. A setting missing at the
-point of use is
-discovered mid-pass, per lead, with a mailbox already open; a stored answer is checked
-before any mail moves.
+**The operator seam is the environment, and it is the whole of it.** A variable that
+only ever configures the process — where the state dir is, which local clock the sending
+window is measured in — is read here and lands as a setting. A variable that answers
+something a send cannot run without is read by `core/config.py` on every run and checked
+by `first_run.check_ready()` before any mail moves. Nothing is stored: what an operator
+types is not this program's to remember, and what makes that safe is the check, not a
+row. The failure it guards against is real — a setting missing at the point of use is
+discovered mid-pass, per lead, with a mailbox already open.
 """
 from __future__ import annotations
 

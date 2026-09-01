@@ -36,9 +36,9 @@ outsend send [N|all] [--prompt-line ID]
                                  guards allow right now. With N, keep at it until N
                                  conversations are open, waiting out the send clocks;
                                  with `all`, until nobody is left to email
-outsend init                     collect what a first run needs — what you sell and to
-                                 whom, the model that writes it, who you are, and a
-                                 mailbox to send from"""
+outsend check                    verify this environment can send — what you sell and to
+                                 whom, a model that answers, who signs the mail, and a
+                                 mailbox that accepts its login"""
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     from cold_outreach.errors import OutsendError
 
     try:
-        return {"init": _init, "send": _send}.get(args.command, _ingest)(args)
+        return {"check": _check, "send": _send}.get(args.command, _ingest)(args)
     except OutsendError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -58,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="outsend", usage=USAGE)
-    parser.add_argument("command", nargs="?", choices=["init", "send"])
+    parser.add_argument("command", nargs="?", choices=["check", "send"])
     # `send 5` is a goal, `send` is a pass — see `_send`. Positional and optional
     # because the count *is* the verb's object, the way `find 5`'s is.
     parser.add_argument("count", nargs="?", type=_goal, default=None,
@@ -147,20 +147,19 @@ def _send(args: argparse.Namespace) -> int:
     daily ceiling and the sending window in between — the clocks the state machine
     already keeps, read as timestamps rather than polled from outside.
 
-    **`init` runs implicitly here**, because a send is the first moment the message
+    **`check` runs implicitly here**, because a send is the first moment the message
     fields, a reachable model, the operator's name and a mailbox actually have to be
-    there — and an operator
-    who wired the pipe into a timer should not discover a setup step they never ran. On a
-    TTY that is the same prompts; headless it is the same error naming the variables,
-    raised before any mail moves.
+    there — and an operator who wired the pipe into a timer should not discover a setup
+    step they never ran. It is one error naming every variable that is missing, raised
+    before any mail moves.
 
     Exit code: non-zero when something failed on its way out, and — for a goal — when
     the run stopped short of it, so a timer's failure mail carries both. Falling short
     is a real answer rather than a crash: the run says which wall it hit.
     """
-    from cold_outreach.first_run import ensure_ready
+    from cold_outreach.first_run import check_ready
 
-    ensure_ready()
+    check_ready()
     return _run_to_goal(args) if args.count else _run_one_pass(args)
 
 
@@ -208,21 +207,23 @@ def _report(result) -> None:
               file=sys.stderr)
 
 
-# ── First run ─────────────────────────────────────────────────────
+# ── Readiness ─────────────────────────────────────────────────────
 
 
-def _init(args: argparse.Namespace) -> int:
-    """Collect the four things a send needs, and say what it ended up with.
+def _check(args: argparse.Namespace) -> int:
+    """Verify the four things a send needs, and say what this environment gives.
 
-    The collecting itself lives in `first_run.py`, because `send` does exactly the same
-    thing before any mail moves and the two must not drift.
+    The checking itself lives in `first_run.py`, because `send` does exactly the same
+    thing before any mail moves and the two must not drift. So this verb is never
+    required — it is the same work, run early, where a missing variable costs a second
+    instead of a pass.
     """
-    from cold_outreach.core.models import SiteConfig
+    from cold_outreach.core.config import SiteConfig
     from cold_outreach.core.operator import seller_full_name
     from cold_outreach.emails.models import Mailbox
-    from cold_outreach.first_run import ensure_ready
+    from cold_outreach.first_run import check_ready
 
-    ensure_ready()
+    check_ready()
     print(f"ready: written by {SiteConfig.load().ai_model}, "
           f"signed by {seller_full_name()}, sending from {Mailbox.objects.first()}",
           file=sys.stderr)

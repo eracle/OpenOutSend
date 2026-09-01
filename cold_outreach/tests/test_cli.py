@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from cold_outreach.__main__ import _parse_args, _send
-from cold_outreach.core.models import LLM_ENV, MESSAGE_ENV
+from cold_outreach.core.config import LLM_ENV, MESSAGE_ENV
 from cold_outreach.errors import OutsendError
 from cold_outreach.send_pass import PassResult
 from cold_outreach.tests.emails import maillog
@@ -23,17 +23,18 @@ def unconfigured_environment(monkeypatch):
 
 
 @pytest.fixture
-def connected(site_config):
-    """A message config, a model, an operator and a box — an install past its first run.
+def connected(site_config, monkeypatch):
+    """A message config, a model, an operator and a box — an install ready to send.
 
-    What that first run *collects* is `test_first_run.py`'s subject; what is tested here
-    is only that a send refuses to move mail until it has been collected.
+    What the readiness check *verifies* is `test_first_run.py`'s subject; what is tested
+    here is only that a send refuses to move mail until it has been given.
     """
-    site_config.ai_model = "anthropic:claude-sonnet-4-5-20250929"
-    site_config.llm_api_key = "sk-ada"
-    site_config.save()
+    from cold_outreach.core.config import SiteConfig
+
+    monkeypatch.setenv(LLM_ENV["ai_model"], "anthropic:claude-sonnet-4-5-20250929")
+    monkeypatch.setenv(LLM_ENV["llm_api_key"], "sk-ada")
     maillog.mailbox()
-    return site_config
+    return SiteConfig.load()
 
 
 def _args(**kwargs) -> Namespace:
@@ -48,7 +49,7 @@ def test_no_verb_is_the_pipe():
     assert _parse_args([]).command is None
 
 
-@pytest.mark.parametrize("verb", ["init", "send"])
+@pytest.mark.parametrize("verb", ["check", "send"])
 def test_the_two_verbs_that_are_not_on_the_pipe(verb):
     assert _parse_args([verb]).command == verb
 
@@ -82,9 +83,9 @@ def test_the_pool_itself_can_be_the_goal(word):
 
 
 def test_a_count_belongs_to_send():
-    """`outsend init 5` means nothing, and silently ignoring the 5 is worse than saying so."""
+    """`outsend check 5` means nothing, and silently ignoring the 5 is worse than saying so."""
     with pytest.raises(SystemExit):
-        _parse_args(["init", "5"])
+        _parse_args(["check", "5"])
 
 
 # ── Sending ───────────────────────────────────────────────────────
@@ -147,10 +148,9 @@ def test_a_failed_send_is_reported_and_carried_into_the_exit_code(connected, cap
     assert "1 send(s) failed" in capsys.readouterr().err
 
 
-def test_a_headless_send_stops_on_an_install_nothing_configured(db, capsys):
-    """`init` runs implicitly — and from a timer that means an error, never a prompt."""
+def test_a_send_stops_on_an_install_nothing_configured(db, capsys):
+    """`check` runs implicitly, and what it produces is an error — never a prompt."""
     with patch("cold_outreach.send_pass.run_send_pass") as run, \
-            patch("sys.stdin.isatty", return_value=False), \
             pytest.raises(OutsendError, match="OUTSEND_PRODUCT_DOCS"):
         _send(_args())
 
@@ -160,7 +160,6 @@ def test_a_headless_send_stops_on_an_install_nothing_configured(db, capsys):
 def test_a_send_with_no_mailbox_never_reaches_the_pass(site_config, capsys):
     """The one thing a pass cannot work around: nowhere to send from."""
     with patch("cold_outreach.send_pass.run_send_pass") as run, \
-            patch("sys.stdin.isatty", return_value=False), \
             pytest.raises(OutsendError, match="OUTSEND_MAILBOX_ADDRESS"):
         _send(_args())
 
@@ -172,21 +171,18 @@ def test_a_send_with_no_model_never_reaches_the_pass(site_config):
     maillog.mailbox()
 
     with patch("cold_outreach.send_pass.run_send_pass") as run, \
-            patch("sys.stdin.isatty", return_value=False), \
             pytest.raises(OutsendError, match=LLM_ENV["llm_api_key"]):
         _send(_args())
 
     run.assert_not_called()
 
 
-def test_an_interactive_send_asks_for_what_is_missing(connected):
-    connected.product_docs, connected.campaign_target = "", ""
-    connected.save()
-
-    with patch("cold_outreach.send_pass.run_send_pass", return_value=PassResult()), \
+def test_a_terminal_is_not_asked_either(db, capsys):
+    """A TTY changes nothing: this program is the right of a pipe, and it never prompts."""
+    with patch("cold_outreach.send_pass.run_send_pass") as run, \
             patch("sys.stdin.isatty", return_value=True), \
-            patch("builtins.input", side_effect=["A lead finder", "Founders", ""]):
-        assert _send(_args()) == 0
+            patch("builtins.input", side_effect=AssertionError("asked a question")), \
+            pytest.raises(OutsendError, match=MESSAGE_ENV["product_docs"]):
+        _send(_args())
 
-    connected.refresh_from_db()
-    assert (connected.product_docs, connected.campaign_target) == ("A lead finder", "Founders")
+    run.assert_not_called()

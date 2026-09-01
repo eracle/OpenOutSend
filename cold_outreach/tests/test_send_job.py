@@ -128,7 +128,7 @@ def test_no_mailbox_ends_the_run(waiting, slept):
     result, _ = _run(5, [PassResult()], slept, opening_in=None)
 
     assert result.stopped_because == NO_MAILBOX
-    assert "outsend init" in result.detail
+    assert "outsend check" in result.detail
 
 
 def test_two_refused_passes_end_the_run(waiting, slept):

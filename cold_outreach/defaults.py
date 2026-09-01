@@ -43,10 +43,9 @@ def app_settings() -> dict:
     """The settings names `cold_outreach`'s apps read, for a host to splat into its module."""
     return {
         # ISO 3166 alpha-2. Resolves the local clock the sending window is measured in.
-        # A setting rather than a stored answer: it is not a credential, there is nothing
-        # to verify it against, and a blank one has a defined meaning (UTC) instead of
-        # stopping a run. The model and its key are the opposite on all three counts,
-        # which is why they live on `outsend_core.SiteConfig` and `first_run.py` collects
-        # them.
+        # A setting rather than a checked answer: it is not a credential, there is
+        # nothing to verify it against, and a blank one has a defined meaning (UTC)
+        # instead of stopping a run. The model and its key are the opposite on all three
+        # counts, which is why `first_run.check_ready()` refuses to start without them.
         "OUTSEND_OPERATOR_COUNTRY": os.environ.get("OUTSEND_OPERATOR_COUNTRY", ""),
     }

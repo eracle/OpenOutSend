@@ -11,7 +11,7 @@ from __future__ import annotations
 import jinja2
 
 from cold_outreach.core.conf import PROMPTS_DIR
-from cold_outreach.core.models import SiteConfig
+from cold_outreach.core.config import SiteConfig
 from cold_outreach.core.operator import seller_full_name
 from cold_outreach.leads.summaries import facts_of
 

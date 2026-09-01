@@ -6,9 +6,9 @@ Three tables, and each one answers a question the boundary contract asks:
   a field of the record, so nothing here is derived and nothing is inferred.
 - **Deal** — that person's conversation, one row per lead, carrying the finder's
   `reason`. This is also the row the send path walks. (What a message is written
-  from — `product_docs`, `campaign_target`, `booking_link` — lives on the install's
-  own `outsend_core.SiteConfig`, not here: this install has never run more than one
-  campaign, so there is nothing per-deal to store it against.)
+  from — `product_docs`, `campaign_target`, `booking_link` — is not stored at all: it
+  comes from `OUTSEND_*` on every run (`core/config.py`), and this install has never
+  run more than one campaign, so there is nothing per-deal to hold it against.)
 - **Suppression** — the addresses that may never be written to again. Address-keyed,
   terminal, and the one thing an erasure must not remove: forgetting that somebody
   opted out is how they get mailed again.

@@ -3,8 +3,8 @@
 
 Two public entry points:
 
-- `get_llm_model()` — builds a `pydantic_ai.Model` from the stored
-  `outsend_core.SiteConfig`, routing to the right provider.
+- `get_llm_model()` — builds a `pydantic_ai.Model` from this run's
+  `core.config.SiteConfig`, routing to the right provider.
 - `run_agent_sync(coro)` — drives a pydantic-ai coroutine to completion
   from sync code, on a dedicated worker thread with a long-lived event
   loop. Used everywhere instead of `Agent.run_sync`.
@@ -197,19 +197,19 @@ def build_llm_model(ai_model: str, api_key: str, api_base: str = ""):
 
 
 def get_llm_model():
-    """Return a configured pydantic-ai `Model` for the stored site configuration.
+    """Return a configured pydantic-ai `Model` for this run's configuration.
 
-    The guards are a backstop, not the check: `first_run.ensure_ready` collects and
-    verifies these before a pass touches a mailbox, so reaching either message means
-    something emptied the row after the run had already started.
+    The guards are a backstop, not the check: `first_run.check_ready` verifies these
+    before a pass touches a mailbox, so reaching either message means the environment
+    changed under a run that had already started.
     """
-    from cold_outreach.core.models import LLM_ENV, SiteConfig
+    from cold_outreach.core.config import LLM_ENV, SiteConfig
 
     config = SiteConfig.load()
     if not config.llm_api_key:
-        raise ValueError(f"no LLM API key stored — set {LLM_ENV['llm_api_key']} and run `outsend init`.")
+        raise ValueError(f"no LLM API key — set {LLM_ENV['llm_api_key']} and run `outsend check`.")
     if not config.ai_model:
-        raise ValueError(f"no LLM model stored — set {LLM_ENV['ai_model']} and run `outsend init`.")
+        raise ValueError(f"no LLM model — set {LLM_ENV['ai_model']} and run `outsend check`.")
     return build_llm_model(config.ai_model, config.llm_api_key, config.llm_api_base)
 
 

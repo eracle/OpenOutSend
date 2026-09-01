@@ -5,10 +5,13 @@ Self-hosted means one operator, so identity is a lookup, not a parameter. The na
 signs the mail and binds the outreach agent's persona; the country decides which
 local clock the sending window is measured in.
 
-The country stays a **setting** even though `SiteConfig` exists: it is not a
-credential, there is nothing to verify it against, and a blank one has a defined
-meaning (UTC) rather than a reason to stop a run. What is on the singleton is what a
-send cannot start without and cannot check for itself.
+The country stays a plain **setting**: it is not a credential, there is nothing to
+verify it against, and a blank one has a defined meaning (UTC) rather than a reason to
+stop a run. What `check_ready()` refuses to start without is the opposite of all three.
+
+The operator's name and address are a **row**, not a variable — the Django `User` both
+children read. It is identity rather than configuration: written once, and not re-read
+from the environment on later runs, so renaming a box does not rename the person.
 
 Nothing is cached across calls. The read is a single indexed row and happens at most
 once per pass; a cache would only add a way for a renamed operator to keep signing
