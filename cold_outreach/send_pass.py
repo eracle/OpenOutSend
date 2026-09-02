@@ -9,12 +9,18 @@ also fire on its own.
 The order is the design, and each step feeds the next:
 
     read      IMAP → rows → kinds → events, suppression   (`emails/mail_pass.py`)
+    measure   each box's warm capacity for today, once     (`emails/warmth.py`)
     answer    every thread the lead has replied in         (no cap, no spacing)
     open      one first email per box that is free now     (capped, spaced, in-window)
 
-Reading first is what makes the other two honest: an opt-out that arrived overnight
+Reading first is what makes the rest honest: an opt-out that arrived overnight
 suppresses the person *before* anything is written to them, and a reply is visible in
 the pass that answers it.
+
+**Measuring comes second for the same reason.** A bounce is the strongest downward
+signal the warm ramp has, and it arrives hours later as ordinary mail rather than as a
+failed send — so it is the read that puts it on the record. Measuring before reading
+would ramp a box on yesterday's evidence while today's sat unopened in it.
 
 **Openers are the only cold volume**, so they are the only thing under a cap. A reply
 inside a thread somebody started is not cold volume, and answering within minutes is
@@ -75,9 +81,11 @@ def run_send_pass(prompt_line_name: str | None = None,
     and says it when it moves.
     """
     from cold_outreach.emails.mail_pass import run_mail_pass
+    from cold_outreach.emails.warmth import measure_pool
 
     result = PassResult()
     result.mirrored, result.classified, result.projected = run_mail_pass()
+    measure_pool()
     _answer_replies(result)
     _follow_up(result)
     _open_conversations(result, prompt_line_name)

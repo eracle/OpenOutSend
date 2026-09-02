@@ -31,6 +31,18 @@ def never_ping_a_real_provider():
         yield
 
 
+@pytest.fixture(autouse=True)
+def never_open_a_real_mailbox():
+    """Every pass measures the pool's warm capacity, and measuring means an IMAP login.
+
+    Same rule as the provider ping above: reaching a real mailbox from a test suite is
+    a bug wherever it happens, and the tests that are *about* the measurement drive it
+    themselves (`emails/test_warmth.py` patches the Sent-folder read).
+    """
+    with patch("cold_outreach.emails.warmth.measure_pool", return_value=None):
+        yield
+
+
 @pytest.fixture
 def operator(db):
     """The one active staff user the sender runs as."""

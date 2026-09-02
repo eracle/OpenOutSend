@@ -194,7 +194,7 @@ class DeliveryEvent(models.Model):
     The predecessor of this table was written **only on failure, from inside an
     exception handler** — so a hard bounce, which arrives as ordinary mail rather
     than as an exception, produced nothing at all: 590 sends, 0 rows, and a
-    capacity ramp accelerating ×1.5/day into a failure it had no way to perceive.
+    capacity ramp compounding daily into a failure it had no way to perceive.
 
     ``status`` is the fact. ``response`` is how ``delivery_policy`` reads it, kept
     beside the fact for the same reason ``Message.kind`` is — so the pausing rule

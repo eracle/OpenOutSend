@@ -4,9 +4,9 @@
 >
 > The card asks onboarding for a daily send cap. **Since it was written, the cap stopped being
 > configured at all**: `cold_outreach/emails/warmth.py` *measures* it from the box's own Sent folder
-> (p75 of days it actually sent, ×1.5 when the receiver hasn't pushed back), because a number a human
-> types is wrong in one of two directions — throttling a box that has carried more for months, or
-> handing a fresh box a seasoned one's volume.
+> (p75 of days it actually sent, stepped ×1.25 above yesterday's allowance when the receiver hasn't
+> pushed back), because a number a human types is wrong in one of two directions — throttling a box
+> that has carried more for months, or handing a fresh box a seasoned one's volume.
 >
 > So the useful question here is no longer "ask for the cap" but **"should an operator be able to
 > override the measurement downward, and how is that not a footgun upward?"** That is a smaller card

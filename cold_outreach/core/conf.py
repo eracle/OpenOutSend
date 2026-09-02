@@ -29,24 +29,41 @@ PROMPTS_DIR = Path(__file__).parent / "templates" / "prompts"
 # anomaly), and allow a step above it. The step is multiplicative because the
 # history is *self-referential*: a box's Sent folder is mostly this sender's own
 # output, so an additive step makes the measurement a one-way ratchet — throttled
-# to 5/day, a +2 step needs three weeks to climb back, while ×1.5 walks
-# 5→9→15→24→38 in under a week. It only applies when the window is clean; a
-# failed send holds capacity at what was already demonstrated.
+# to 5/day, a +2 step needs three weeks to climb back. It only applies when the
+# window is clean; a failed send holds capacity at what was already demonstrated.
+#
+# **The step is bounded twice, and the second bound is the whole warmup.** Measured
+# volume says what the box has carried; *yesterday's allowance* says what it has
+# carried as cold volume, and only the second one is warmup. Without that second
+# bound, a personal mailbox with months of human mail in its Sent folder is handed
+# 25/day on its first measurement — a box switched on at full throttle, which is
+# the pattern that lands at 61% inbox placement against 94% for one that ramped.
+# So capacity may exceed yesterday's allowance by the growth factor and no more,
+# and every box starts on the bottom rung whatever is in its Sent folder.
+# **Downward moves are not bounded**: a receiver's verdict lands the day it arrives.
+#
+# ×1.25 a day off the floor walks 5→6→8→10→12→15→18→22→27→33→41→51→63→78 — the
+# ~three weeks to 65–80/day that the field converges on, and what Gmail's own
+# "start with a low sending volume and slowly increase the volume over time" asks
+# for. ×1.5 reached the rail in ten days, which is a ramp only in name.
 #
 # The floor lets a box with no history start somewhere. The ceiling is not a
 # number of its own at all — it is *derived* from the send pacing and the sending
 # window below (``WARM_CEILING_SENDS``, defined there because it cannot be stated
-# before the interval it divides). It used to be a declared 50, the top of the 30–50/day
-# band cold-email practice converges on for a warmed Google Workspace box; that
-# figure was folklore nobody measured, and pinning volume an order below the rate
-# made the two guards redundant rather than complementary. What still bounds a
-# *young* box is the ramp, not the rail: the ×1.5 step off a measured p75 needs
-# weeks of clean sending to reach the rail, and a receiver verdict freezes it
-# anywhere along the way.
+# before the interval it divides), then held down to what a mailbox survives. It
+# used to be a declared 50, the top of the 30–50/day band cold-email practice
+# converges on for a warmed Google Workspace box; that figure was folklore nobody
+# measured, and pinning volume an order below the rate made the two guards
+# redundant rather than complementary. The derivation is not folklore, but it is
+# not evidence either: the pacing permits 180/day, while measured spam rate per
+# box runs ~0.3% under 50/day, ~1.4% at 75–100, ~3.9% at 100–150 and breaks past
+# that. So the rail is the lower of what the clock allows and what a box carries
+# without paying for it — a derivation that outruns the evidence is still a guess.
 # ----------------------------------------------------------------------
 WARM_HISTORY_DAYS = 30      # trailing window of Sent history to measure
-WARM_GROWTH_FACTOR = 1.5    # step above demonstrated volume, when the window is clean
+WARM_GROWTH_FACTOR = 1.25   # step above demonstrated volume, when the window is clean
 WARM_FLOOR_SENDS = 5        # a box with no history still sends this much
+WARM_SAFE_SENDS = 100       # the most one box carries before spam rate turns on it
 # The bounce rate above which a box is damaging itself and must send *less* — the
 # one rule in the measurement that points downwards. 5% is the line the major
 # receivers and every ESP draw between "some addresses go stale" and "this sender
@@ -151,10 +168,14 @@ SEND_WINDOW_END_HOUR = 20    # exclusive — none from 20:00 on
 SEND_WINDOW_SECONDS = (SEND_WINDOW_END_HOUR - SEND_WINDOW_START_HOUR) * 3600
 
 # The rail: sends a single box could emit inside one window at that mean gap
-# (180 today). Floored, so the rail never claims a send the clock has no room
-# for — the window halves the day, and a ceiling still derived from 24 hours
-# would promise volume the pacing cannot deliver before 20:00.
-WARM_CEILING_SENDS = int(SEND_WINDOW_SECONDS / MEAN_SEND_INTERVAL_SECONDS)
+# (180 today), held down to what one box carries safely (100). Floored, so the
+# rail never claims a send the clock has no room for — the window halves the day,
+# and a ceiling still derived from 24 hours would promise volume the pacing cannot
+# deliver before 20:00. Taking the lower of the two keeps both bounds live:
+# tighten the pacing or narrow the window and the rail follows it down, and
+# nothing here ever promises volume a mailbox pays for in spam rate.
+WARM_CEILING_SENDS = min(int(SEND_WINDOW_SECONDS / MEAN_SEND_INTERVAL_SECONDS),
+                         WARM_SAFE_SENDS)
 
 # ----------------------------------------------------------------------
 # The wait (send_job.py) — how long `outsend send N` sleeps between passes when

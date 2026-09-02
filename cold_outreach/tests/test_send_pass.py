@@ -22,17 +22,20 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture
 def steps():
-    """The four things a pass calls out to, stubbed, with the order they were called in."""
+    """The five things a pass calls out to, stubbed, with the order they were called in."""
     order: list[str] = []
     with patch("cold_outreach.emails.mail_pass.run_mail_pass") as mail, \
+            patch("cold_outreach.emails.warmth.measure_pool") as measure, \
             patch("cold_outreach.emails.steps.reply.answer_reply") as reply, \
             patch("cold_outreach.emails.steps.follow_up.send_follow_up") as chase, \
             patch("cold_outreach.emails.steps.send.send_first_email") as send:
         mail.side_effect = lambda: (order.append("read"), (0, 0, 0))[1]
+        measure.side_effect = lambda: order.append("measure")
         reply.side_effect = lambda deal: order.append("answer")
         chase.side_effect = lambda deal: order.append("follow_up")
         send.side_effect = lambda deal, mailbox, prompt_line: order.append("open")
-        yield SimpleNamespace(mail=mail, reply=reply, chase=chase, send=send, order=order)
+        yield SimpleNamespace(mail=mail, measure=measure, reply=reply, chase=chase,
+                              send=send, order=order)
 
 
 def _waiting(address="lead@acme.com"):
@@ -68,7 +71,23 @@ def test_the_mail_is_read_before_anything_is_written(steps):
     with _free(box):
         run_send_pass()
 
-    assert steps.order == ["read", "answer", "open"]
+    assert steps.order == ["read", "measure", "answer", "open"]
+
+
+def test_capacity_is_measured_after_the_mail_and_before_the_openers(steps):
+    """The ramp's downward signal is a bounce, and a bounce arrives as ordinary mail.
+
+    Measuring before the read would size today's volume on evidence that was sitting
+    unopened in the box — the one failure the measurement exists to catch.
+    """
+    box = maillog.mailbox()
+    _waiting()
+
+    with _free(box):
+        run_send_pass()
+
+    assert steps.measure.call_count == 1
+    assert steps.order.index("read") < steps.order.index("measure") < steps.order.index("open")
 
 
 def test_the_counts_come_back_from_the_mail_pass(steps):
@@ -248,7 +267,7 @@ def test_a_follow_up_and_an_opener_compete_for_the_same_slot(steps):
             patch.object(Mailbox.objects, "free_for_first_email", side_effect=[box, None]):
         result = run_send_pass()
 
-    assert steps.order == ["read", "follow_up", "open"]
+    assert steps.order == ["read", "measure", "follow_up", "open"]
     assert result.followed_up == 1
 
 

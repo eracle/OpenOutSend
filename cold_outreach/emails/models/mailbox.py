@@ -109,10 +109,11 @@ class MailboxManager(models.Manager):
         ``(mailbox, "")`` on success or ``(None, reason)`` when auth is rejected.
         Re-entering an address repairs that box in place (``update_or_create``).
 
-        The new box keeps the floor capacity it is created with; the first
-        ``refresh_capacity`` reads its Sent folder and replaces that with what the
-        box has actually sustained. A box with real history is therefore throttled
-        for at most one reconcile cycle, not for a warmup calendar.
+        The new box keeps the floor capacity it is created with, and climbs from
+        there: the first send pass of each day measures its Sent folder, and the
+        step above yesterday's allowance is what a warmup *is*. A box with real
+        history is not exempt — a Sent folder full of a human's own mail is not a
+        demonstration that this box can carry cold volume.
         """
         from cold_outreach.emails.smtp import verify_auth
 
@@ -164,15 +165,22 @@ class Mailbox(models.Model):
     # collapsing them would re-ask a declining operator on every startup.
     signature = models.TextField(blank=True, null=True, default=None)
     # Warm-safe sends/day for this box — *measured*, not configured. Recomputed
-    # daily by ``emails/warmth.py`` from the box's own Sent folder, so a mailbox
-    # that has been carrying volume for months is trusted with it immediately and
-    # one connected an hour ago is not. Enforced at send time, per box (counts
-    # this box's outgoing messages since midnight). Persisted rather than derived
-    # on demand only because reading it costs an IMAP round trip; it is a cache of
-    # the box's own history and safe to discard. The default is the floor, not a
-    # working volume: it applies only to a box that has never been measured, and
-    # an unmeasured box is one we know nothing about.
+    # daily by ``emails/warmth.py`` from the box's own Sent folder, and bounded by
+    # its own previous value, so the number is a rung on a ramp rather than a
+    # reading: a box connected an hour ago is not trusted with volume, and neither
+    # is one whose Sent folder is full of a human's own mail. Enforced at send
+    # time, per box (counts this box's outgoing messages since midnight).
+    # Persisted rather than derived on demand because reading it costs an IMAP
+    # round trip and the send path consults it constantly. The default is the
+    # floor, not a working volume: it applies to a box that has never been
+    # measured, and an unmeasured box is one we know nothing about.
     daily_limit = models.PositiveIntegerField(default=WARM_FLOOR_SENDS)
+    # The local date this box's capacity was last measured — the measurement's own
+    # cadence, kept on the row rather than in the process. `outsend send` is one
+    # pass in a fresh process, so a process-held date would re-measure on every
+    # invocation: hundreds of IMAP logins a day under a timer. NULL = never
+    # measured, which is exactly the box sitting on the floor above.
+    measured_on = models.DateField(null=True, blank=True, default=None)
     # The earliest this box may send its next *first* email — the send-spacing clock,
     # rewritten after every first contact as ``now + MIN_SEND_INTERVAL + jitter``.
     # Per box rather than pool-wide because the daily cap is per box too: two boxes
