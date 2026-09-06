@@ -156,7 +156,10 @@ MEAN_SEND_INTERVAL_SECONDS = MIN_SEND_INTERVAL_SECONDS + (
 # than sitting under a night's accumulation.
 #
 # Weekends stop. Saturday cold email is weaker signal to receivers and to people,
-# and ``business_time.is_business_day`` already draws the Mon–Fri line.
+# and ``business_time.is_business_day`` already draws the Mon–Fri line. An operator
+# who wants weekend sends without giving up the hour line can turn this half off
+# on its own — ``OUTSEND_ENFORCE_WEEKEND_PAUSE`` and ``OUTSEND_ENFORCE_WORK_HOURS``
+# are independent flags, both on by default (``core/sending_window.py``).
 #
 # The window is the operator's, not the recipient's: we know where the operator
 # is (one configured answer) and never where the lead is (the discovery row

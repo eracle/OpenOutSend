@@ -1,9 +1,14 @@
 # cold_outreach/core/sending_window.py
 """When a cold email may leave — the operator's working day, in their own time.
 
-One question, asked at the last gate before a first email is written: is it a
-weekday, and is it between 08:00 and 20:00 where the operator is? Openers wait
-for the answer; replies never come through here at all.
+Two questions, asked at the last gate before a first email is written: is it
+between 08:00 and 20:00 where the operator is, and is it a weekday? Openers
+wait for the answer; replies never come through here at all.
+
+The two are independent flags (``OUTSEND_ENFORCE_WORK_HOURS``,
+``OUTSEND_ENFORCE_WEEKEND_PAUSE``), both on by default. An operator who wants
+Saturday/Sunday sends but still wants the 08:00–20:00 line held turns off only
+the second — a single combined switch could not express that.
 
 The timezone is *derived*, never configured. The operator answered one question
 at onboarding — their country — and ``pytz.country_timezones`` turns it into a
@@ -22,6 +27,7 @@ import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from django.conf import settings
 from django.utils import timezone
 
 from cold_outreach.core.business_time import is_business_day
@@ -33,11 +39,17 @@ UTC = ZoneInfo("UTC")
 
 
 def within_sending_window(now: datetime | None = None) -> bool:
-    """True when a first email may leave right now — Mon–Fri, 08:00–20:00 operator-local."""
+    """True when a first email may leave right now — Mon–Fri, 08:00–20:00 operator-local.
+
+    Either half is skipped when its flag is off: with ``OUTSEND_ENFORCE_WEEKEND_PAUSE``
+    disabled, Saturday and Sunday pass this check like any other day; with
+    ``OUTSEND_ENFORCE_WORK_HOURS`` disabled, every hour does.
+    """
     local = timezone.localtime(now or timezone.now(), operator_timezone())
     return (
-        is_business_day(local.date())
-        and SEND_WINDOW_START_HOUR <= local.hour < SEND_WINDOW_END_HOUR
+        (not _weekend_pause_enforced() or is_business_day(local.date()))
+        and (not _work_hours_enforced()
+             or SEND_WINDOW_START_HOUR <= local.hour < SEND_WINDOW_END_HOUR)
     )
 
 
@@ -52,18 +64,34 @@ def next_window_open(now: datetime | None = None) -> datetime:
 
     ``within_sending_window`` answers *may I send now*; this answers *when may I*, and
     the second question only became worth asking when a run was allowed to wait for it
-    (``send_job.py``). They read the same two constants, so a widened window moves both.
+    (``send_job.py``). They read the same two constants and the same two flags, so a
+    widened window — or a disabled flag — moves both.
     """
     local = timezone.localtime(now or timezone.now(), operator_timezone())
     if within_sending_window(local):
         return local
 
-    opening = local.replace(hour=SEND_WINDOW_START_HOUR, minute=0, second=0, microsecond=0)
-    if opening <= local:
-        opening += timedelta(days=1)
-    while not is_business_day(opening.date()):
-        opening += timedelta(days=1)
+    if _work_hours_enforced():
+        opening = local.replace(hour=SEND_WINDOW_START_HOUR, minute=0, second=0, microsecond=0)
+        if opening <= local:
+            opening += timedelta(days=1)
+    else:
+        opening = local
+
+    if _weekend_pause_enforced():
+        while not is_business_day(opening.date()):
+            opening += timedelta(days=1)
     return opening
+
+
+def _work_hours_enforced() -> bool:
+    """Whether the 08:00–20:00 half of the window is checked (``OUTSEND_ENFORCE_WORK_HOURS``)."""
+    return getattr(settings, "OUTSEND_ENFORCE_WORK_HOURS", True)
+
+
+def _weekend_pause_enforced() -> bool:
+    """Whether Sat/Sun are shut (``OUTSEND_ENFORCE_WEEKEND_PAUSE``)."""
+    return getattr(settings, "OUTSEND_ENFORCE_WEEKEND_PAUSE", True)
 
 
 def operator_timezone() -> ZoneInfo:

@@ -68,6 +68,26 @@ class TestWeekends:
         assert _in_rome(_utc(SAT - 1, 23)) is False
 
 
+class TestTheTwoFlagsAreIndependent:
+    """`OUTSEND_ENFORCE_WORK_HOURS` and `OUTSEND_ENFORCE_WEEKEND_PAUSE` gate their own
+    half of the window and nothing else — an operator can drop either alone."""
+
+    def test_weekend_pause_off_still_holds_the_hours(self, settings):
+        settings.OUTSEND_ENFORCE_WEEKEND_PAUSE = False
+        assert _in_rome(_utc(SAT, 11)) is True    # Saturday noon Rome — now allowed
+        assert _in_rome(_utc(SAT, 2)) is False    # Saturday 03:00 Rome — hours still hold
+
+    def test_work_hours_off_still_holds_the_weekend(self, settings):
+        settings.OUTSEND_ENFORCE_WORK_HOURS = False
+        assert _in_rome(_utc(WED, 2)) is True     # Wednesday 03:00 Rome — hours no longer checked
+        assert _in_rome(_utc(SAT, 11)) is False   # Saturday — weekend pause still holds
+
+    def test_both_off_is_wide_open(self, settings):
+        settings.OUTSEND_ENFORCE_WORK_HOURS = False
+        settings.OUTSEND_ENFORCE_WEEKEND_PAUSE = False
+        assert _in_rome(_utc(SAT, 2)) is True
+
+
 class TestWhenItOpensAgain:
     """`within_sending_window` answers *may I now*; this answers *when may I* — the
     question a run that is allowed to wait for the window has to ask."""
@@ -98,6 +118,18 @@ class TestWhenItOpensAgain:
         """Early enough that today's 08:00 has not passed — and still not a working day."""
         opens = self._rome(_utc(SAT, 3))              # 04:00 Rome, Saturday
         assert (opens.day, opens.hour, opens.weekday()) == (SAT + 2, 8, 0)
+
+    def test_weekend_pause_off_a_friday_evening_opens_saturday_morning(self, settings):
+        """With the weekend pause off, the wait no longer walks past Saturday."""
+        settings.OUTSEND_ENFORCE_WEEKEND_PAUSE = False
+        opens = self._rome(_utc(SAT - 1, 21))          # 22:00 Rome, Friday
+        assert (opens.day, opens.hour) == (SAT, 8)
+
+    def test_work_hours_off_a_weekend_night_opens_at_the_next_business_day_now(self, settings):
+        """With hours off, only the weekend walk applies — no jump to 08:00."""
+        settings.OUTSEND_ENFORCE_WORK_HOURS = False
+        opens = self._rome(_utc(SAT, 3))               # 04:00 Rome, Saturday
+        assert (opens.day, opens.hour, opens.weekday()) == (SAT + 2, 4, 0)
 
 
 class TestResolvingTheZone:

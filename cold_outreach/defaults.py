@@ -48,4 +48,18 @@ def app_settings() -> dict:
         # instead of stopping a run. The model and its key are the opposite on all three
         # counts, which is why `first_run.check_ready()` refuses to start without them.
         "OUTSEND_OPERATOR_COUNTRY": os.environ.get("OUTSEND_OPERATOR_COUNTRY", ""),
+        # Two independent gates on a first email leaving, both on by default. Split
+        # rather than one "sending window" toggle because an operator can want either
+        # without the other — hold the 08:00–20:00 line but let Saturday/Sunday sends
+        # go out, which the combined flag could not express.
+        "OUTSEND_ENFORCE_WORK_HOURS": _env_flag("OUTSEND_ENFORCE_WORK_HOURS"),
+        "OUTSEND_ENFORCE_WEEKEND_PAUSE": _env_flag("OUTSEND_ENFORCE_WEEKEND_PAUSE"),
     }
+
+
+def _env_flag(name: str, *, default: bool = True) -> bool:
+    """A boolean setting from the environment: unset keeps `default`, "0"/"false"/"no" flips it off."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no"}
