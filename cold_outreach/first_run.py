@@ -60,15 +60,20 @@ TRANSPORT_ENV = {
 SIGNATURE_ENV = "OUTSEND_SIGNATURE"
 
 
-def check_ready() -> None:
+def check_ready(*, agent_draft_active: bool = False) -> None:
     """Verify this run has everything a send needs, or stop naming what would give it.
 
     One error at the end rather than one per round trip: a timer that is missing three
     things should learn all three from a single failure mail.
+
+    ``agent_draft_active`` skips the model entirely: the whole point of
+    ``send --agent-draft`` is a calling agent writing the opener instead of a second,
+    separately-keyed `AI_MODEL`, so an install running only that way is not asked for
+    a key it will never spend.
     """
     missing = [
         *_check_message(),
-        *_check_llm(),
+        *([] if agent_draft_active else _check_llm()),
         *_ensure_operator(),
         *_ensure_mailbox(),
     ]

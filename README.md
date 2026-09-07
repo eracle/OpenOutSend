@@ -97,7 +97,9 @@ This resumes the same deal — no id to track, since at most one is ever pending
 moment a mailbox is free (an answer already given is kept, not thrown away, if the spacing clock or the
 sending window is holding every box right now). No count yet — it is one pass at a time, like a bare
 `outsend send`. Don't pass `--agent-draft` unless you intend to answer every `draft_pending` it raises;
-without it, `AI_MODEL` writes every opener as before.
+without it, `AI_MODEL` writes every opener as before. **`--agent-draft` also drops the model out of
+`outsend check`'s requirements for that run** — `OUTSEND_AI_MODEL`/`OUTSEND_LLM_API_KEY` are never
+checked or pinged, since a key that will never be spent is not a reason to stop.
 
 So `find N emails --json | outsend && outsend send N` needs no cron entry at all: the second command
 returns when the conversations are open, whether that takes four minutes or spans a weekend. A timer

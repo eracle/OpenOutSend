@@ -231,6 +231,18 @@ def test_a_send_with_no_model_never_reaches_the_pass(site_config):
     run.assert_not_called()
 
 
+def test_agent_draft_never_needs_an_llm_key(site_config):
+    """The whole point of --agent-draft is a calling agent writing the opener instead
+    of a second, separately-keyed model — an install running only that way is not
+    asked for a key it will never spend."""
+    maillog.mailbox()
+
+    with patch("cold_outreach.send_pass.run_send_pass") as run:
+        _send(_args(agent_draft=True))
+
+    run.assert_called_once()
+
+
 def test_a_terminal_is_not_asked_either(db, capsys):
     """A TTY changes nothing: this program is the right of a pipe, and it never prompts."""
     with patch("cold_outreach.send_pass.run_send_pass") as run, \

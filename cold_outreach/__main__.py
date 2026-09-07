@@ -188,7 +188,7 @@ def _send(args: argparse.Namespace) -> int:
     """
     from cold_outreach.first_run import check_ready
 
-    check_ready()
+    check_ready(agent_draft_active=args.agent_draft)
     return _run_to_goal(args) if args.count else _run_one_pass(args)
 
 
