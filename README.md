@@ -130,6 +130,20 @@ The package is on PyPI as **`openoutsend`** — `uv tool install openoutsend`, o
 `uvx --from openoutsend outsend check` to try it without installing anything. `openoutreach` pins it
 exactly and installs it for you.
 
+### 🤖 Use it from Claude Code
+
+This repo ships a **Claude Code plugin**, so you can send without leaving your agent session:
+
+```
+/plugin marketplace add eracle/OpenOutSend
+/plugin install openoutsend@openoutsend
+```
+
+The skill (`skills/send-mail/SKILL.md`) teaches Claude when `send` is safe to run and when it isn't
+(never unasked — it puts mail in strangers' inboxes), how `--agent-draft` lets it write the opener
+itself instead of spending a second LLM key, and how to read the narration on stderr. Prefer skills to
+plugins? Copy `skills/send-mail/` into `~/.claude/skills/` instead.
+
 ## Tests
 
 ```bash

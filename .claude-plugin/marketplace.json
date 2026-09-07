@@ -1,0 +1,22 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "openoutsend",
+  "description": "The OpenOutSend plugin for Claude Code — the sending half of OpenOutreach, guarded by measured warm capacity, per-box pacing and the operator's own sending window.",
+  "owner": {
+    "name": "OpenOutSend",
+    "email": "hello@openoutreach.app"
+  },
+  "plugins": [
+    {
+      "name": "openoutsend",
+      "description": "Send cold outreach from inside Claude Code — drives the OpenOutSend CLI: pipe in leads, connect a mailbox, and send with the built-in guards.",
+      "author": {
+        "name": "OpenOutSend",
+        "email": "hello@openoutreach.app"
+      },
+      "category": "productivity",
+      "source": "./",
+      "homepage": "https://openoutreach.app"
+    }
+  ]
+}
