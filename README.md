@@ -81,6 +81,24 @@ run ends when nobody is left. It is the same run with one verdict inverted: the 
 Prefer it to typing a count you had to look up, since that number is stale by the time you type it.
 The other endings stay failures — no mailbox, and a receiver refusing twice in a row.
 
+**`outsend send --agent-draft` opts the opener step out of `AI_MODEL`**, for a caller that is itself an
+LLM (Claude Code driving the CLI) and would otherwise pay for a second, redundant model call to write
+what it could write itself. The pass stops at the first deal needing an opener and exits non-zero with
+`error: draft_pending: <message>` (`{"error": {"type": "draft_pending", ...}}` under `--json`), carrying
+the deal's own `profile_text`/`company`/`title` — the same fields `AI_MODEL`'s prompt is built from.
+Judge the opener the same way you would judge anything else in the conversation, then re-run with the
+answer:
+
+```bash
+outsend send --agent-draft --subject "Quick one" --body "Saw you're hiring for platform roles..."
+```
+
+This resumes the same deal — no id to track, since at most one is ever pending — and sends it the
+moment a mailbox is free (an answer already given is kept, not thrown away, if the spacing clock or the
+sending window is holding every box right now). No count yet — it is one pass at a time, like a bare
+`outsend send`. Don't pass `--agent-draft` unless you intend to answer every `draft_pending` it raises;
+without it, `AI_MODEL` writes every opener as before.
+
 So `find N emails --json | outsend && outsend send N` needs no cron entry at all: the second command
 returns when the conversations are open, whether that takes four minutes or spans a weekend. A timer
 firing a bare `outsend send` remains the other way to run it, and the two do not conflict — the pass is

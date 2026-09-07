@@ -38,6 +38,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from cold_outreach.core.agent_draft import OFF, AgentDraft
+from cold_outreach.errors import DraftPending
+
 logger = logging.getLogger(__name__)
 
 
@@ -68,7 +71,7 @@ class PassResult:
 
 
 def run_send_pass(prompt_line_name: str | None = None,
-                  narrate: bool = True) -> PassResult:
+                  narrate: bool = True, agent_draft: AgentDraft = OFF) -> PassResult:
     """Read, answer, open — once — and report. Never raises for a failed send.
 
     ``prompt_line_name`` pins every opener in this pass to one move
@@ -79,6 +82,10 @@ def run_send_pass(prompt_line_name: str | None = None,
     whole answer to *why did that do nothing*. A `send N` run does not want it once per
     pass, because the answer does not change while it waits; it reads ``result.holding``
     and says it when it moves.
+
+    ``agent_draft`` opts the opener step out of `AI_MODEL` — see ``_open_conversations``.
+    Unlike a failed send, this **does** raise (``DraftPending``), because there is
+    nobody to report a holding line to: the process is about to exit.
     """
     from cold_outreach.emails.mail_pass import run_mail_pass
     from cold_outreach.emails.warmth import measure_pool
@@ -88,7 +95,7 @@ def run_send_pass(prompt_line_name: str | None = None,
     measure_pool()
     _answer_replies(result)
     _follow_up(result)
-    _open_conversations(result, prompt_line_name)
+    _open_conversations(result, prompt_line_name, agent_draft)
     result.holding = _what_is_holding()
     if narrate:
         logger.info("%s", result.holding)
@@ -156,7 +163,8 @@ def _follow_up(result: PassResult) -> None:
             return
 
 
-def _open_conversations(result: PassResult, prompt_line_name: str | None = None) -> None:
+def _open_conversations(result: PassResult, prompt_line_name: str | None = None,
+                        agent_draft: AgentDraft = OFF) -> None:
     """Send first emails while a box is free and somebody is waiting.
 
     The loop's bound is the guards themselves: `free_for_first_email` answers `None`
@@ -176,11 +184,19 @@ def _open_conversations(result: PassResult, prompt_line_name: str | None = None)
     rather than the move's — the comparison would be between days, not between lines.
     A name given on the command line pins them all deliberately, which is the one case
     where a block is what the operator asked for.
+
+    ``agent_draft.active`` hands this whole step to ``_open_with_agent_draft`` instead
+    — a calling agent answering in its own context rather than a second, separately
+    keyed `AI_MODEL` call.
     """
     from cold_outreach.core.prompt_lines import choose
     from cold_outreach.emails.models import Mailbox
     from cold_outreach.emails.steps.send import send_first_email
     from cold_outreach.leads.pools import emailable_deals
+
+    if agent_draft.active:
+        _open_with_agent_draft(result, agent_draft)
+        return
 
     waiting = emailable_deals().iterator()
     while (mailbox := Mailbox.objects.free_for_first_email()) is not None:
@@ -194,6 +210,72 @@ def _open_conversations(result: PassResult, prompt_line_name: str | None = None)
             logger.exception("first email to %s failed", deal.lead.public_id)
             result.failed += 1
             return
+
+
+def _open_with_agent_draft(result: PassResult, agent_draft: AgentDraft) -> None:
+    """Answer the one deal already handed to the calling agent, or hand one back.
+
+    Mirrors OpenOutFind's ``_resume_agent_qualification``: the pending deal does not
+    go through ``emailable_deals()`` selection again on a resume — the whole point of
+    remembering it is that a second invocation answers *this* deal, not whichever one
+    happens to be oldest now.
+
+    **An answer is stored the moment it arrives, sent only once a mailbox is free.**
+    A box's spacing clock, daily ceiling and sending window can hold it up for hours —
+    unlike a fresh candidate, an answer already given must not be asked for twice just
+    because nothing was free to send it through yet.
+    """
+    from cold_outreach.emails.models import Mailbox
+    from cold_outreach.emails.steps.send import send_drafted_email
+    from cold_outreach.leads.models import PendingDraft
+    from cold_outreach.leads.pools import emailable_deals
+
+    pending = PendingDraft.objects.select_related("deal__lead").first()
+    if pending is None:
+        deal = next(emailable_deals().iterator(), None)
+        if deal is None:
+            return
+        PendingDraft.objects.create(deal=deal)
+        raise DraftPending(f"{deal.lead.public_id} needs an opener",
+                            payload=_candidate_payload(deal.lead))
+
+    if agent_draft.answered and not pending.answered:
+        pending.subject = agent_draft.subject
+        pending.body = agent_draft.body
+        pending.save(update_fields=["subject", "body"])
+
+    if not pending.answered:
+        # A bare re-run with nothing answered yet — re-ask rather than silently
+        # doing nothing, so the caller always gets a `draft_pending` to act on.
+        raise DraftPending(f"{pending.deal.lead.public_id} is still waiting on an opener",
+                            payload=_candidate_payload(pending.deal.lead))
+
+    mailbox = Mailbox.objects.free_for_first_email()
+    if mailbox is None:
+        # Answered, but no box is free right now — the same "nothing to do this
+        # pass" every other step reports quietly. The answer stays on `pending`.
+        return
+
+    deal = pending.deal
+    try:
+        _apply(deal, send_drafted_email(deal, mailbox, pending.subject, pending.body, None))
+        result.opened += 1
+    except Exception:
+        logger.exception("first email to %s failed", deal.lead.public_id)
+        result.failed += 1
+        return
+    pending.delete()
+
+
+def _candidate_payload(lead) -> dict:
+    """The fields an agent needs to write the opener — the same ones `AI_MODEL` sees."""
+    return {
+        "lead_id": lead.public_id,
+        "profile_text": lead.profile_text,
+        "full_name": f"{lead.first_name} {lead.last_name}".strip(),
+        "title": lead.title,
+        "company": lead.company,
+    }
 
 
 def _apply(deal, next_state) -> None:

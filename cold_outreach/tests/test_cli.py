@@ -39,7 +39,8 @@ def connected(site_config, monkeypatch):
 
 def _args(**kwargs) -> Namespace:
     return Namespace(**{"command": "send", "prompt_line": None,
-                        "count": None, "debug": False, **kwargs})
+                        "count": None, "debug": False, "agent_draft": False,
+                        "subject": None, "body": None, "json_output": False, **kwargs})
 
 
 # ── The surface ───────────────────────────────────────────────────
@@ -88,6 +89,58 @@ def test_a_count_belongs_to_send():
         _parse_args(["check", "5"])
 
 
+# ── --agent-draft ─────────────────────────────────────────────────
+
+
+def test_agent_draft_parses():
+    assert _parse_args(["send", "--agent-draft"]).agent_draft is True
+
+
+def test_agent_draft_with_a_count_is_refused():
+    with pytest.raises(SystemExit):
+        _parse_args(["send", "5", "--agent-draft"])
+
+
+def test_subject_and_body_need_agent_draft():
+    with pytest.raises(SystemExit):
+        _parse_args(["send", "--subject", "Hi", "--body", "there"])
+
+
+def test_subject_without_a_body_is_refused():
+    with pytest.raises(SystemExit):
+        _parse_args(["send", "--agent-draft", "--subject", "Hi"])
+
+
+def test_draft_pending_renders_as_one_typed_line(connected, capsys):
+    from cold_outreach.errors import DraftPending
+    from cold_outreach.__main__ import main
+
+    with patch("cold_outreach.__main__._boot"), \
+            patch("cold_outreach.send_pass.run_send_pass",
+                 side_effect=DraftPending("needs an opener", payload={"company": "Acme"})):
+        code = main(["send", "--agent-draft"])
+
+    assert code == 1
+    assert capsys.readouterr().err.strip() == "error: draft_pending: needs an opener"
+
+
+def test_draft_pending_carries_its_payload_under_json(connected, capsys):
+    import json
+
+    from cold_outreach.errors import DraftPending
+    from cold_outreach.__main__ import main
+
+    with patch("cold_outreach.__main__._boot"), \
+            patch("cold_outreach.send_pass.run_send_pass",
+                 side_effect=DraftPending("needs an opener", payload={"company": "Acme"})):
+        code = main(["send", "--agent-draft", "--json"])
+
+    assert code == 1
+    document = json.loads(capsys.readouterr().err)
+    assert document == {"error": {"type": "draft_pending", "message": "needs an opener",
+                                  "company": "Acme"}}
+
+
 # ── Sending ───────────────────────────────────────────────────────
 
 
@@ -96,7 +149,8 @@ def test_send_runs_one_pass(connected, capsys):
                return_value=PassResult(mirrored=2, answered=1, opened=3)) as run:
         assert _send(_args()) == 0
 
-    run.assert_called_once_with(None)
+    from cold_outreach.core.agent_draft import OFF
+    run.assert_called_once_with(None, agent_draft=OFF)
     narration = capsys.readouterr().err
     assert "read 2 new message(s) · answered 1 · followed up 0 · opened 3" in narration
 

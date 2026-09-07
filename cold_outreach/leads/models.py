@@ -201,6 +201,34 @@ class Deal(models.Model):
         return f"{self.lead} [{self.state}]"
 
 
+class PendingDraft(models.Model):
+    """The one deal handed to a calling agent for an opener, if any.
+
+    `send --agent-draft` stops the pass right before the call that would otherwise go
+    to `AI_MODEL`, and the process exits — there is nobody left in memory to remember
+    which deal that was. This row is what a second, separate invocation reads to
+    resume exactly that deal.
+
+    `subject`/`body` start blank and are filled in the moment an answer arrives
+    (`--subject`/`--body`) — **not necessarily the same pass that sends them**: the
+    mailbox that opens this conversation might not be free again for hours (the
+    spacing clock, the daily ceiling, the sending window), so the answer is kept here
+    rather than thrown away the instant it cannot be used immediately.
+
+    At most one row ever exists — the underlying loop asks one opener at a time, same
+    as the `AI_MODEL`-keyed path does.
+    """
+
+    deal = models.OneToOneField(Deal, on_delete=models.CASCADE)
+    subject = models.CharField(max_length=500, blank=True, default="")
+    body = models.TextField(blank=True, default="")
+    created = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def answered(self) -> bool:
+        return bool(self.body)
+
+
 class Suppression(models.Model):
     """An address that may never be written to again. Terminal, by design.
 

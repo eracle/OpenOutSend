@@ -26,6 +26,7 @@ idempotent; it means a producer emitted something unreadable and somebody has to
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import sys
@@ -36,6 +37,11 @@ outsend send [N|all] [--prompt-line ID]
                                  guards allow right now. With N, keep at it until N
                                  conversations are open, waiting out the send clocks;
                                  with `all`, until nobody is left to email
+outsend send --agent-draft [--subject S --body B]
+                                 opt the opener step out of AI_MODEL: stop at the first
+                                 deal needing one (error type draft_pending, carrying
+                                 its profile_text/company/title) instead of calling the
+                                 LLM. Resume with --subject/--body. No count.
 outsend check                    verify this environment can send — what you sell and to
                                  whom, a model that answers, who signs the mail, and a
                                  mailbox that accepts its login"""
@@ -47,10 +53,17 @@ def main(argv: list[str] | None = None) -> int:
     _configure_logging(args.debug)
     _boot()
 
-    from cold_outreach.errors import OutsendError
+    from cold_outreach.errors import DraftPending, OutsendError
 
     try:
         return {"check": _check, "send": _send}.get(args.command, _ingest)(args)
+    except DraftPending as exc:
+        if args.json_output:
+            print(json.dumps({"error": {"type": "draft_pending", "message": str(exc),
+                                        **exc.payload}}), file=sys.stderr)
+        else:
+            print(f"error: draft_pending: {exc}", file=sys.stderr)
+        return 1
     except OutsendError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -68,9 +81,25 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
                         help="open every email in this pass with one named prompt line; "
                              "omit to draw one at random per send")
     parser.add_argument("--debug", action="store_true", help="log what each step decided")
+    parser.add_argument("--agent-draft", action="store_true", dest="agent_draft",
+                        help="opt the opener step out of AI_MODEL for this pass — see "
+                             "USAGE. No count.")
+    parser.add_argument("--subject", default=None,
+                        help="answer a prior --agent-draft pass's draft_pending.")
+    parser.add_argument("--body", default=None,
+                        help="answer a prior --agent-draft pass's draft_pending.")
+    parser.add_argument("--json", action="store_true", dest="json_output",
+                        help="render a failure as {\"error\": {...}} on stderr instead "
+                             "of one plain line.")
     args = parser.parse_args(argv)
     if args.count is not None and args.command != "send":
         parser.error("a count belongs to `send` — `outsend send 5`")
+    if args.agent_draft and args.count is not None:
+        parser.error("--agent-draft has no count yet — `outsend send --agent-draft`")
+    if (args.subject or args.body) and not args.agent_draft:
+        parser.error("--subject/--body need --agent-draft")
+    if bool(args.subject) != bool(args.body):
+        parser.error("--subject and --body are answered together")
     return args
 
 
@@ -164,9 +193,11 @@ def _send(args: argparse.Namespace) -> int:
 
 
 def _run_one_pass(args: argparse.Namespace) -> int:
+    from cold_outreach.core.agent_draft import AgentDraft
     from cold_outreach.send_pass import run_send_pass
 
-    result = run_send_pass(args.prompt_line)
+    agent_draft = AgentDraft(active=args.agent_draft, subject=args.subject, body=args.body)
+    result = run_send_pass(args.prompt_line, agent_draft=agent_draft)
     _report(result)
     return 0 if result.ok else 1
 

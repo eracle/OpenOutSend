@@ -63,8 +63,37 @@ def send_first_email(deal, mailbox, prompt_line) -> DealState | None:
         logger.warning("%s was suppressed mid-run — not sending", deal.lead.public_id)
         return None
 
+    return _finish_send(deal, mailbox, opener.subject, opener.message, prompt_line)
+
+
+def send_drafted_email(deal, mailbox, subject: str, message: str, prompt_line) -> DealState | None:
+    """Open the conversation with a subject/message an agent wrote, not `AI_MODEL`.
+
+    The mirror image of `send_first_email` with the LLM call removed — everything
+    after it (the suppression recheck, the SMTP send, the deal bookkeeping, the
+    spacing clock) is identical, because none of that cares who wrote the words.
+    """
+    from cold_outreach.emails.sender import suppressed
+
+    logger.info("%s %s via %s (agent-drafted)",
+                colored("▶ first email", "blue", attrs=["bold"]),
+                deal.lead.public_id, mailbox.from_address)
+
+    if suppressed(deal.lead):
+        logger.warning("%s was suppressed while its draft waited — not sending",
+                       deal.lead.public_id)
+        return None
+
+    return _finish_send(deal, mailbox, subject, message, prompt_line)
+
+
+def _finish_send(deal, mailbox, subject: str, message: str, prompt_line) -> DealState:
+    """SMTP-send the opener and record it on *deal*. Shared by both drafting paths."""
+    from cold_outreach.core.operator import get_active_user
+    from cold_outreach.emails.sender import operator_bcc, send_email
+
     sent = send_email(
-        mailbox, deal.lead.email, opener.subject, opener.message,
+        mailbox, deal.lead.email, subject, message,
         bcc=operator_bcc(get_active_user()),
         prompt_line=prompt_line,
     )
@@ -73,7 +102,7 @@ def send_first_email(deal, mailbox, prompt_line) -> DealState | None:
     # points at the conversation it started. Nothing about this message is stored
     # twice, so nothing about it can disagree with itself later.
     deal.mailbox = mailbox
-    deal.email_subject = opener.subject
+    deal.email_subject = subject
     deal.thread = sent.thread
     deal.email_sent_at = sent.sent_at
     space_out(mailbox, timezone.now())
