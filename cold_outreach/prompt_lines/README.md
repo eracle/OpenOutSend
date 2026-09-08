@@ -50,5 +50,7 @@ not silently pooled with its older self), which is what makes comparing them lat
 question of reading the log rather than of having planned an experiment.
 
 There is no scoring yet, and none is faked. Randomly chosen and honestly recorded is the
-whole of it — see `roadmap/p1-e2-sender-message-generation.md` for the learner that reads
+whole of it — see
+[`roadmap/OpenOutSend/p1-e2-sender-message-generation.md`](https://github.com/eracle/openoutreach-docs/blob/main/roadmap/OpenOutSend/p1-e2-sender-message-generation.md)
+(in `openoutreach-docs`, which carries this repo's roadmap) for the learner that reads
 this log once there is enough of it.

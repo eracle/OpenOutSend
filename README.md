@@ -169,7 +169,9 @@ came across with the transport now assert against this side's own models.
 | `cold_outreach/first_run.py` | what `check` verifies — the message fields, the model, the operator, the mailbox |
 | `cold_outreach/core/config.py` | the `OUTSEND_*` a message is written from, read fresh on every run |
 | `cold_outreach/__main__.py` | the `outsend` console script |
-| `roadmap/` | open work, mostly inherited from OpenOutreach along with the code it describes |
+
+This repo carries no `roadmap/` of its own — open work for it lives in the `openoutreach-docs` repo,
+under [`roadmap/OpenOutSend/`](https://github.com/eracle/openoutreach-docs/tree/main/roadmap/OpenOutSend).
 
 The app labels are namespaced `outsend_*` because these apps are hosted twice: by this
 repo's `settings.py`, and by OpenOutreach, which installs them in one registry beside

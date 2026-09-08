@@ -16,9 +16,11 @@ The boundary between the two is **one-way and public**: OpenOutreach exports lea
 back. Whatever this code becomes, it must read that same export — no shared model, no direct import,
 no DB join. OpenOutSend gets no privileged path that Instantly or Smartlead would not get.
 
-The design decisions behind that split live in `roadmap/p1-e3-leadfinder-sequencer-boundary.md` in the
-`openoutreach-docs` repo. Read it before integrating; several decisions were reversed after the fact
-and the reasoning is recorded there rather than in either repo's git history.
+The design decisions behind that split live in
+[`roadmap/history/2026-08-19-p1-e3-leadfinder-sequencer-boundary.md`](https://github.com/eracle/openoutreach-docs/blob/main/roadmap/history/2026-08-19-p1-e3-leadfinder-sequencer-boundary.md)
+in the `openoutreach-docs` repo — this repo carries no `roadmap/` of its own; all of it lives there,
+under `roadmap/OpenOutSend/`. Read it before integrating; several decisions were reversed after the
+fact and the reasoning is recorded there rather than in either repo's git history.
 
 ## What is here
 
