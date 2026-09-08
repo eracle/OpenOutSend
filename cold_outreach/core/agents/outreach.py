@@ -37,7 +37,6 @@ Single LLM call with structured output — no tool-calling loop.
 from __future__ import annotations
 
 import logging
-import re
 from datetime import datetime, timedelta
 from typing import Literal
 
@@ -121,22 +120,6 @@ COLD_STAGES = (OPEN, FOLLOW_UP)
 # message it is chasing is the exact thing nobody answers.
 COLD_WORD_CEILING = 75
 
-# One retry, and only for a breach of these rules. A model that writes 80 words usually
-# writes 60 when told; one that ignores the ceiling twice is a configuration problem,
-# and failing the send is how that gets noticed rather than quietly mailing something
-# that breaks the discipline.
-COLD_ATTEMPTS = 2
-
-# A cold email asks a question. A link is a call to action wearing a URL, and putting
-# one in converts a conversation into a funnel step.
-_URL = re.compile(r"https?://|\bwww\.", re.IGNORECASE)
-
-# A merge tag or a bracketed slot that reached the output is a placeholder the model
-# failed to fill. It is checked on the way **out**, where the damage would be — a
-# prompt is allowed to contain whatever it likes; an email is not.
-_PLACEHOLDER = re.compile(r"\{\{.*?\}\}|\[(?:your|first|last|company|lead)[ _][^\]]{0,30}\]",
-                          re.IGNORECASE)
-
 
 def run_outreach_agent(deal, prompt_line=None, stage=None) -> OutreachDecision:
     """Decide the next move for ``deal`` at ``stage``.
@@ -156,9 +139,11 @@ def run_outreach_agent(deal, prompt_line=None, stage=None) -> OutreachDecision:
     person, and so a reply can be attributed to one line rather than to a mixture.
     Ignored on a reply.
 
-    **A cold message is validated and retried, never silently sent.** The rules live
-    here rather than in the prompt-line files, so no line can drop one by being edited
-    carelessly and no author has to repeat them in every file.
+    **The rules live in the prompt, not in a check after the fact.** ``outreach_agent.j2``
+    states the word ceiling, the no-link/no-meeting/no-em-dash rules and the sourcing
+    constraint directly (see its "Rules this email cannot break" section) — there is no
+    generator-side validation of a cold message's content, and no retry. A draft is sent
+    as written.
     """
     public_id = deal.lead.public_id
     stage = stage or (OPEN if not deal.thread_id else REPLY)
@@ -171,56 +156,13 @@ def run_outreach_agent(deal, prompt_line=None, stage=None) -> OutreachDecision:
         output_type=OutreachDecision,
         model_settings={"temperature": 0.7, "timeout": 60},
     )
-    if stage not in COLD_STAGES:
-        decision = _run_once(agent, system_prompt, public_id)
-        logger.info("outreach agent for %s: %s", public_id, decision.action)
-        return decision
-
-    prompt = system_prompt
-    for attempt in range(1, COLD_ATTEMPTS + 1):
-        decision = _run_once(agent, prompt, public_id)
-        if stage == OPEN:
-            _validate_opener(decision, public_id)
-        if decision.action != "send_message":
-            logger.info("outreach agent for %s: %s", public_id, decision.action)
-            return decision
-        breach = cold_message_breach(decision.message or "")
-        if breach is None:
-            logger.info("outreach agent for %s: %s %s (prompt line: %s)",
-                        public_id, stage, decision.action,
-                        prompt_line.id if prompt_line else "none")
-            return decision
-        logger.warning("%s for %s breached a rule on attempt %d: %s",
-                       stage, public_id, attempt, breach)
-        prompt = f"{system_prompt}\n\n## Your last draft was rejected\n{breach}\nWrite it again."
-
-    raise ValueError(f"{stage} for {public_id} kept breaking a hard rule: {breach}")
-
-
-def cold_message_breach(message: str) -> str | None:
-    """The rule this cold message breaks, worded for the model, or ``None``.
-
-    Binds an opener and a follow-up alike: they are the same kind of message to the
-    person receiving them, and a chaser allowed to run long is how a short opener turns
-    into a paragraph nobody answers.
-
-    Only the mechanical rules live here — the ones a reader could check without
-    judgement. Language, register and sourcing are asked for in the prompt, because a
-    regex cannot tell a sourced claim from an invented one, and pretending otherwise
-    would be worse than the honest gap.
-    """
-    words = len(message.split())
-    if words > COLD_WORD_CEILING:
-        return (f"It ran to {words} words; the ceiling is {COLD_WORD_CEILING}. "
-                "Cut it down — do not compress a long message, write a short one.")
-    if _URL.search(message):
-        return "It contained a link. A cold email carries no link at all."
-    if "—" in message:
-        return "It contained an em dash, which reads as machine-written. Use plain punctuation."
-    if match := _PLACEHOLDER.search(message):
-        return (f"It contained the unfilled placeholder {match.group(0)!r}. "
-                "Write the actual words, or leave the thought out.")
-    return None
+    decision = _run_once(agent, system_prompt, public_id)
+    if stage == OPEN:
+        _validate_opener(decision, public_id)
+    logger.info("outreach agent for %s: %s %s (prompt line: %s)",
+                public_id, stage, decision.action,
+                prompt_line.id if prompt_line else "none")
+    return decision
 
 
 def _run_once(agent, prompt: str, public_id: str) -> OutreachDecision:

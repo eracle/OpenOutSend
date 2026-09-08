@@ -182,55 +182,6 @@ class TestLoadRecentMessages:
         assert contents[-1] == f"msg-{RECENT_MESSAGES_WINDOW + 2}"
 
 
-# ── The opener's hard rules ───────────────────────────────────────
-
-
-class TestOpenerBreach:
-    """The rules a prompt line cannot drop by being edited carelessly.
-
-    Only the mechanical ones are checked here. Language, register and sourcing are
-    asked for in the prompt, because no regex tells a sourced claim from an invented
-    one — and pretending otherwise would be worse than the honest gap.
-    """
-
-    def test_a_short_plain_opener_keeps_them_all(self):
-        from cold_outreach.core.agents.outreach import cold_message_breach
-
-        assert cold_message_breach(
-            "Saw you run infra at Acme. I'm building tooling for teams that size. "
-            "How do you handle on-call rotations today?"
-        ) is None
-
-    def test_a_long_opener_is_rejected_and_told_its_length(self):
-        from cold_outreach.core.agents.outreach import COLD_WORD_CEILING, cold_message_breach
-
-        breach = cold_message_breach("word " * (COLD_WORD_CEILING + 1))
-
-        assert breach is not None
-        assert str(COLD_WORD_CEILING) in breach
-
-    def test_an_opener_at_the_ceiling_exactly_is_allowed(self):
-        """A ceiling, not a target — the boundary belongs on the permitted side."""
-        from cold_outreach.core.agents.outreach import COLD_WORD_CEILING, cold_message_breach
-
-        assert cold_message_breach("word " * COLD_WORD_CEILING) is None
-
-    @pytest.mark.parametrize("message", [
-        "Have a look at https://example.com and tell me what you think.",
-        "Our site is www.example.com if you're curious.",
-    ])
-    def test_a_link_is_rejected(self, message):
-        """A first email asks a question; a link turns it into a funnel step."""
-        from cold_outreach.core.agents.outreach import cold_message_breach
-
-        assert "link" in cold_message_breach(message)
-
-    def test_an_em_dash_is_rejected(self):
-        from cold_outreach.core.agents.outreach import cold_message_breach
-
-        assert "em dash" in cold_message_breach("I build tools — mostly for infra teams.")
-
-
 @pytest.mark.django_db
 class TestThePromptLineReachesThePrompt:
     def test_a_first_touch_carries_the_line(self, site_config):

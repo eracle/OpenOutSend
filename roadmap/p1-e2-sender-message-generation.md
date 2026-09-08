@@ -261,13 +261,13 @@ the pipe contract leans on.
       **Deferred with the learner** — a prompt line is one whole piece of text today. The fragment
       only earns its complexity once something scores it, and splitting first would build the harder
       half for a reader that does not exist.
-- [x] The hard rules are enforced in the generator, not left to a prompt line to remember — language,
-      length, no link, no meeting request, sourced claims, no machine tells. *(In the template for
-      every rule, and in `opener_breach` for the three a machine can actually check: the word ceiling,
-      links, em dashes. A breach retries once with the complaint appended, then fails the send —
-      quietly mailing something that breaks the discipline is the outcome worth avoiding. Language,
-      register and sourcing stay prompt-side, because no regex separates a sourced claim from an
-      invented one and pretending otherwise would be worse than the honest gap.)*
+- [x] The hard rules are stated once, in the template, not left to a prompt line to remember —
+      language, length, no link, no meeting request, sourced claims, no machine tells. *(All of it
+      lives in `outreach_agent.j2`'s "Rules this email cannot break" section now, including the word
+      ceiling, links and em dashes — the generator-side check-and-retry that used to cover those three
+      (`cold_message_breach`) was removed as more complexity than the discipline was worth; see
+      [`p2-e2-message-carries-a-face`](p2-e2-message-carries-a-face.md) for the call and what it trades
+      away. A draft is sent as written.)*
 - [x] Every send records which prompt line wrote it, shaped so it aggregates.
       *(`Message.prompt_line_id` + `prompt_line_digest` — **both**, because an edited line keeps its id
       and stops being the same message. Whether a send was answered is already derivable from the
