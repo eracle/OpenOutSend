@@ -26,7 +26,7 @@ by construction rather than by discipline.
 ## Legal notice
 
 Every message this sends ends with one added line, `Sent with OpenOutreach`, appended after your
-signature and opt-out (`cold_outreach/emails/sender.py`). **It is always on — there is no setting to
+signature and opt-out (`openoutsend/emails/sender.py`). **It is always on — there is no setting to
 remove it.** It carries no link, no pixel, and no per-install identifier; nothing reports back whether a
 send happened or whether the line survived. This is how the project sustains itself with no
 subscription fee, no promo campaign, and no markup on anything you buy through it.
@@ -160,17 +160,17 @@ came across with the transport now assert against this side's own models.
 
 | Path | What it is |
 | --- | --- |
-| `cold_outreach/leads/` | app `outsend_leads` — what comes through the pipe: the models, ingest, suppression, the facts extraction |
-| `cold_outreach/emails/` | app `outsend_emails` — the transport: SMTP, IMAP sync, the mail pass, threads, delivery policy, warmth |
-| `cold_outreach/core/` | app `outsend_core` — the outreach agent, its templates, the sending window, and the stored site configuration |
-| `cold_outreach/docs/` | how the agent and its templating work |
-| `cold_outreach/settings.py` | this repo's own Django settings — one host of the apps, not the only one |
-| `cold_outreach/defaults.py` | what any host must splat: `APPS`, `state_dir()`, `app_settings()` |
-| `cold_outreach/send_pass.py` | one pass — read, answer, open — and the line saying what held it |
-| `cold_outreach/send_job.py` | `send N` — passes until the goal is open, waiting out the send clocks |
-| `cold_outreach/first_run.py` | what `check` verifies — the message fields, the model, the operator, the mailbox |
-| `cold_outreach/core/config.py` | the `OUTSEND_*` a message is written from, read fresh on every run |
-| `cold_outreach/__main__.py` | the `outsend` console script |
+| `openoutsend/leads/` | app `outsend_leads` — what comes through the pipe: the models, ingest, suppression, the facts extraction |
+| `openoutsend/emails/` | app `outsend_emails` — the transport: SMTP, IMAP sync, the mail pass, threads, delivery policy, warmth |
+| `openoutsend/core/` | app `outsend_core` — the outreach agent, its templates, the sending window, and the stored site configuration |
+| `openoutsend/docs/` | how the agent and its templating work |
+| `openoutsend/settings.py` | this repo's own Django settings — one host of the apps, not the only one |
+| `openoutsend/defaults.py` | what any host must splat: `APPS`, `state_dir()`, `app_settings()` |
+| `openoutsend/send_pass.py` | one pass — read, answer, open — and the line saying what held it |
+| `openoutsend/send_job.py` | `send N` — passes until the goal is open, waiting out the send clocks |
+| `openoutsend/first_run.py` | what `check` verifies — the message fields, the model, the operator, the mailbox |
+| `openoutsend/core/config.py` | the `OUTSEND_*` a message is written from, read fresh on every run |
+| `openoutsend/__main__.py` | the `outsend` console script |
 
 This repo carries no `roadmap/` of its own — open work for it lives in the `openoutreach-docs` repo,
 under [`roadmap/OpenOutSend/`](https://github.com/eracle/openoutreach-docs/tree/main/roadmap/OpenOutSend).
