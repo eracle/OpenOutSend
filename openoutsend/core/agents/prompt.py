@@ -1,10 +1,10 @@
 # openoutsend/core/agents/prompt.py
-"""Jinja plumbing + the shared context for the outreach prompt.
+"""Jinja plumbing + the frame every message is written inside.
 
-One template renders both the cold open and every in-thread reply
-(``outreach_agent.j2``); ``base_context`` is the half of its variables that
-doesn't depend on where in the thread we are. ``core.agents.outreach`` adds the
-conversation half.
+The frame (``frame.j2``) is the system prompt around every message: who is writing,
+the product, what we know about the lead. It carries no rules of its own — those come
+with each prompt (a step file, the follow-up, the reply) — so one frame serves every
+kind of message. ``core.agents.outreach`` puts the history and the prompt after it.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def render(template_name: str, **context) -> str:
 
 
 def base_context(deal) -> dict:
-    """The channel-agnostic prompt variables shared by every outreach entrypoint.
+    """The frame's variables: the install's config, the operator, and the lead.
 
     Four of the five come from the install's own config and the operator. The fifth
     is what we know about the person: the facts extracted from the raw
@@ -49,11 +49,3 @@ def _format_profile(lead) -> str:
     if facts:
         return "\n".join(f"- {fact}" for fact in facts)
     return lead.profile_text or "(nothing on file)"
-
-
-def _format_facts(summary: dict | None) -> str:
-    """Render a ``{"facts": [...]}`` blob as a bullet list."""
-    facts = facts_of(summary)
-    if not facts:
-        return "(none yet)"
-    return "\n".join(f"- {fact}" for fact in facts)

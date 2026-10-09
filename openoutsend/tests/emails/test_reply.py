@@ -127,7 +127,6 @@ class TestAnswerReply:
     def _run(self, deal, decision):
         with patch("openoutsend.core.agents.outreach.run_outreach_agent",
                    return_value=decision), \
-                patch("openoutsend.leads.summaries.update_chat_summary"), \
                 patch("openoutsend.emails.sender.send_email",
                       side_effect=lambda box, *a, **kw: maillog.outbound(
                           box, thread=kw.get("thread"),

@@ -204,7 +204,6 @@ class TestWordedUnsubscribe:
 
         with patch("openoutsend.core.agents.outreach.run_outreach_agent",
                    return_value=_decision("suppress")), \
-             patch("openoutsend.leads.summaries.update_chat_summary"), \
              patch("openoutsend.emails.sender.send_email") as send:
             next_state = answer_reply(deal)
 
@@ -224,7 +223,6 @@ class TestWordedUnsubscribe:
 
         with patch("openoutsend.core.agents.outreach.run_outreach_agent",
                    return_value=_decision("mark_completed", outcome="unsubscribed")), \
-             patch("openoutsend.leads.summaries.update_chat_summary"), \
              patch("openoutsend.emails.sender.send_email") as send:
             next_state = answer_reply(deal)
 
@@ -237,8 +235,7 @@ class TestWordedUnsubscribe:
         deal = _replied_deal()
 
         with patch("openoutsend.core.agents.outreach.run_outreach_agent",
-                   return_value=_decision("mark_completed", outcome="not_interested")), \
-             patch("openoutsend.leads.summaries.update_chat_summary"):
+                   return_value=_decision("mark_completed", outcome="not_interested")):
             assert answer_reply(deal) == DealState.COMPLETED
 
         assert not suppressed(deal.lead)
@@ -251,8 +248,7 @@ class TestWordedUnsubscribe:
         Lead.objects.filter(pk=deal.lead.pk).update(email="")
 
         with patch("openoutsend.core.agents.outreach.run_outreach_agent",
-                   return_value=_decision("suppress")), \
-             patch("openoutsend.leads.summaries.update_chat_summary"):
+                   return_value=_decision("suppress")):
             assert answer_reply(deal) == DealState.COMPLETED
 
 
@@ -275,7 +271,7 @@ class TestSendGuards:
             state=DealState.READY,
         )
 
-        def _suppress_then_decide(target, prompt_line=None):
+        def _suppress_then_decide(target, prompt, opener=False):
             suppress_email(target.lead.email)
             return _decision("send_message", subject="Hi", message="Body")
 
@@ -292,13 +288,12 @@ class TestSendGuards:
     def test_a_reply_is_not_sent_to_a_lead_suppressed_mid_run(self, operator):
         deal = _replied_deal()
 
-        def _suppress_then_decide(target):
+        def _suppress_then_decide(target, prompt):
             suppress_email(target.lead.email)
             return _decision("send_message", message="Body")
 
         with patch("openoutsend.core.agents.outreach.run_outreach_agent",
                    side_effect=_suppress_then_decide), \
-             patch("openoutsend.leads.summaries.update_chat_summary"), \
              patch("openoutsend.emails.sender.send_email") as send:
             assert answer_reply(deal) is None
 

@@ -5,7 +5,8 @@ Three tables, and each one answers a question the boundary contract asks:
 - **Lead** — the person, keyed on the producer's own `lead_id`. Every field on it is
   a field of the record, so nothing here is derived and nothing is inferred.
 - **Deal** — that person's conversation, one row per lead, carrying the finder's
-  `reason`. This is also the row the send path walks. (What a message is written
+  `reason` and where it is in its sequence (`core/sequences.py`). This is also the
+  row the send path walks. (What a message is written
   from — `product_docs`, `campaign_target`, `booking_link` — is not stored at all: it
   comes from `OUTSEND_*` on every run (`core/config.py`), and this install has never
   run more than one campaign, so there is nothing per-deal to hold it against.)
@@ -184,15 +185,14 @@ class Deal(models.Model):
     )
     email_subject = models.CharField(max_length=500, blank=True, default="")
     email_sent_at = models.DateTimeField(null=True, blank=True)
-    # What this conversation has taught us — ``{"facts": [...]}``, rolled forward as
-    # each reply is read (`leads/summaries.py`). Per deal, because it is per
-    # conversation, and a thread is what the agent is answering inside.
+
+    # ── Where it is in its sequence ───────────────────────────────
     #
-    # It is not a transcript: the mail log holds every message, and the agent reads
-    # the last few turns verbatim beside this. What the fact list carries is the part
-    # of the thread that has scrolled out of that window and still matters — which is
-    # the whole reason a summary exists rather than a bigger window.
-    chat_summary = models.JSONField(default=dict, blank=True)
+    # The sequence by the name `core/sequences.for_deal` resolves: `cold` for the
+    # built-in one. `step` is the number of the last step sent, and null until the
+    # first one goes. Follow-ups and replies are not steps and never move it.
+    sequence = models.CharField(max_length=500, default="cold")
+    step = models.PositiveSmallIntegerField(null=True, blank=True)
 
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)

@@ -4,28 +4,14 @@ The LLM boundary is mocked at `_run_extraction`, which is the whole point of it 
 one function: everything above it is caching, selection and persistence, and none of
 that should need a model to be tested.
 """
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from openoutsend.leads.summaries import (
-    facts_of,
-    materialize_profile_summary_if_missing,
-    update_chat_summary,
-)
-from openoutsend.tests.factories import DealFactory, LeadFactory
+from openoutsend.leads.summaries import facts_of, materialize_profile_summary_if_missing
+from openoutsend.tests.factories import LeadFactory
 
 pytestmark = pytest.mark.django_db
-
-
-def turn(body: str, *, outbound: bool):
-    message = MagicMock()
-    message.body_text = body
-    message.is_outbound = outbound
-    return message
-
-
-# ── The lead's profile ────────────────────────────────────────────
 
 
 def test_the_facts_are_extracted_and_stored():
@@ -60,48 +46,3 @@ def test_a_lead_with_no_text_costs_nothing():
 
     extract.assert_not_called()
     assert facts_of(lead.profile_summary) == []
-
-
-# ── The conversation ──────────────────────────────────────────────
-
-
-def test_new_turns_are_folded_into_what_is_known():
-    deal = DealFactory(chat_summary={"facts": ["Lead is curious about pricing."]})
-
-    with patch("openoutsend.leads.summaries._run_extraction",
-               return_value=["Lead is curious about pricing.", "Lead has a team of four."]) as extract:
-        update_chat_summary(deal, [turn("How much is it?", outbound=False)], seller_name="Eracle")
-
-    deal.refresh_from_db()
-    assert facts_of(deal.chat_summary) == ["Lead is curious about pricing.", "Lead has a team of four."]
-
-    system, transcript = extract.call_args.args
-    assert "Eracle" in system, "the identity binding has to reach the model"
-    assert "Lead is curious about pricing." in transcript, "what is known is part of the input"
-    assert "[Lead]: How much is it?" in transcript
-
-
-def test_our_own_messages_are_context_not_facts():
-    deal = DealFactory()
-
-    with patch("openoutsend.leads.summaries._run_extraction", return_value=[]) as extract:
-        update_chat_summary(
-            deal,
-            [turn("How do you handle this today?", outbound=True), turn("Badly.", outbound=False)],
-            seller_name="Eracle",
-        )
-
-    transcript = extract.call_args.args[1]
-    assert "[Me]: How do you handle this today?" in transcript
-    assert "[Lead]: Badly." in transcript
-
-
-def test_nothing_new_is_not_a_call():
-    deal = DealFactory(chat_summary={"facts": ["Known."]})
-
-    with patch("openoutsend.leads.summaries._run_extraction") as extract:
-        update_chat_summary(deal, [], seller_name="Eracle")
-
-    extract.assert_not_called()
-    deal.refresh_from_db()
-    assert facts_of(deal.chat_summary) == ["Known."]

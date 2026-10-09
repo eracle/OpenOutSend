@@ -348,17 +348,30 @@ class TestSendFirstEmail:
         send, next_state = self._run(deal, box)
 
         # Every send is the operator's own, so they get a BCC of their outreach.
-        send.assert_called_once_with(
-            box, "lead@corp.com", "Hi there", "Short opener.",
-            bcc=operator.email,
-            prompt_line=None,
-        )
+        send.assert_called_once()
+        assert send.call_args.args == (box, "lead@corp.com", "Hi there", "Short opener.")
+        kwargs = send.call_args.kwargs
+        assert kwargs["bcc"] == operator.email
+        assert kwargs["prompt_line"] is None
         assert next_state == DealState.EMAILED
         deal.refresh_from_db()
         assert deal.mailbox == box
         assert deal.email_subject == "Hi there"
         assert deal.thread is not None
         assert deal.email_sent_at is not None
+
+    def test_it_is_written_from_cold_e0_and_records_the_step(self, operator):
+        """The rendered prompt goes on the send, so the next message's history replays it."""
+        box = _box(daily_limit=10)
+        deal = _ready("lead@corp.com")
+
+        send, _ = self._run(deal, box)
+
+        kwargs = send.call_args.kwargs
+        assert (kwargs["step"].number, kwargs["step"].path.name) == (0, "E0-opener.md")
+        assert "Write a first email to this lead." in kwargs["prompt"]
+        deal.refresh_from_db()
+        assert deal.step == 0
 
     def test_the_deal_points_at_the_thread_the_send_opened(self, operator):
         """One record, not two: the deal borrows the log's thread rather than
@@ -404,7 +417,7 @@ class TestSendFirstEmail:
             "openoutsend.leads.summaries.materialize_profile_summary_if_missing",
         ), patch(
             "openoutsend.core.agents.outreach.run_outreach_agent",
-            side_effect=lambda d, prompt_line=None: (
+            side_effect=lambda d, prompt, opener=False: (
                 suppress_email(d.lead.email, reason="opted out mid-run")
                 or OutreachDecision(action="send_message", subject="s", message="m")
             ),

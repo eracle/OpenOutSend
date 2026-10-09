@@ -52,14 +52,14 @@ def app_settings() -> dict:
         # rather than one "sending window" toggle because an operator can want either
         # without the other — hold the 08:00–20:00 line but let Saturday/Sunday sends
         # go out, which the combined flag could not express.
-        "OUTSEND_ENFORCE_WORK_HOURS": _env_flag("OUTSEND_ENFORCE_WORK_HOURS"),
-        "OUTSEND_ENFORCE_WEEKEND_PAUSE": _env_flag("OUTSEND_ENFORCE_WEEKEND_PAUSE"),
+        "OUTSEND_ENFORCE_WORK_HOURS": env_flag("OUTSEND_ENFORCE_WORK_HOURS"),
+        "OUTSEND_ENFORCE_WEEKEND_PAUSE": env_flag("OUTSEND_ENFORCE_WEEKEND_PAUSE"),
     }
 
 
-def _env_flag(name: str, *, default: bool = True) -> bool:
-    """A boolean setting from the environment: unset keeps `default`, "0"/"false"/"no" flips it off."""
+def env_flag(name: str, *, default: bool = True) -> bool:
+    """A boolean from the environment: unset keeps `default`, "0"/"false"/"no"/"off" turn it off."""
     value = os.environ.get(name)
     if value is None:
         return default
-    return value.strip().lower() not in {"0", "false", "no"}
+    return value.strip().lower() not in {"0", "false", "no", "off"}

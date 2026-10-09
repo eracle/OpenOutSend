@@ -2,24 +2,24 @@ from __future__ import annotations
 
 import pytest
 
-from openoutsend.defaults import _env_flag, app_settings
+from openoutsend.defaults import app_settings, env_flag
 
 
 class TestEnvFlag:
     def test_unset_keeps_the_default(self, monkeypatch):
         monkeypatch.delenv("SOME_FLAG", raising=False)
-        assert _env_flag("SOME_FLAG") is True
-        assert _env_flag("SOME_FLAG", default=False) is False
+        assert env_flag("SOME_FLAG") is True
+        assert env_flag("SOME_FLAG", default=False) is False
 
-    @pytest.mark.parametrize("value", ["0", "false", "False", "no", "NO", "  no  "])
+    @pytest.mark.parametrize("value", ["0", "false", "False", "no", "NO", "  no  ", "off", "OFF"])
     def test_falsy_spellings_turn_it_off(self, monkeypatch, value):
         monkeypatch.setenv("SOME_FLAG", value)
-        assert _env_flag("SOME_FLAG") is False
+        assert env_flag("SOME_FLAG") is False
 
-    @pytest.mark.parametrize("value", ["1", "true", "yes", "anything"])
+    @pytest.mark.parametrize("value", ["1", "true", "yes", "on", "anything"])
     def test_anything_else_leaves_it_on(self, monkeypatch, value):
         monkeypatch.setenv("SOME_FLAG", value)
-        assert _env_flag("SOME_FLAG") is True
+        assert env_flag("SOME_FLAG") is True
 
 
 class TestAppSettings:

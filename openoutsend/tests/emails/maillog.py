@@ -37,8 +37,13 @@ def mailbox(address: str = "sender@corp.com", *, watching: bool = True, **kwargs
 
 
 def outbound(box, *, thread=None, to="lead@acme.com", message_id=None,
-             body="Hi there", sent_at=None, subject="Quick question") -> Message:
-    """One send, as ``sender.py`` writes it: classified, processed, in a thread."""
+             body="Hi there", sent_at=None, subject="Quick question",
+             step=None, prompt="") -> Message:
+    """One send, as ``sender.py`` writes it: classified, processed, in a thread.
+
+    ``step`` is the sequence step it sent — ``0`` for an opener — and ``None`` for a
+    follow-up or a reply, which is what the planner counts follow-ups by.
+    """
     now = sent_at or timezone.now()
     thread = thread or Thread.objects.create(mailbox=box)
     return Message.objects.create(
@@ -50,6 +55,8 @@ def outbound(box, *, thread=None, to="lead@acme.com", message_id=None,
         to_address=to,
         subject=subject,
         body_text=body,
+        step=step,
+        prompt=prompt,
         sent_at=now,
         kind=Kind.OUTBOUND,
         classified_at=now,

@@ -1,13 +1,11 @@
-"""Facts — what we know about a person, and what a conversation has taught us.
+"""Facts — what we know about a person, before anybody has written to them.
 
-Two fact lists, one LLM boundary, and the same shape on both: `{"facts": [...]}`,
-short self-contained sentences a prompt can render as bullets.
+**`Lead.profile_summary`** is extracted from the raw firmographic `profile_text` the
+pipe carries: `{"facts": [...]}`, short self-contained sentences a prompt can render as
+bullets. Built lazily on the first touch and cached.
 
-- **`Lead.profile_summary`** is extracted from the raw firmographic `profile_text`
-  the pipe carries. Built lazily on the first touch, cached, and rebuilt if the text
-  is corrected by a later ingest.
-- **`Deal.chat_summary`** is rolled forward as replies arrive, so a long thread does
-  not depend on the agent's short verbatim window to remember what was said early.
+What a *conversation* teaches is not summarised at all: every message is written after
+the whole history with the lead, verbatim (`core/agents/history.py`).
 
 **The extraction is tuned for the reader it has**, which is the one thing the finder's
 version got wrong: it conditioned on campaign target and product docs and asked for
@@ -46,43 +44,9 @@ Rules:
   fine answer when the text says nothing useful.
 """
 
-_CHAT_PROMPT = """\
-You are maintaining a running list of facts about a lead, learned from an email
-conversation with them.
-
-You are given the facts known so far and the new messages since. Return the **complete
-updated list** — not just the new entries.
-
-Rules:
-- Keep every fact that still holds; drop or rewrite any the new messages contradict.
-- Add what the new messages teach: their situation, tools, constraints, timing,
-  who else is involved, what they said in their own words.
-- Each fact is one self-contained sentence under ~25 words. Merge near-duplicates.
-- Facts about the **lead only**. Messages tagged [Me] are ours and are context for
-  reading theirs, never a source of facts.
-- At most {max_facts} facts. When it is full, keep what most changes how we would
-  write the next message.
-"""
-
-
-def _identity_binding(seller_name: str) -> str:
-    """Bind the [Me] tag to a name, so the lead is not credited with our own.
-
-    Without it a lead who opens with *"Hola Diego, gracias..."* gets `the lead's name
-    is Diego` extracted as a fact about them — the tags alone carry no name.
-    """
-    return (
-        f"\nIdentity binding (read carefully):\n"
-        f"- [Me] is named {seller_name}.\n"
-        f"- When a [Lead] message mentions `{seller_name}`, that is a reference to "
-        f"[Me] — never record it as a fact about the lead.\n"
-        f"- Any existing fact describing `{seller_name}` as though they were the "
-        f"lead is contamination: drop it."
-    )
-
 
 class FactList(BaseModel):
-    """Structured LLM output for both extractions."""
+    """Structured LLM output for the extraction."""
 
     facts: list[str] = Field(
         default_factory=list,
@@ -137,39 +101,3 @@ def materialize_profile_summary_if_missing(lead) -> None:
         "profile facts for %s (%d)%s",
         lead.public_id, len(facts), "".join(f"\n  • {fact}" for fact in facts),
     )
-
-
-# ── The conversation ──────────────────────────────────────────────
-
-
-def update_chat_summary(deal, new_messages, *, seller_name: str) -> None:
-    """Fold *new_messages* into `deal.chat_summary` and save it.
-
-    The whole list comes back from the model rather than a diff, because the store is
-    the list: there is nothing to address a diff against, and a merge that can rewrite
-    a stale fact is worth more here than one that can only append.
-    """
-    if not new_messages:
-        return
-
-    known = facts_of(deal.chat_summary)
-    system = _CHAT_PROMPT.format(max_facts=MAX_FACTS) + _identity_binding(seller_name)
-    facts = _run_extraction(system, _transcript(known, new_messages))
-
-    deal.chat_summary = {"facts": facts}
-    deal.save(update_fields=["chat_summary"])
-    logger.info(
-        "chat facts for %s (%d)%s",
-        deal.lead.public_id, len(facts), "".join(f"\n  • {fact}" for fact in facts),
-    )
-
-
-def _transcript(known: list[str], messages) -> str:
-    """The prompt's input: what is known, then the new turns, tagged by side."""
-    known_block = "\n".join(f"- {fact}" for fact in known) or "(nothing yet)"
-    turns = "\n".join(
-        f"[{'Me' if message.is_outbound else 'Lead'}]: {(message.body_text or '').strip()}"
-        for message in messages
-        if (message.body_text or "").strip()
-    )
-    return f"Facts known so far:\n{known_block}\n\nNew messages:\n{turns or '(none)'}"

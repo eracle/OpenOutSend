@@ -43,9 +43,9 @@ class Kind(models.TextChoices):
 
 
 # The kinds that are *turns in a conversation*. An NDR is a fact about delivery,
-# never something anybody said, so it cannot reach ``chat_summary`` or the agent's
-# context — closed here, structurally, rather than by a filter someone must
-# remember to apply at each read site.
+# never something anybody said, so it cannot reach the agent's history — closed
+# here, structurally, rather than by a filter someone must remember to apply at
+# each read site.
 TURN_KINDS = (Kind.HUMAN_REPLY, Kind.OUTBOUND)
 
 
@@ -138,6 +138,14 @@ class Message(models.Model):
     # exist before anything reads them.
     prompt_line_id = models.CharField(max_length=64, blank=True, default="")
     prompt_line_digest = models.CharField(max_length=64, blank=True, default="")
+    # Outbound only: the prompt this message was written from, **as rendered** when it
+    # was sent, so the history the next message is written from replays what the model
+    # was actually asked even after the step file has been edited
+    # (`core/agents/history.py`). `step` and `prompt_path` say which step file it was;
+    # both are empty on a follow-up and a reply, whose prompts are hardcoded.
+    prompt = models.TextField(blank=True, default="")
+    prompt_path = models.CharField(max_length=500, blank=True, default="")
+    step = models.PositiveSmallIntegerField(null=True, blank=True)
     # Provenance, never identity — see the class docstring.
     folder = models.CharField(max_length=255, blank=True, default="")
     uid = models.PositiveBigIntegerField(null=True, blank=True)

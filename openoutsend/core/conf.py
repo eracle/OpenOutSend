@@ -129,13 +129,28 @@ SEND_INTERVAL_JITTER_MAX_SECONDS = 90
 # waited one working day, and chasing across a weekend reads as a machine counting
 # hours (`core/business_time.py`).
 #
-# Two follow-ups, then the deal ends `unresponsive`. The cap is what stops an open
-# thread being pursued forever, and the number is deliberately small: cold volume is
-# what damages a sending domain, and a third touch is already likelier to draw a
-# complaint than a reply.
+# **The number of follow-ups is the length of the gaps.** Two after a sequence's last
+# step, then the deal ends `unresponsive`; after an earlier step, only those that land
+# before the next step is due (`planner._follow_up_is_due`). The number is deliberately
+# small: cold volume is what damages a sending domain, and a third touch is already
+# likelier to draw a complaint than a reply.
+#
+# **Switched per install** by ``OUTSEND_FOLLOW_UPS``, on by default. Cold outreach wants
+# them; an install mailing an event sequence to people who opted in turns them off,
+# because its steps already say everything it means to say.
 # ----------------------------------------------------------------------
-FOLLOW_UP_GAPS_BUSINESS_DAYS = (3, 5)    # touch 2 after 3 days, touch 3 after 5 more
-MAX_COLD_TOUCHES = len(FOLLOW_UP_GAPS_BUSINESS_DAYS) + 1
+FOLLOW_UP_GAPS_BUSINESS_DAYS = (3, 5)    # the first after 3 days, the second 5 after that
+
+
+def follow_ups_on() -> bool:
+    """Whether this install chases silence (``OUTSEND_FOLLOW_UPS``, default on).
+
+    Read on every call rather than at import, like the rest of what an install is
+    configured with: the environment is the configuration, and a run reads it fresh.
+    """
+    from openoutsend.defaults import env_flag
+
+    return env_flag("OUTSEND_FOLLOW_UPS")
 
 # Mean realized gap: the floor plus the expected value of U[min, max].
 MEAN_SEND_INTERVAL_SECONDS = MIN_SEND_INTERVAL_SECONDS + (

@@ -3,8 +3,9 @@
 Chasing was deleted once, for a reason that was really about *priority*: follow-ups
 outranked openers out of a separate budget, and a live install measured 102 follow-ups
 against 1 first email in a week. These tests hold the shape that makes that
-unreachable — one budget, a cap on touches, and a gap measured backwards from the mail
-log rather than scheduled on a row.
+unreachable — one budget, a cap on follow-ups, and a gap measured backwards from the
+mail log rather than scheduled on a row — and the two rules sequences add: an install
+can switch follow-ups off, and one that does not land before the next step is skipped.
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ from unittest.mock import patch
 import pytest
 from django.utils import timezone
 
-from openoutsend.core.conf import FOLLOW_UP_GAPS_BUSINESS_DAYS, MAX_COLD_TOUCHES
+from openoutsend.core.conf import FOLLOW_UP_GAPS_BUSINESS_DAYS
 from openoutsend.emails.models import Thread
 from openoutsend.leads.models import DealState, Outcome
 from openoutsend.planner import awaiting_follow_up, exhausted_touches
@@ -23,6 +24,9 @@ from openoutsend.tests.factories import DealFactory, LeadFactory
 
 pytestmark = pytest.mark.django_db
 
+# The opener plus every follow-up it may have.
+ALL_TOUCHES = len(FOLLOW_UP_GAPS_BUSINESS_DAYS) + 1
+
 
 def _monday(hour=10):
     """A fixed Monday, so a test never straddles a weekend by accident."""
@@ -30,8 +34,11 @@ def _monday(hour=10):
         year=2026, month=3, day=16, hour=hour, minute=0, second=0, microsecond=0)
 
 
-def _pursued(*, touches=1, days_ago=10, replied=False, box=None):
-    """A deal with *touches* outbound turns, the last one *days_ago* business days back."""
+def _pursued(*, touches=1, days_ago=10, replied=False, box=None, sequence="cold"):
+    """A deal at step 0 with *touches* sends, the last one *days_ago* days back.
+
+    The first send is the step; the rest are its follow-ups.
+    """
     box = box or maillog.mailbox()
     thread = Thread.objects.create(mailbox=box)
     deal = DealFactory(
@@ -40,15 +47,25 @@ def _pursued(*, touches=1, days_ago=10, replied=False, box=None):
         thread=thread,
         mailbox=box,
         email_subject="Hi there",
+        sequence=sequence,
+        step=0,
     )
     when = _monday() - timedelta(days=days_ago)
     for index in range(touches):
         maillog.outbound(box, thread=thread, message_id=f"out{index}@infra.com",
-                         sent_at=when - timedelta(days=touches - index - 1))
+                         sent_at=when - timedelta(days=touches - index - 1),
+                         step=0 if index == 0 else None)
     if replied:
         maillog.inbound(box, thread=thread, body="Sure, tell me more",
                         sent_at=when + timedelta(hours=1))
     return deal
+
+
+def _two_steps(tmp_path, days: int) -> str:
+    """A sequence folder whose E1 is due *days* business days after E0."""
+    (tmp_path / "E0-first.md").write_text("Say hello.")
+    (tmp_path / f"E1-{days}d-second.md").write_text("Say hello again.")
+    return str(tmp_path)
 
 
 class TestWhoIsDue:
@@ -68,16 +85,16 @@ class TestWhoIsDue:
 
         assert awaiting_follow_up(now=_monday()) == []
 
-    def test_a_lead_out_of_touches_is_not_due_but_is_exhausted(self):
-        _pursued(touches=MAX_COLD_TOUCHES, days_ago=30)
+    def test_a_lead_out_of_follow_ups_is_not_due_but_is_exhausted(self):
+        _pursued(touches=ALL_TOUCHES, days_ago=30)
 
         assert awaiting_follow_up(now=_monday()) == []
-        assert exhausted_touches().count() == 1
+        assert len(exhausted_touches()) == 1
 
-    def test_a_lead_still_within_the_cap_is_not_exhausted(self):
-        _pursued(touches=MAX_COLD_TOUCHES - 1, days_ago=30)
+    def test_a_lead_with_a_follow_up_left_is_not_exhausted(self):
+        _pursued(touches=ALL_TOUCHES - 1, days_ago=30)
 
-        assert exhausted_touches().count() == 0
+        assert exhausted_touches() == []
 
     def test_the_gap_widens_with_each_touch(self):
         """The second gap is longer than the first, so touch three waits longer."""
@@ -94,18 +111,54 @@ class TestWhoIsDue:
         box = maillog.mailbox()
         thread = Thread.objects.create(mailbox=box)
         DealFactory(lead=LeadFactory(email="l@acme.com"),
-                    state=DealState.EMAILED, thread=thread, mailbox=box)
+                    state=DealState.EMAILED, thread=thread, mailbox=box, step=0)
         friday = _monday() - timedelta(days=3)
-        maillog.outbound(box, thread=thread, message_id="out@infra.com", sent_at=friday)
+        maillog.outbound(box, thread=thread, message_id="out@infra.com", sent_at=friday, step=0)
 
         assert awaiting_follow_up(now=_monday()) == []
+
+
+class TestTheSwitch:
+    def test_off_means_nobody_is_chased(self, monkeypatch):
+        monkeypatch.setenv("OUTSEND_FOLLOW_UPS", "off")
+        _pursued(touches=1, days_ago=10)
+
+        assert awaiting_follow_up(now=_monday()) == []
+
+    def test_off_ends_the_pursuit_once_the_last_step_is_out(self, monkeypatch):
+        """No follow-up is coming, so silence after the last step is the end of it."""
+        monkeypatch.setenv("OUTSEND_FOLLOW_UPS", "off")
+        _pursued(touches=1, days_ago=1)
+
+        assert len(exhausted_touches()) == 1
+
+
+class TestFittingBeforeTheNextStep:
+    """``E0 ── 3d: follow-up 1 ── 5d: follow-up 2 ── E1``, and only what lands before E1."""
+
+    def test_a_follow_up_that_lands_before_the_next_step_goes(self, tmp_path):
+        _pursued(touches=1, days_ago=7, sequence=_two_steps(tmp_path, days=10))
+
+        assert len(awaiting_follow_up(now=_monday())) == 1
+
+    def test_one_that_would_land_on_or_after_it_is_skipped(self, tmp_path):
+        """E1 is due 3 business days after E0: the first follow-up is due then too, so it never goes."""
+        _pursued(touches=1, days_ago=7, sequence=_two_steps(tmp_path, days=3))
+
+        assert awaiting_follow_up(now=_monday()) == []
+
+    def test_a_deal_with_a_step_still_to_come_is_not_exhausted(self, tmp_path):
+        """Out of follow-ups, but E1 has not gone: the pursuit is not over."""
+        _pursued(touches=ALL_TOUCHES, days_ago=30, sequence=_two_steps(tmp_path, days=20))
+
+        assert exhausted_touches() == []
 
 
 class TestGivingUp:
     def test_the_deal_completes_as_unresponsive(self):
         from openoutsend.emails.steps.follow_up import give_up
 
-        deal = _pursued(touches=MAX_COLD_TOUCHES, days_ago=30)
+        deal = _pursued(touches=ALL_TOUCHES, days_ago=30)
 
         assert give_up(deal) == DealState.COMPLETED
         assert deal.outcome == "unresponsive"
@@ -115,7 +168,7 @@ class TestGivingUp:
         from openoutsend.emails.steps.follow_up import give_up
         from openoutsend.leads.suppression import is_suppressed
 
-        deal = _pursued(touches=MAX_COLD_TOUCHES, days_ago=30)
+        deal = _pursued(touches=ALL_TOUCHES, days_ago=30)
         give_up(deal)
 
         assert not is_suppressed(deal.lead.email)
@@ -146,27 +199,19 @@ class TestTheFollowUpItself:
         assert kwargs["thread"] == deal.thread
         assert kwargs["in_reply_to"]
 
-    def test_it_reuses_the_prompt_line_the_opener_used(self, operator):
-        """One voice across the sequence, and one line to attribute a reply to."""
-        from openoutsend.core.prompt_lines import choose
+    def test_it_is_written_from_the_follow_up_prompt_and_records_it(self, operator):
+        """The prompt is the module's own, and it goes on the row so the next history replays it."""
+        from openoutsend.emails.steps.follow_up import FOLLOW_UP_PROMPT
 
-        deal = _pursued(touches=0, days_ago=10)
-        line = choose("plain-ask")
-        maillog.outbound(deal.mailbox, thread=deal.thread, message_id="op@infra.com",
-                         sent_at=_monday() - timedelta(days=10))
-        deal.thread.messages.update(prompt_line_id=line.id, prompt_line_digest=line.digest)
+        deal = _pursued(touches=1, days_ago=10)
 
         agent, send, _ = self._send(deal)
 
-        assert agent.call_args.args[1].id == "plain-ask"
-        assert send.call_args.kwargs["prompt_line"].id == "plain-ask"
-
-    def test_it_asks_the_agent_for_a_follow_up_not_an_opener(self, operator):
-        deal = _pursued(touches=1, days_ago=10)
-
-        agent, _, _ = self._send(deal)
-
-        assert agent.call_args.kwargs["stage"] == "follow_up"
+        assert agent.call_args.args[1] == FOLLOW_UP_PROMPT
+        assert send.call_args.kwargs["prompt"] == FOLLOW_UP_PROMPT
+        # Not a step, and no move of its own: it keeps the opener's from the history.
+        assert "step" not in send.call_args.kwargs
+        assert "prompt_line" not in send.call_args.kwargs
 
     def test_a_lead_suppressed_mid_run_is_not_chased(self, operator):
         """The same last gate the opener has — a bounce or an opt-out may have landed."""

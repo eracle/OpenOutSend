@@ -245,9 +245,9 @@ def _silent(box, days_ago=10):
     thread = Thread.objects.create(mailbox=box)
     deal = DealFactory(
         lead=LeadFactory(email="silent@acme.com"),
-        state=DealState.EMAILED, mailbox=box, thread=thread, email_subject="Hi",
+        state=DealState.EMAILED, mailbox=box, thread=thread, email_subject="Hi", step=0,
     )
-    maillog.outbound(box, thread=thread, message_id="old@infra.com",
+    maillog.outbound(box, thread=thread, message_id="old@infra.com", step=0,
                      sent_at=timezone.now() - timedelta(days=days_ago))
     return deal
 

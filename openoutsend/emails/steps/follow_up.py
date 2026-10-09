@@ -1,20 +1,26 @@
 # openoutsend/emails/steps/follow_up.py
-"""Writing again to somebody who never answered — the second and third touch.
+"""Writing again to somebody who never answered — a nudge on the same thread.
+
+**A follow-up is a feature, not a step.** Its prompt is hardcoded here rather than in
+a sequence folder, and an install turns it on or off (``OUTSEND_FOLLOW_UPS``,
+``core/conf.follow_ups_on``). Cold has it on; an event sequence whose steps already say
+everything has it off. The planner decides *when* (``planner.awaiting_follow_up``:
+business days measured backwards from the mail log, and only if it lands before the
+deal's next step is due); this step decides *what*.
 
 **This is cold volume, and it is treated as such.** Unlike a reply, nobody invited it:
 it counts against the box's daily cap, waits for the spacing clock, and only leaves
-inside the sending window. The planner decides *when* (`planner.awaiting_follow_up`,
-business days measured backwards from the mail log); this step decides *what*.
+inside the sending window.
 
 **It cannot choose its mailbox.** The thread was opened from one box and answering from
 another would break the conversation, so the send goes from `deal.mailbox` or does not
 go at all this pass. That is the only structural difference from an opener, which picks
 whichever box in the pool is freest.
 
-**It reuses the opener's prompt line**, read back off the first outbound message in the
-thread. Two reasons, and the second matters more: a sequence written from one move reads
-as one person, and a reply that lands on touch three can be attributed to a single line
-rather than to a mixture of them.
+**It keeps the opener's move without being told it.** The model writes it after the
+whole history (``core/agents/history.py``), which includes the prompt the email it
+follows was written from — prompt line and all — so a sequence reads as one person
+without the line being read back and pasted in a second time.
 
 Why chasing came back, having been deleted: the thing that was actually wrong was
 *priority*. Follow-ups outranked openers, open threads accumulate faster than they
@@ -34,6 +40,30 @@ from openoutsend.leads.models import DealState
 
 logger = logging.getLogger(__name__)
 
+FOLLOW_UP_PROMPT = """\
+They have not answered your last email. They have said nothing at all — not "no", not "later", nothing. Assume it was simply missed.
+
+Write one more short email in the same thread: a `message` and no `subject`, since it keeps the original. Or, if the facts about them say this person is plainly the wrong fit, choose `mark_completed` with `wrong_fit` instead of writing.
+
+**Say something new.** A follow-up whose whole content is that a previous email exists is the thing everyone deletes. No "just bumping this", no "did you see my last email", no "following up on the below", no apology for writing again. If you have nothing to add, ask a different and smaller question than last time.
+
+**Never imply obligation.** They did not owe you an answer and still do not. No "I did not hear back", no "I will assume you are not interested", no counting of how many times you have written.
+
+**Shorter than the last one.** Each touch has less claim on their attention than the one before it.
+
+**Stay in the voice of the email it follows.** Its prompt is above: keep the move it made. This is one person writing twice, not two campaigns.
+
+### Rules this email cannot break
+
+These override anything above.
+
+- **At most 75 words.** Write a short message; do not write a long one and squeeze it.
+- **No link of any kind**, and **no meeting request**: one question they can answer in a sentence from their phone.
+- **Only claims the facts about them can source.** If it is not in the record, you do not know it.
+- **No machine tells.** No em dash, no three-item lists, no two perfectly balanced clauses in a row.
+- Write in the same language as your last email, whatever the facts about them suggest. Switching languages mid-thread reads as a different sender.
+- No placeholders like [Your Name], and no signature."""
+
 
 def send_follow_up(deal) -> DealState | None:
     """Write to *deal* again in its own thread. Returns the next state.
@@ -42,17 +72,15 @@ def send_follow_up(deal) -> DealState | None:
     a lead suppressed while the agent was writing, or an agent that answered with
     something other than a message.
     """
-    from openoutsend.core.agents.outreach import FOLLOW_UP, run_outreach_agent
+    from openoutsend.core.agents.outreach import run_outreach_agent
     from openoutsend.core.operator import get_active_user
     from openoutsend.emails.sender import operator_bcc, send_email, suppressed
     from openoutsend.emails.steps.reply import ends_in_an_opt_out, honour_opt_out, thread_ids
     from openoutsend.emails.steps.send import space_out
 
-    prompt_line = opening_prompt_line(deal)
-    logger.info("%s %s (%s)", colored("▶ follow-up", "cyan", attrs=["bold"]),
-                deal.lead.public_id, prompt_line.id if prompt_line else "no prompt line")
+    logger.info("%s %s", colored("▶ follow-up", "cyan", attrs=["bold"]), deal.lead.public_id)
 
-    decision = run_outreach_agent(deal, prompt_line, stage=FOLLOW_UP)
+    decision = run_outreach_agent(deal, FOLLOW_UP_PROMPT)
 
     # A chase is written to somebody who has said nothing, so there is no opt-out here
     # to read and the prompt does not offer one. It is honoured anyway if the agent
@@ -90,7 +118,7 @@ def send_follow_up(deal) -> DealState | None:
         in_reply_to=chain[-1] if chain else None,
         references=" ".join(chain) or None,
         thread=deal.thread,
-        prompt_line=prompt_line,
+        prompt=FOLLOW_UP_PROMPT,
     )
     space_out(deal.mailbox, timezone.now())
     return None
@@ -107,37 +135,3 @@ def give_up(deal) -> DealState:
     logger.info("%s never answered — ending the pursuit", deal.lead.public_id)
     deal.outcome = "unresponsive"
     return DealState.COMPLETED
-
-
-def opening_prompt_line(deal):
-    """The prompt line the opener was written from, or ``None``.
-
-    Read back off the thread rather than carried on the deal: the mail log already
-    records it against the send, and a second copy on the deal is a second thing that
-    can disagree. ``None`` covers a thread opened before prompt lines existed and an
-    install with none, both of which still get a follow-up — just an unattributed one.
-    """
-    from openoutsend.core.prompt_lines import PromptLineError, choose
-    from openoutsend.emails.models import Direction
-
-    if not deal.thread_id:
-        return None
-    opener = (
-        deal.thread.messages
-        .filter(direction=Direction.OUTBOUND)
-        .exclude(prompt_line_id="")
-        .order_by("sent_at", "pk")
-        .first()
-    )
-    if opener is None:
-        return None
-    try:
-        return choose(opener.prompt_line_id)
-    except PromptLineError:
-        # The line was renamed or deleted after the opener went out. The follow-up is
-        # worth more than the attribution, so it goes without one.
-        logger.warning("prompt line %r is gone — following up %s without it",
-                       opener.prompt_line_id, deal.lead.public_id)
-        return None
-
-
