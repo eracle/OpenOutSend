@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from openoutsend.emails.models import Mailbox, Thread
+from openoutsend.emails.models import Thread
 from openoutsend.leads.models import DealState, Outcome
 from openoutsend.send_pass import PassResult, _what_is_holding, run_send_pass
 from openoutsend.tests.emails import maillog
@@ -57,7 +57,7 @@ def _replied(box):
 
 def _free(box):
     """Hand the opener loop *box* once, then close the pool — one send's worth."""
-    return patch.object(Mailbox.objects, "free_for_first_email", side_effect=[box, None])
+    return patch("openoutsend.planner.free_for_first_email",side_effect=[box, None])
 
 
 # ── The order ─────────────────────────────────────────────────────
@@ -183,7 +183,7 @@ def test_a_failed_opener_stops_the_openers_for_this_pass(steps):
     _waiting("second@acme.com")
     steps.send.side_effect = RuntimeError("smtp said no")
 
-    with patch.object(Mailbox.objects, "free_for_first_email", return_value=box):
+    with patch("openoutsend.planner.free_for_first_email",return_value=box):
         result = run_send_pass()
 
     assert (result.opened, result.failed) == (0, 1)
@@ -193,7 +193,7 @@ def test_a_failed_opener_stops_the_openers_for_this_pass(steps):
 def test_no_free_box_means_no_openers(steps):
     _waiting()
 
-    with patch.object(Mailbox.objects, "free_for_first_email", return_value=None):
+    with patch("openoutsend.planner.free_for_first_email",return_value=None):
         result = run_send_pass()
 
     assert result.opened == 0
@@ -264,7 +264,7 @@ def test_a_follow_up_and_an_opener_compete_for_the_same_slot(steps):
     _waiting("new@acme.com")
 
     with patch("openoutsend.core.sending_window.within_sending_window", return_value=True), \
-            patch.object(Mailbox.objects, "free_for_first_email", side_effect=[box, None]):
+            patch("openoutsend.planner.free_for_first_email",side_effect=[box, None]):
         result = run_send_pass()
 
     assert steps.order == ["read", "measure", "follow_up", "open"]

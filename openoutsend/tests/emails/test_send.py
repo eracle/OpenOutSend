@@ -21,7 +21,7 @@ from openoutsend.emails.sender import (
 )
 from openoutsend.emails.steps.send import send_first_email
 from openoutsend.leads.models import DealState
-from openoutsend.leads.pools import emailable_deals
+from openoutsend.planner import emailable_deals, free_for_first_email
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.factories import DealFactory, LeadFactory
 
@@ -103,13 +103,13 @@ class TestPickingABox:
         heavy = _box("heavy@b.com", daily_limit=10)
         for _ in range(4):
             _record_send(_ready(), heavy)
-        with patch("openoutsend.emails.models.mailbox.within_sending_window", return_value=True):
-            assert Mailbox.objects.free_for_first_email() == light
+        with patch("openoutsend.core.sending_window.within_sending_window", return_value=True):
+            assert free_for_first_email() == light
 
     def test_none_when_every_box_is_capped(self):
         box = _box(daily_limit=1)
         _record_send(_ready(), box)
-        assert Mailbox.objects.free_for_first_email() is None
+        assert free_for_first_email() is None
 
     def test_a_box_still_spacing_out_is_not_free(self):
         """The 3-minute floor between two cold emails, per box."""
@@ -118,7 +118,7 @@ class TestPickingABox:
         box = _box(daily_limit=10)
         box.next_send_at = timezone.now() + timedelta(minutes=3)
         box.save(update_fields=["next_send_at"])
-        assert Mailbox.objects.free_for_first_email() is None
+        assert free_for_first_email() is None
 
     def test_a_box_past_its_spacing_is_free_again(self):
         from datetime import timedelta
@@ -126,8 +126,8 @@ class TestPickingABox:
         box = _box(daily_limit=10)
         box.next_send_at = timezone.now() - timedelta(seconds=1)
         box.save(update_fields=["next_send_at"])
-        with patch("openoutsend.emails.models.mailbox.within_sending_window", return_value=True):
-            assert Mailbox.objects.free_for_first_email() == box
+        with patch("openoutsend.core.sending_window.within_sending_window", return_value=True):
+            assert free_for_first_email() == box
 
     def test_the_daily_ledger_starts_at_the_operators_midnight(self):
         """Not the server's UTC midnight, which for a US operator falls at 19:00 —
@@ -144,8 +144,8 @@ class TestPickingABox:
     def test_no_box_is_free_outside_the_sending_window(self):
         """Out of hours nothing opens a conversation, however much headroom is left."""
         _box(daily_limit=10)
-        with patch("openoutsend.emails.models.mailbox.within_sending_window", return_value=False):
-            assert Mailbox.objects.free_for_first_email() is None
+        with patch("openoutsend.core.sending_window.within_sending_window", return_value=False):
+            assert free_for_first_email() is None
 
 
 # ── Email pool ────────────────────────────────────────────────────
@@ -378,7 +378,7 @@ class TestSendFirstEmail:
 
         box.refresh_from_db()
         assert box.next_send_at > timezone.now()
-        assert Mailbox.objects.free_for_first_email() is None
+        assert free_for_first_email() is None
 
     def test_the_gap_lands_in_the_jittered_band(self, operator):
         """3 min + U[30s, 90s] — never the floor exactly, never past 4.5 minutes."""

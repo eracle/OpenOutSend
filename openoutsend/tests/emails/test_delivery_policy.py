@@ -14,6 +14,7 @@ from openoutsend.emails.delivery_policy import (
 from openoutsend.emails.models import DeliveryEvent, Mailbox
 from openoutsend.leads.models import DealState, Outcome
 from openoutsend.leads.suppression import is_suppressed
+from openoutsend.planner import free_for_first_email
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.factories import DealFactory, LeadFactory
 
@@ -182,7 +183,7 @@ class TestHeadroomRespectsVerdicts:
         box.save()
         _verdict(box, Response.BLOCKED, 550)
         assert Mailbox.objects.remaining_today() == 0
-        assert Mailbox.objects.free_for_first_email() is None
+        assert free_for_first_email() is None
 
     def test_sending_falls_through_to_an_unpaused_box(self):
         paused = _box()
@@ -193,6 +194,6 @@ class TestHeadroomRespectsVerdicts:
             username="c@d.com", password="pw", from_address="c@d.com",
             daily_limit=10,
         )
-        with patch("openoutsend.emails.models.mailbox.within_sending_window", return_value=True):
-            assert Mailbox.objects.free_for_first_email() == healthy
+        with patch("openoutsend.core.sending_window.within_sending_window", return_value=True):
+            assert free_for_first_email() == healthy
         assert Mailbox.objects.remaining_today() == 10

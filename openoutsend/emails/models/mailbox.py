@@ -2,17 +2,11 @@
 """Mailbox: one SMTP sending inbox, imported from the provider's creds export."""
 from __future__ import annotations
 
-from datetime import timedelta
-
 from django.db import models
 from django.utils import timezone
 
 from openoutsend.core.conf import WARM_FLOOR_SENDS
-from openoutsend.core.sending_window import (
-    next_window_open,
-    operator_timezone,
-    within_sending_window,
-)
+from openoutsend.core.sending_window import operator_timezone
 
 
 def _local_midnight():
@@ -28,7 +22,8 @@ def _local_midnight():
 
 
 class MailboxManager(models.Manager):
-    """Pool-level send pacing — the daily-cap accounting the task and planner share."""
+    """Pool-level send pacing — the daily-cap accounting. Which box sends is the
+    planner's question (``openoutsend/planner.py``)."""
 
     def remaining_today(self) -> int:
         """Total sends left across the pool today (Σ per-box headroom).
@@ -36,59 +31,6 @@ class MailboxManager(models.Manager):
         0 when no boxes exist or every box is at its cap.
         """
         return sum(box.headroom_today() for box in self.all())
-
-    def free_for_first_email(self):
-        """The box that may send a first email right now, or None.
-
-        The clock speaks first and for the whole pool: outside the operator's
-        working window no box may open a conversation, however much headroom it has
-        (``core/sending_window.py``). Then three conditions, all per box: headroom
-        left today, not paused by the receiver (both inside ``headroom_today``), and
-        its spacing clock elapsed. Among the free boxes the most idle one wins, so
-        volume spreads rather than piling on whichever row sorts first.
-
-        Only *first* emails come through here. A reply is not cold volume and is
-        sent regardless of window, cap or spacing. A **follow-up is** cold volume, but
-        it cannot pick its box — the thread already has one — so it asks that box
-        directly with ``Mailbox.free_now``.
-        """
-        if not within_sending_window():
-            return None
-        now = timezone.now()
-        ranked = [
-            (box, headroom) for box in self.all()
-            if box.free_now(now) and (headroom := box.headroom_today()) > 0
-        ]
-        if not ranked:
-            return None
-        return max(ranked, key=lambda pair: pair[1])[0]
-
-    def next_first_email_at(self, now=None):
-        """When the pool could next open a conversation, or ``None`` if it never could.
-
-        ``free_for_first_email`` says *not now* and cannot say *why* or *for how long* —
-        which is all a bounded run needs to know before it decides to wait
-        (``send_job.py``). The same three gates, read as a clock instead of a boolean:
-
-            spacing   the box's own ``next_send_at``
-            window    the next 08:00 at or after that
-            cap       a box out of headroom is out until the ledger rolls, so it is
-                      asked about tomorrow morning rather than about today
-
-        The soonest box wins, because one free box is all a send needs. ``None`` means
-        no mailbox is connected — the one state no amount of waiting resolves. A drained
-        *lead* pool is not this method's business: it is about the boxes.
-        """
-        now = now or timezone.now()
-        tomorrow = _local_midnight() + timedelta(days=1)
-        return min(
-            (
-                next_window_open(max(now, box.next_send_at or now))
-                if box.headroom_today() > 0 else next_window_open(tomorrow)
-                for box in self.all()
-            ),
-            default=None,
-        )
 
     def create_verified(
         self,
@@ -257,10 +199,10 @@ class Mailbox(models.Model):
     def free_now(self, now=None) -> bool:
         """True when this box's spacing clock has elapsed — cold volume may go.
 
-        The per-box half of `free_for_first_email`, split out because a follow-up
-        cannot choose its box: the thread was opened from one, and answering from
-        another would break the conversation. So it asks that box whether it is free
-        instead of asking the pool for whichever box is freest.
+        The per-box half of `planner.free_for_first_email`, split out because a
+        follow-up cannot choose its box: the thread was opened from one, and answering
+        from another would break the conversation. So the planner asks that box whether
+        it is free instead of asking the pool for whichever box is freest.
 
         The window and the daily cap are **not** here. They are pool-level and
         per-day respectively, and both callers check them, so folding them in would

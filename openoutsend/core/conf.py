@@ -116,7 +116,7 @@ SEND_INTERVAL_JITTER_MIN_SECONDS = 30    # + U[30, 90] → a 3.5–4.5 minute sp
 SEND_INTERVAL_JITTER_MAX_SECONDS = 90
 
 # ----------------------------------------------------------------------
-# Follow-ups (leads/pools.awaiting_follow_up, emails/steps/follow_up.py)
+# Follow-ups (planner.awaiting_follow_up, emails/steps/follow_up.py)
 #
 # **The gaps are constants, not a decision.** An earlier version let the agent pick
 # its own interval and re-arm a per-deal countdown; that produced the defect in

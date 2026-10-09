@@ -68,7 +68,7 @@ line fires.
 **`outsend send 5` is a goal, and it waits.** Five means five new conversations, and the run keeps
 passing until they are open — sleeping out the spacing clock between sends, the daily ceiling, and the
 sending window, including overnight and across a weekend if that is what the guards say. Nothing
-polls: the pool is asked *when* it could next open one (`Mailbox.objects.next_first_email_at`) and the
+polls: the planner is asked *when* it could next open one (`planner.next_first_email_at`) and the
 run sleeps until then, so the external cycler that used to check whether now was a good time has
 nothing left to do. The wait is spent working — every five minutes it wakes for a full pass, so
 replies are still answered on a mailbox's cadence while the openers are on hold. Only openers count

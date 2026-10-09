@@ -102,7 +102,7 @@ class DealState(models.TextChoices):
     They are `unsubscribed` and `undeliverable` now, and the shape they moved to is
     the one `give_up` always used: end the deal, name the reason.
 
-    **A state added here is unsendable by default.** Both pools name the state they
+    **A state added here is unsendable by default.** The planner's pools name the state they
     want (`state=READY`, `state=EMAILED`) rather than excluding the ones they don't,
     so a terminal state cannot be re-selected by an exclusion somebody forgot.
     """

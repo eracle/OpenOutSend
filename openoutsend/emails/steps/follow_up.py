@@ -3,7 +3,7 @@
 
 **This is cold volume, and it is treated as such.** Unlike a reply, nobody invited it:
 it counts against the box's daily cap, waits for the spacing clock, and only leaves
-inside the sending window. The pool decides *when* (`leads/pools.awaiting_follow_up`,
+inside the sending window. The planner decides *when* (`planner.awaiting_follow_up`,
 business days measured backwards from the mail log); this step decides *what*.
 
 **It cannot choose its mailbox.** The thread was opened from one box and answering from

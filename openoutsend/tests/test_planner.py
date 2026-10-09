@@ -8,7 +8,7 @@ from django.utils import timezone
 
 from openoutsend.emails.models import Kind, Thread
 from openoutsend.leads.models import DealState, Outcome
-from openoutsend.leads.pools import emailable_deals, unanswered_replies
+from openoutsend.planner import emailable_deals, unanswered_replies
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.factories import DealFactory, LeadFactory
 

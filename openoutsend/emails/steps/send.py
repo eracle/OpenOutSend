@@ -35,7 +35,7 @@ def send_first_email(deal, mailbox, prompt_line) -> DealState | None:
     """Open the conversation with *deal* from *mailbox*. Returns the next state.
 
     The caller has already established that this box may send right now
-    (``Mailbox.objects.free_for_first_email``). Returns ``None`` without sending if
+    (``planner.free_for_first_email``). Returns ``None`` without sending if
     the lead was suppressed while the agent was writing — an unsubscribe can land in
     the seconds an LLM call takes, and this is the last gate before the message goes.
 
@@ -119,7 +119,7 @@ def space_out(mailbox, now) -> None:
 
     A time past the end of the working day is written unchanged rather than
     clamped to tomorrow morning: the window is enforced pool-wide in
-    ``Mailbox.objects.free_for_first_email``, and a second clamp here would be a
+    ``planner.free_for_first_email``, and a second clamp here would be a
     copy of that rule free to drift from it.
     """
     mailbox.next_send_at = now + timedelta(

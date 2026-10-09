@@ -29,7 +29,10 @@ sending window alike.
 
 **The waiting lives one level up.** A goal-bounded run sleeps on the spacing clock, the
 daily ceiling *and* the sending window — see `send_job.py`, which reaches a goal by
-running this pass repeatedly and asking the pool when it could next open a conversation.
+running this pass repeatedly and asking the planner when it could next open a conversation.
+
+**What is due and which box carries it are the planner's answers** (`planner.py`); this
+module only writes, sends and counts.
 Keeping the wait out of here is what leaves the pass firable by a timer, and what lets
 each wait be spent reading the mail rather than blocking inside one step of it.
 """
@@ -111,7 +114,7 @@ def _answer_replies(result: PassResult) -> None:
     the next pass tries it again.
     """
     from openoutsend.emails.steps.reply import answer_reply
-    from openoutsend.leads.pools import unanswered_replies
+    from openoutsend.planner import unanswered_replies
 
     for deal in list(unanswered_replies()):
         try:
@@ -125,35 +128,20 @@ def _answer_replies(result: PassResult) -> None:
 def _follow_up(result: PassResult) -> None:
     """Write again to the ones who never answered, and end the ones out of touches.
 
-    **Ordered before openers, and that is not a priority.** Both draw from the same
-    per-box headroom and the same spacing clock, so whichever runs first simply takes
-    the slot; running follow-ups first means the box's last send of the day goes to a
-    thread already started rather than opening one more it will never return to. The
-    old arrangement — follow-ups claiming *ahead of* openers out of a separate budget —
-    is what produced 102 follow-ups against 1 first email in a week, and it is
-    unreachable here: there is one budget.
-
-    **A box that is not free is skipped, not waited for.** A follow-up cannot change
-    mailbox, so a busy box means its threads wait for the next pass. Others continue.
+    Ordered before openers for the reason ``planner.py`` gives: one budget per box, and
+    a box's last send of the day goes to a thread already started.
 
     Giving up costs no send, so it is not gated on a box at all — a deal past its last
     touch is closed whatever the pool's capacity.
     """
-    from openoutsend.core.sending_window import within_sending_window
     from openoutsend.emails.steps.follow_up import give_up, send_follow_up
-    from openoutsend.leads.pools import awaiting_follow_up, exhausted_touches
+    from openoutsend.planner import exhausted_touches, follow_ups_due
 
     for deal in exhausted_touches():
         _apply(deal, give_up(deal))
         result.gave_up += 1
 
-    if not within_sending_window():
-        return
-
-    for deal in awaiting_follow_up():
-        box = deal.mailbox
-        if box is None or not box.free_now() or box.headroom_today() <= 0:
-            continue
+    for deal in follow_ups_due():
         try:
             _apply(deal, send_follow_up(deal))
             result.followed_up += 1
@@ -167,12 +155,11 @@ def _open_conversations(result: PassResult, prompt_line_name: str | None = None,
                         agent_draft: AgentDraft = OFF) -> None:
     """Send first emails while a box is free and somebody is waiting.
 
-    The loop's bound is the guards themselves: `free_for_first_email` answers `None`
-    outside the window, for a box at its ceiling, and for one whose spacing clock has
-    not elapsed — and a send rewrites that clock, so a box takes itself out of the
-    pool on its way past. The pass therefore ends on its own, usually after one send
-    per box, and **never sleeps**: a closed pool ends the pass, and whether that is
-    worth waiting out is `send_job.py`'s question, asked with the whole pass in hand.
+    The loop's bound is the guards themselves (``planner.first_emails_due``): a send
+    rewrites its box's spacing clock, so a box takes itself out of the pool on its way
+    past. The pass therefore ends on its own, usually after one send per box, and
+    **never sleeps**: a closed pool ends the pass, and whether that is worth waiting out
+    is `send_job.py`'s question, asked with the whole pass in hand.
 
     A failed send **stops the openers for this pass** rather than moving to the next
     lead. The spacing clock is written after a successful send, so a box that just
@@ -190,19 +177,14 @@ def _open_conversations(result: PassResult, prompt_line_name: str | None = None,
     keyed `AI_MODEL` call.
     """
     from openoutsend.core.prompt_lines import choose
-    from openoutsend.emails.models import Mailbox
     from openoutsend.emails.steps.send import send_first_email
-    from openoutsend.leads.pools import emailable_deals
+    from openoutsend.planner import first_emails_due
 
     if agent_draft.active:
         _open_with_agent_draft(result, agent_draft)
         return
 
-    waiting = emailable_deals().iterator()
-    while (mailbox := Mailbox.objects.free_for_first_email()) is not None:
-        deal = next(waiting, None)
-        if deal is None:
-            return
+    for deal, mailbox in first_emails_due():
         try:
             _apply(deal, send_first_email(deal, mailbox, choose(prompt_line_name)))
             result.opened += 1
@@ -225,10 +207,9 @@ def _open_with_agent_draft(result: PassResult, agent_draft: AgentDraft) -> None:
     unlike a fresh candidate, an answer already given must not be asked for twice just
     because nothing was free to send it through yet.
     """
-    from openoutsend.emails.models import Mailbox
     from openoutsend.emails.steps.send import send_drafted_email
     from openoutsend.leads.models import PendingDraft
-    from openoutsend.leads.pools import emailable_deals
+    from openoutsend.planner import emailable_deals, free_for_first_email
 
     pending = PendingDraft.objects.select_related("deal__lead").first()
     if pending is None:
@@ -250,7 +231,7 @@ def _open_with_agent_draft(result: PassResult, agent_draft: AgentDraft) -> None:
         raise DraftPending(f"{pending.deal.lead.public_id} is still waiting on an opener",
                             payload=_candidate_payload(pending.deal.lead))
 
-    mailbox = Mailbox.objects.free_for_first_email()
+    mailbox = free_for_first_email()
     if mailbox is None:
         # Answered, but no box is free right now — the same "nothing to do this
         # pass" every other step reports quietly. The answer stays on `pending`.
@@ -300,7 +281,7 @@ def _what_is_holding() -> str:
     """
     from openoutsend.core.sending_window import within_sending_window
     from openoutsend.emails.models import Mailbox
-    from openoutsend.leads.pools import emailable_deals, unanswered_replies
+    from openoutsend.planner import emailable_deals, unanswered_replies
 
     waiting = emailable_deals().count()
     to_answer = unanswered_replies().count()

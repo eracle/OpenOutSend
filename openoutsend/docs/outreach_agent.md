@@ -4,7 +4,7 @@ One agent runs the whole email conversation, from the cold open to the last repl
 
 **Three touches at most, then the pursuit ends.** The agent opens, and if nobody answers it writes twice more — after three working days, then five — before the deal closes as `unresponsive`. A reply at any point takes the lead out of that sequence for good, and the conversation continues instead.
 
-**The agent never decides *when*.** There is no clock it owns and no `wait` action: the pools in `leads/pools.py` derive who is due from timestamps in the mail log, and the agent is only ever asked what to write.
+**The agent never decides *when*.** There is no clock it owns and no `wait` action: the planner in `planner.py` derives who is due from timestamps in the mail log, and the agent is only ever asked what to write.
 
 The cold open, a follow-up and the in-thread replies are the same voice doing the same job, so all three render from **one** prompt (`core/templates/prompts/outreach_agent.j2`), branching on the stage the caller names.
 

@@ -2,7 +2,7 @@
 """Answering a reply.
 
 A reply is the one thing that takes a lead out of the cold sequence for good: from
-here the thread runs on what they write, and `leads/pools.awaiting_follow_up` can
+here the thread runs on what they write, and `planner.awaiting_follow_up` can
 never select the deal again. Chasing the silent ones is `test_follow_up.py`; this file
 is what happens once somebody has actually said something.
 """
@@ -16,7 +16,7 @@ from openoutsend.core.agents.outreach import OutreachDecision
 from openoutsend.emails.models import Mailbox
 from openoutsend.emails.steps.reply import answer_reply
 from openoutsend.leads.models import DealState
-from openoutsend.leads.pools import unanswered_replies
+from openoutsend.planner import unanswered_replies
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.factories import DealFactory, LeadFactory
 

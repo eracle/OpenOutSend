@@ -17,7 +17,7 @@ from django.utils import timezone
 from openoutsend.core.conf import FOLLOW_UP_GAPS_BUSINESS_DAYS, MAX_COLD_TOUCHES
 from openoutsend.emails.models import Thread
 from openoutsend.leads.models import DealState, Outcome
-from openoutsend.leads.pools import awaiting_follow_up, exhausted_touches
+from openoutsend.planner import awaiting_follow_up, exhausted_touches
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.factories import DealFactory, LeadFactory
 

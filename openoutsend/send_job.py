@@ -9,8 +9,8 @@ minutes from opening the next, a pool at its ceiling is a day from opening any, 
 Friday evening is Monday morning. Those all resolve by themselves, so this waits.
 
 **The state machine already knows when.** Nothing here re-implements a guard: it asks
-the pool the same three questions in clock form (``Mailbox.objects.next_first_email_at``
-— spacing, window, daily cap) and sleeps until the answer. That is what makes an
+the planner the same three questions in clock form (``planner.next_first_email_at`` —
+spacing, window, daily cap) and sleeps until the answer. That is what makes an
 external cycler unnecessary rather than replaced — the thing it was polling for is a
 timestamp this side can read directly.
 
@@ -246,9 +246,9 @@ def _when(moment: datetime) -> str:
 
 def _next_opening() -> datetime | None:
     """When the pool could next open a conversation — ``None`` when there is no box."""
-    from openoutsend.emails.models import Mailbox
+    from openoutsend.planner import next_first_email_at
 
-    return Mailbox.objects.next_first_email_at()
+    return next_first_email_at()
 
 
 def _anyone_waiting() -> bool:
@@ -258,7 +258,7 @@ def _anyone_waiting() -> bool:
     separate invocation of this command. Sleeping for a lead that cannot arrive is how
     a bounded run turns into a process the operator has to remember to kill.
     """
-    from openoutsend.leads.pools import emailable_deals
+    from openoutsend.planner import emailable_deals
 
     return emailable_deals().exists()
 

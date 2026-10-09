@@ -15,7 +15,7 @@ the caller names:
   ``emails/steps/reply.py`` executes the choice.
 
 **The agent never decides *when*.** There is no ``wait`` action and no follow-up
-interval to choose: the pools in ``leads/pools.py`` decide who is due from timestamps
+interval to choose: the planner (``planner.py``) decides who is due from timestamps
 in the mail log, and the agent is only ever asked what to write. An earlier version
 let it re-arm its own countdown, and a ``wait`` verdict that failed to push the next
 action out re-read one unchanged context five times inside a single window.
@@ -130,7 +130,7 @@ def run_outreach_agent(deal, prompt_line=None, stage=None) -> OutreachDecision:
 
     ``stage`` says which of the three things is being written, and the **caller** names
     it rather than this function deriving it: each step knows exactly what it is, and a
-    derivation here would be a second copy of the pool predicates in `leads/pools.py`,
+    derivation here would be a second copy of the pool predicates in `planner.py`,
     free to drift from them. It defaults to the one case that is unambiguous from the
     row alone — no thread means nothing has been sent.
 

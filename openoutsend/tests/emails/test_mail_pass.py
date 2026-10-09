@@ -13,7 +13,7 @@ import pytest
 from openoutsend.emails.mail_pass import run_mail_pass
 from openoutsend.emails.models import Kind, Message
 from openoutsend.leads.models import DealState
-from openoutsend.leads.pools import unanswered_replies
+from openoutsend.planner import unanswered_replies
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.emails.fake_imap import (
     RECEIVED_AT,

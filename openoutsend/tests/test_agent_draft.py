@@ -11,7 +11,6 @@ from unittest.mock import patch
 import pytest
 
 from openoutsend.core.agent_draft import AgentDraft
-from openoutsend.emails.models import Mailbox
 from openoutsend.errors import DraftPending
 from openoutsend.leads.models import DealState, PendingDraft
 from openoutsend.send_pass import PassResult, run_send_pass
@@ -63,7 +62,7 @@ class TestResumingWithAnAnswer:
         PendingDraft.objects.create(deal=deal)
         box = maillog.mailbox()
 
-        with patch.object(Mailbox.objects, "free_for_first_email", return_value=box), \
+        with patch("openoutsend.planner.free_for_first_email", return_value=box), \
                 patch("openoutsend.core.agents.outreach.run_outreach_agent") as mock_llm, \
                 patch("openoutsend.emails.sender._deliver"):
             result = run_send_pass(agent_draft=AgentDraft(
@@ -80,7 +79,7 @@ class TestResumingWithAnAnswer:
         deal = _waiting()
         PendingDraft.objects.create(deal=deal)
 
-        with patch.object(Mailbox.objects, "free_for_first_email", return_value=None):
+        with patch("openoutsend.planner.free_for_first_email", return_value=None):
             result = run_send_pass(agent_draft=AgentDraft(
                 active=True, subject="Quick one", body="Saw you're hiring."))
 
@@ -96,7 +95,7 @@ class TestResumingWithAnAnswer:
                                     body="Saw you're hiring.")
         box = maillog.mailbox()
 
-        with patch.object(Mailbox.objects, "free_for_first_email", return_value=box), \
+        with patch("openoutsend.planner.free_for_first_email", return_value=box), \
                 patch("openoutsend.emails.sender._deliver"):
             result = run_send_pass(agent_draft=AgentDraft(active=True))
 
@@ -107,7 +106,7 @@ class TestResumingWithAnAnswer:
         _waiting()
         box = maillog.mailbox()
 
-        with patch.object(Mailbox.objects, "free_for_first_email",
+        with patch("openoutsend.planner.free_for_first_email",
                           side_effect=[box, None]), \
                 patch("openoutsend.emails.steps.send.send_first_email") as send:
             send.return_value = DealState.EMAILED
