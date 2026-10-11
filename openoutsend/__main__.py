@@ -4,8 +4,9 @@
 
 **On the pipe it takes no verb**, as things on the right of a pipe conventionally
 don't: `| less`, `| jq`, `| tee`. Its one option is `--sequence DIR`, the folder of step
-files the lines are enrolled into; without it they go to the built-in cold sequence, and
-`send` takes the same flag to mail that sequence and no other. The two verbs it does have are the
+files the lines are enrolled into; without it they go to the built-in cold sequence. A
+bare `send` mails every sequence the install holds, and `send --sequence DIR` that one
+alone. The two verbs it does have are the
 ones that are not on the pipe at all: `send`, which reads no stdin and mails what is
 already stored, and `init`, which asks for what a first run needs — what this install
 sells and to whom, the model that writes it, who is signing the mail, and the mailbox
@@ -39,8 +40,9 @@ outsend send [N|all] [--sequence DIR] [--prompt-line ID]
                                  guards allow right now. With N, keep at it until N
                                  conversations are open, waiting out the send clocks;
                                  with `all`, until nobody is left to email.
-                                 --sequence names a folder of step files; without it,
-                                 both verbs act on the built-in cold sequence
+                                 --sequence names a folder of step files. The pipe
+                                 enrols into it (cold without it); send sends only it
+                                 (every sequence without it, cold among them)
 outsend send --agent-draft [--subject S --body B]
                                  opt the opener step out of AI_MODEL: stop at the first
                                  deal needing one (error type draft_pending, carrying
@@ -82,8 +84,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
                         help="how many conversations to open before returning, or `all` "
                              "to empty the pool; omit for a single pass")
     parser.add_argument("--sequence", default=None, metavar="DIR",
-                        help="the sequence folder to enrol into or send; omit for the "
-                             "built-in cold sequence")
+                        help="the sequence folder to enrol into (default: cold) or to "
+                             "send alone (default: every sequence)")
     parser.add_argument("--prompt-line", default=None, dest="prompt_line",
                         help="open every email in this pass with one named prompt line; "
                              "omit to draw one at random per send")
@@ -199,12 +201,13 @@ def _send(args: argparse.Namespace) -> int:
     from openoutsend.core.sequences import key
     from openoutsend.first_run import check_ready
 
-    sequence = key(args.sequence)
+    # No folder sends every sequence in the install; a folder narrows the pass to it.
+    sequence = key(args.sequence) if args.sequence is not None else None
     check_ready(agent_draft_active=args.agent_draft)
     return _run_to_goal(args, sequence) if args.count else _run_one_pass(args, sequence)
 
 
-def _run_one_pass(args: argparse.Namespace, sequence: str) -> int:
+def _run_one_pass(args: argparse.Namespace, sequence: str | None) -> int:
     from openoutsend.core.agent_draft import AgentDraft
     from openoutsend.send_pass import run_send_pass
 
@@ -214,7 +217,7 @@ def _run_one_pass(args: argparse.Namespace, sequence: str) -> int:
     return 0 if result.ok else 1
 
 
-def _run_to_goal(args: argparse.Namespace, sequence: str) -> int:
+def _run_to_goal(args: argparse.Namespace, sequence: str | None) -> int:
     """`outsend send N` (or `all`) — and the one line that says how the run ended.
 
     A goal that was not reached is reported as its own sentence rather than folded into

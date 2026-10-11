@@ -152,8 +152,23 @@ def test_a_lead_arriving_after_every_step_was_due_is_closed_unwritten(written, s
     assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.MISSED)
 
 
-def test_a_cold_pass_never_sends_an_event_sequence(written, sequence):
-    """`outsend send` with no `--sequence` mails cold, and nothing else."""
+def test_a_bare_pass_sends_every_sequence(written, sequence):
+    """`outsend send` with no `--sequence`: cold is one sequence among the install's."""
+    _enrol(sequence)
+    ingest(io.StringIO(json.dumps({"lead_id": "cold-1", "email": "bo@example.com",
+                                   "first_name": "Bo"}) + "\n"))
+    _two_weeks_pass()
+    run_send_pass()
+    # One box opens one conversation a pass; let its spacing clock run out.
+    Mailbox.objects.update(next_send_at=None)
+    run_send_pass()
+
+    assert len(written) == 2
+    assert set(Deal.objects.filter(thread__isnull=False)
+               .values_list("sequence", flat=True)) == {COLD, sequence}
+
+
+def test_a_pass_narrowed_to_cold_never_sends_an_event_sequence(written, sequence):
     _enrol(sequence)
     _two_weeks_pass()
     run_send_pass(sequence=COLD)

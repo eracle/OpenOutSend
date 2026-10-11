@@ -41,7 +41,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from openoutsend.core.conf import WAIT_SLICE_SECONDS
-from openoutsend.core.sequences import COLD
 from openoutsend.send_pass import PassResult, run_send_pass
 
 logger = logging.getLogger(__name__)
@@ -119,12 +118,13 @@ class SendJobResult:
 
 
 def run_send_job(goal: int | str, prompt_line_name: str | None = None,
-                 sleep=time.sleep, sequence: str = COLD) -> SendJobResult:
-    """Open *goal* conversations in *sequence*, waiting out the clocks in between.
+                 sleep=time.sleep, sequence: str | None = None) -> SendJobResult:
+    """Open *goal* conversations, waiting out the clocks in between.
 
     ``goal`` is a count, or ``ALL`` to keep going until the pool is empty. A conversation
-    is opened by a deal's first send, so in an event sequence the goal counts leads
-    reached, not steps; later steps due meanwhile go out in the same passes.
+    is opened by a deal's first send in any sequence (or in *sequence* alone, when one
+    is named), so the goal counts leads reached, not steps; later steps due meanwhile go
+    out in the same passes.
 
     ``sleep`` is injected so a test can run a week of waiting in milliseconds. It is the
     only clock this module holds: every *duration* comes from the pool's own timestamps.
@@ -136,7 +136,7 @@ def run_send_job(goal: int | str, prompt_line_name: str | None = None,
 
 
 def _work_to_goal(goal: int | str, prompt_line_name: str | None, sleep,
-                  sequence: str) -> SendJobResult:
+                  sequence: str | None) -> SendJobResult:
     """The loop itself. Every exit is a ``SendJobResult``; none of them raises."""
     from django.utils import timezone
 
@@ -182,7 +182,7 @@ def _work_to_goal(goal: int | str, prompt_line_name: str | None, sleep,
 
 
 def _run_one_pass(prompt_line_name: str | None, result: SendJobResult,
-                  sequence: str) -> PassResult:
+                  sequence: str | None) -> PassResult:
     """Run a pass and fold its counts into the run's totals. Returns the pass's own."""
     done = run_send_pass(prompt_line_name, narrate=False, sequence=sequence)
     result.passes += 1
@@ -249,15 +249,15 @@ def _when(moment: datetime) -> str:
 # ── What is left to do ────────────────────────────────────────────
 
 
-def _next_opening(sequence: str) -> datetime | None:
+def _next_opening(sequence: str | None) -> datetime | None:
     """When the pool could next open a conversation — ``None`` when there is no box."""
     from openoutsend.planner import next_first_email_at
 
     return next_first_email_at(sequence=sequence)
 
 
-def _anyone_waiting(sequence: str) -> bool:
-    """Whether a lead in *sequence* is still waiting for a first email.
+def _anyone_waiting(sequence: str | None) -> bool:
+    """Whether a lead is still waiting for a first email.
 
     The one gate a wait cannot resolve: the pool grows by ingest, and ingest is a
     separate invocation of this command. Sleeping for a lead that cannot arrive is how

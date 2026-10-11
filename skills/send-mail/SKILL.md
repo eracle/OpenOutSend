@@ -66,12 +66,12 @@ the network while a producer is still writing.
 outsend send                 # one pass: read the mail, answer replies, open what the guards allow now
 outsend send 5                # keep passing until 5 conversations are open, waiting out the send clocks
 outsend send all               # until nobody is left to email
-outsend send --sequence DIR    # the same, for the sequence in DIR instead of cold
+outsend send --sequence DIR    # the same, narrowed to the sequence in DIR
 ```
 
-**A pass sends one sequence**: cold by default, or the folder `--sequence` names. Name the same
-folder the leads were piped in with, or the pass finds nobody to email. Replies are answered in any
-pass, whatever sequence the thread began in.
+**A bare pass sends every sequence the install holds**, the built-in cold one among them, in one
+queue. `--sequence DIR` narrows it to that folder. Replies are answered in any pass, whatever
+sequence the thread began in.
 
 A pass, in order: read the mailbox (an opt-out overnight suppresses someone before anything is
 written to them), answer every thread the lead replied in, then send as many openers, later steps and

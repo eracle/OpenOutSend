@@ -135,7 +135,8 @@ after-a-demo/
 
 ```bash
 some-export --json | outsend --sequence after-a-demo    # enrol or update, exit
-outsend send --sequence after-a-demo                    # mail the steps now due, in this sequence only
+outsend send                                            # mail what is due, in every sequence
+outsend send --sequence after-a-demo                    # or in this one alone
 ```
 
 - **The filename is the schedule**: `E<number>[-<days>d]-<name>.md`. `E0` goes its days after the
@@ -148,9 +149,9 @@ outsend send --sequence after-a-demo                    # mail the steps now due
 - **One deal per lead per sequence.** The same `lead_id` piped into cold and into an event sequence is
   two deals. Re-piping into the same sequence is a correction, latest wins key by key, and a line with
   `"stop": true` takes the lead out of every remaining send.
-- **A pass sends one sequence.** `outsend send` mails cold and nothing else; `outsend send --sequence F`
-  mails `F` and nothing else. Reading the mail and answering replies are the install's, whichever
-  sequence a thread began in, and a reply stops the remaining steps.
+- **A pass sends every sequence**, cold among them, in one queue, oldest due first, because they all
+  spend the same boxes' cap, spacing and window. `--sequence F` narrows a pass to `F`. Reading the
+  mail and answering replies are never narrowed, and a reply stops the remaining steps.
 - **Follow-ups are per install** (`OUTSEND_FOLLOW_UPS`); an install mailing event sequences usually
   turns them off. With them on, each lands only if it fits before the next step is due.
 
