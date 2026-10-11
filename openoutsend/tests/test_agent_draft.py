@@ -13,7 +13,7 @@ import pytest
 from openoutsend.core.agent_draft import AgentDraft
 from openoutsend.errors import DraftPending
 from openoutsend.leads.models import DealState, PendingDraft
-from openoutsend.send_pass import PassResult, run_send_pass
+from openoutsend.send_pass import run_send_pass
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.factories import DealFactory, LeadFactory, UserFactory
 

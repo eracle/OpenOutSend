@@ -4,8 +4,6 @@ from datetime import datetime, timezone as dt_timezone
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-import pytest
-
 from openoutsend.core.sending_window import (
     UTC,
     _zone_for_country,

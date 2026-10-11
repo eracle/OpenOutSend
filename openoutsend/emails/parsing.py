@@ -172,7 +172,7 @@ def _strip_quoted(text: str) -> str:
             return "\n".join(lines[:i]).strip()
     for i, line in enumerate(lines):
         if line.lstrip().startswith(">") and all(
-            l.lstrip().startswith(">") or not l.strip() for l in lines[i:]
+            rest.lstrip().startswith(">") or not rest.strip() for rest in lines[i:]
         ):
             return "\n".join(lines[:i]).strip()
     return text.strip()

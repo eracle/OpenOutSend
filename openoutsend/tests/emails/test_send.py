@@ -17,7 +17,6 @@ from openoutsend.emails.sender import (
     OPT_OUT_LINE,
     operator_bcc,
     send_email,
-    unsubscribe_address,
 )
 from openoutsend.emails.steps.send import send_first_email
 from openoutsend.leads.models import DealState
