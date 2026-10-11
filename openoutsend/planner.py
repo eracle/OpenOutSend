@@ -2,8 +2,8 @@
 
 Every decision about *sending* lives here, and nothing else does. A send pass
 (`send_pass.py`) asks what is due and which box carries it, then writes and sends; a
-bounded run (`send_job.py`) asks when the next first email could go and sleeps on that
-one answer. Neither holds a rule of its own about who is owed an email or which box
+bounded run (`send_job.py`) asks when the next first email could go — a box free and
+an opener due — and sleeps on that one answer. Neither holds a rule of its own about who is owed an email or which box
 may carry it.
 
 **Everything is derived from state that already exists** — a deal's own state, the mail
@@ -18,21 +18,24 @@ context was re-read five times inside a single window.
 
 **The rules the planner keeps:**
 
-- **One budget per box.** Every first email and every follow-up counts against its
-  box's headroom, spacing and window. Only a reply to someone who wrote in is exempt:
-  it is not cold volume, and answering within minutes is more human, not less.
-- **Follow-ups before openers, and that is not a priority.** Both draw from the same
-  per-box headroom and the same spacing clock, so whichever goes first simply takes the
-  slot; follow-ups first means a box's last send of the day goes to a thread already
-  started rather than opening one more it will never return to. The old arrangement —
-  follow-ups claiming *ahead of* openers out of a separate budget — is what produced
-  102 follow-ups against 1 first email in a week, and it is unreachable here: there is
-  one budget.
+- **One budget per box.** Every step of every sequence and every follow-up counts
+  against its box's headroom, spacing and window. Only a reply to someone who wrote in
+  is exempt: it is not cold volume, and answering within minutes is more human, not less.
+- **A deal's first send picks the freest box; every later one stays on the thread's.**
+- **Oldest due first, whatever the kind** (`cold_sends_due`). Openers, later steps and
+  follow-ups are one queue ordered by how long each has been due, so no kind can starve
+  another: a waiting opener's due time stays put while newer sends fall due behind it.
+  The old arrangement — follow-ups claiming *ahead of* openers out of a separate
+  budget — is what produced 102 follow-ups against 1 first email in a week; here there
+  is one budget and one queue.
+- **An opening step more than `GRACE_DAYS` late on arrival is skipped, not sent late**
+  (`opening_step`). Later steps count from the previous step, so they cannot be late.
 """
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 from django.db.models import Count, F, OuterRef, Q, Subquery
 from django.utils import timezone
@@ -41,10 +44,12 @@ from django.utils import timezone
 
 
 def emailable_deals():
-    """Deals waiting for their first email, oldest first.
+    """Deals waiting for their first email, oldest first — due or not yet.
 
-    Two conditions and no more: the state and an address to send to.
-    **Suppression is not a third filter** — an opt-out moves every open deal for that
+    Three conditions and no more: the state, an address to send to, and no piped
+    `stop`. Whether the first step is *due* is not a column — it is on disk and in
+    business days — so `openers_due` asks it of what this returns.
+    **Suppression is not a fourth filter** — an opt-out moves every open deal for that
     address to `UNSUBSCRIBED` when it lands, and ingest parks a suppressed row there on
     arrival, so the state already carries the answer. `emails/sender.suppressed` asks
     the list again after the agent has written, which is the check that catches an
@@ -56,11 +61,115 @@ def emailable_deals():
     from openoutsend.leads.models import Deal, DealState
 
     return (
-        Deal.objects.filter(state=DealState.READY)
+        Deal.objects.filter(state=DealState.READY, stop=False)
         .exclude(lead__email="")
         .select_related("lead")
         .order_by("created_at")
     )
+
+
+OPENER = "opener"
+STEP = "step"
+FOLLOW_UP = "follow_up"
+
+
+@dataclass(frozen=True)
+class DueSend:
+    """One cold send: what kind, to which deal, which step, and since when it is due.
+
+    ``step`` is ``None`` for a follow-up, which is not a step. An ``OPENER`` is a deal's
+    first send — it picks the freest box and opens a thread; every other kind stays on
+    the thread's own box.
+    """
+
+    kind: str
+    deal: object
+    step: object
+    due_at: datetime
+
+
+def openers_due(now=None) -> list[DueSend]:
+    """Each deal whose first send is due now, oldest-due first.
+
+    The step is the deal's opening one (`opening_step`): ``E0`` unless the lead arrived
+    with ``E0`` already past its grace. Deals with nothing left to open are not here —
+    `missed_enrolments` closes them.
+    """
+    now = now or timezone.now()
+    return [send for send in _openers() if send.due_at <= now]
+
+
+def _openers() -> list[DueSend]:
+    """Every deal's first send, due or not yet, oldest-due first."""
+    sequence_of = _sequences()
+    sends = []
+    for deal in emailable_deals():
+        opening = opening_step(deal, sequence_of(deal))
+        if opening is not None:
+            sends.append(DueSend(OPENER, deal, *opening))
+    return sorted(sends, key=lambda send: send.due_at)
+
+
+def missed_enrolments() -> list:
+    """`READY` deals every step of whose sequence was past its grace when they arrived.
+
+    Nothing will ever be sent to them, so they are closed rather than left waiting —
+    a deal that can never become due would hold `send all` open forever.
+    """
+    sequence_of = _sequences()
+    return [deal for deal in emailable_deals() if opening_step(deal, sequence_of(deal)) is None]
+
+
+def opening_step(deal, sequence) -> tuple | None:
+    """The step a deal not yet written to opens with, and when it is due — or ``None``.
+
+    ``E0`` is due its days after ``start_at``, and each later step its days after the
+    one before. A step already more than ``GRACE_DAYS`` overdue when the deal was
+    enrolled is skipped (``core/conf.py`` says why), and the next counts from when the
+    skipped one was due, so skipping never pushes the rest of the sequence later.
+    ``None`` when every step was past its grace on arrival.
+    """
+    from openoutsend.core.business_time import add_business_days, business_days_between
+    from openoutsend.core.conf import GRACE_DAYS
+
+    due = deal.start_at
+    for step in sequence.steps:
+        due = add_business_days(due, step.days)
+        if business_days_between(due, deal.created_at) <= GRACE_DAYS:
+            return step, due
+    return None
+
+
+def steps_due(now=None) -> list[DueSend]:
+    """Each written-to deal whose next step is due, oldest-due first.
+
+    The next step is due its days after the previous step's send — read off the mail
+    log (`_since_last_step`), never after a follow-up, so chasing silence never moves a
+    sequence later. **A reply stops the remaining steps**: whoever wrote back is in a
+    conversation now, and the agent answering it has taken the thread over.
+    """
+    from openoutsend.core.business_time import add_business_days
+    from openoutsend.emails.models import Direction
+
+    now = now or timezone.now()
+    candidates = (
+        _open_threads()
+        .filter(stop=False, step__isnull=False)
+        .annotate(last_in=_newest_turn(Direction.INBOUND))
+        .filter(last_in__isnull=True)
+        .select_related("lead", "mailbox")
+    )
+    sequence_of = _sequences()
+    sends = []
+    for deal in candidates:
+        following = sequence_of(deal).after(deal.step)
+        if following is None:
+            continue
+        step_sent_at, _ = _since_last_step(deal)
+        due_at = add_business_days(step_sent_at, following.days)
+        if due_at <= now:
+            sends.append(DueSend(STEP, deal, following, due_at))
+    return sorted(sends, key=lambda send: send.due_at)
 
 
 def unanswered_replies():
@@ -117,7 +226,8 @@ def awaiting_follow_up(now=None):
     survives. The floor is a lower bound by construction (a business day is never
     shorter than a calendar day), so nothing due is ever excluded by it.
 
-    Returns a list rather than a queryset, since the last filters are not expressible.
+    Returns a list of ``DueSend``, oldest-due first, rather than a queryset, since the
+    last filters are not expressible.
     """
     from openoutsend.core.conf import FOLLOW_UP_GAPS_BUSINESS_DAYS, follow_ups_on
     from openoutsend.emails.models import Direction
@@ -129,13 +239,18 @@ def awaiting_follow_up(now=None):
         _open_threads()
         .annotate(last_in=_newest_turn(Direction.INBOUND),
                   last_out=_newest_turn(Direction.OUTBOUND))
-        .filter(last_in__isnull=True, last_out__isnull=False, step__isnull=False)
+        .filter(last_in__isnull=True, last_out__isnull=False, step__isnull=False, stop=False)
         .filter(last_out__lte=now - timedelta(days=min(FOLLOW_UP_GAPS_BUSINESS_DAYS)))
         .select_related("lead", "mailbox")
         .order_by("last_out")
     )
     sequence_of = _sequences()
-    return [deal for deal in candidates if _follow_up_is_due(deal, sequence_of(deal), now)]
+    sends = []
+    for deal in candidates:
+        due_at = _follow_up_due_at(deal, sequence_of(deal), now)
+        if due_at is not None:
+            sends.append(DueSend(FOLLOW_UP, deal, None, due_at))
+    return sorted(sends, key=lambda send: send.due_at)
 
 
 def exhausted_touches():
@@ -151,7 +266,8 @@ def exhausted_touches():
     checked in Python, because the sequence is on disk.
 
     Silence, not refusal — see `emails/steps/follow_up.give_up` for why the address
-    is not suppressed.
+    is not suppressed. A deal piped with `stop` is not closed here either: it was
+    stopped for a reason of its own (a payment), and `unresponsive` would misstate it.
     """
     from openoutsend.emails.models import Direction
 
@@ -159,7 +275,7 @@ def exhausted_touches():
     candidates = (
         _open_threads()
         .annotate(last_in=_newest_turn(Direction.INBOUND), touches=_outbound_turns())
-        .filter(last_in__isnull=True, step__isnull=False, touches__gt=follow_ups)
+        .filter(last_in__isnull=True, step__isnull=False, stop=False, touches__gt=follow_ups)
         .select_related("lead")
         .order_by("created_at")
     )
@@ -204,19 +320,20 @@ def _outbound_turns() -> Count:
     )
 
 
-def _follow_up_is_due(deal, sequence, now) -> bool:
-    """Whether *deal*'s next follow-up has waited its gap and still fits."""
-    from openoutsend.core.business_time import business_days_between
+def _follow_up_due_at(deal, sequence, now):
+    """Since when *deal*'s next follow-up has been due, or ``None`` if it is not due or does not fit."""
+    from openoutsend.core.business_time import add_business_days
     from openoutsend.core.conf import FOLLOW_UP_GAPS_BUSINESS_DAYS
 
     step_sent_at, follow_ups = _since_last_step(deal)
     if follow_ups >= len(FOLLOW_UP_GAPS_BUSINESS_DAYS):
-        return False
+        return None
     # The gap that applies is the one before the follow-up we are about to send,
     # counted from our last send, so the first waits the first gap after the step.
-    if business_days_between(deal.last_out, now) < FOLLOW_UP_GAPS_BUSINESS_DAYS[follow_ups]:
-        return False
-    return _fits_before_next_step(sequence.after(deal.step), step_sent_at, now)
+    due_at = add_business_days(deal.last_out, FOLLOW_UP_GAPS_BUSINESS_DAYS[follow_ups])
+    if due_at > now or not _fits_before_next_step(sequence.after(deal.step), step_sent_at, now):
+        return None
+    return due_at
 
 
 def _fits_before_next_step(next_step, step_sent_at, now) -> bool:
@@ -285,10 +402,10 @@ def free_for_first_email():
     clock elapsed. Among the free boxes the most idle one wins, so volume spreads rather
     than piling on whichever row sorts first.
 
-    Only *first* emails come through here. A reply is not cold volume and is sent
-    regardless of window, cap or spacing. A **follow-up is** cold volume, but it cannot
-    pick its box — the thread already has one — so ``follow_ups_due`` asks that box
-    directly.
+    Only *first* sends come through here. A reply is not cold volume and is sent
+    regardless of window, cap or spacing. A **later step or a follow-up is** cold
+    volume, but it cannot pick its box — the thread already has one — so
+    ``cold_sends_due`` asks that box directly.
     """
     from openoutsend.core.sending_window import within_sending_window
     from openoutsend.emails.models import Mailbox
@@ -305,40 +422,54 @@ def free_for_first_email():
     return max(ranked, key=lambda pair: pair[1])[0]
 
 
-def first_emails_due() -> Iterator[tuple]:
-    """``(deal, box)`` for each first email that may go now — oldest lead, freest box.
+def cold_sends_due(now=None, *, openers: bool = True) -> Iterator[tuple]:
+    """``(send, box)`` for each cold send that may go now — oldest due first, of any kind.
 
-    The bound is the guards themselves: ``free_for_first_email`` answers ``None``
-    outside the window, for a box at its ceiling, and for one whose spacing clock has
-    not elapsed — and a send rewrites that clock, so a box takes itself out of the pool
-    on its way past. The box is asked again for every pair, **after** the caller has
-    sent the previous one, which is why this is a generator and not a list.
+    Openers, later steps and follow-ups are one queue ordered by how long each has been
+    due, so **first sends cannot be starved**: an opener's due time never moves, so
+    however many threads fall due after it, it reaches the head. That is the property
+    the 102-to-1 week lacked, kept without a reserved share for either side.
+
+    **The box:** an opener takes the freest box in the install (``free_for_first_email``);
+    every later send stays on its thread's box, because answering from another would
+    break the conversation. **A send whose box is not free is skipped, not waited for**,
+    so one busy box holds its own threads to the next pass while the rest continue.
+    Outside the sending window no box is free, so nothing goes.
+
+    The box is asked for each send **after** the caller has sent the previous one — a
+    send rewrites its box's spacing clock — which is why this is a generator. With
+    ``openers`` off the openers are left out, for a pass whose openers are drafted by a
+    calling agent instead (``send_pass._open_with_agent_draft``).
     """
-    waiting = emailable_deals().iterator()
-    while (box := free_for_first_email()) is not None:
-        deal = next(waiting, None)
-        if deal is None:
-            return
-        yield deal, box
+    queue = steps_due(now) + awaiting_follow_up(now) + (openers_due(now) if openers else [])
+    pool_open = True
+    for send in sorted(queue, key=lambda send: send.due_at):
+        if send.kind != OPENER:
+            box = _thread_box(send.deal)
+        elif pool_open:
+            # A pass only ever uses up boxes, so a pool with none free stays that way.
+            box = free_for_first_email()
+            pool_open = box is not None
+        else:
+            continue
+        if box is not None:
+            yield send, box
 
 
-def follow_ups_due(now=None) -> Iterator:
-    """Each deal whose follow-up may go now, longest-waiting first.
+def _thread_box(deal):
+    """The box *deal*'s thread lives on, if it may send cold volume right now — else None.
 
-    The box is not chosen: it is the thread's own (``deal.mailbox``), because answering
-    from another would break the conversation. **A box that is not free is skipped, not
-    waited for**, so a busy box means its threads wait for the next pass while the
-    others continue. Outside the sending window nothing is due at all.
+    The same gates as ``free_for_first_email``, on the one box the thread allows. The
+    spacing clock is re-read, because the pools are built before the loop that sends: a
+    send earlier in the loop moved the clock on a different copy of the box.
     """
     from openoutsend.core.sending_window import within_sending_window
 
-    if not within_sending_window():
-        return
-    for deal in awaiting_follow_up(now):
-        box = deal.mailbox
-        if box is None or not box.free_now() or box.headroom_today() <= 0:
-            continue
-        yield deal
+    box = deal.mailbox
+    if box is None or not within_sending_window():
+        return None
+    box.refresh_from_db(fields=["next_send_at"])
+    return box if box.free_now() and box.headroom_today() > 0 else None
 
 
 # ── When next ─────────────────────────────────────────────────────
@@ -356,20 +487,25 @@ def next_first_email_at(now=None):
         cap       a box out of headroom is out until the ledger rolls, so it is
                   asked about tomorrow morning rather than about today
 
+    And one more, from the leads' side: **no opener before the earliest is due**. A
+    deal enrolled for ``E0-2d`` is not worth waking for today, however free the boxes.
+
     The soonest box wins, because one free box is all a send needs. ``None`` means no
     mailbox is connected — the one state no amount of waiting resolves. A drained *lead*
-    pool is not this function's business: it is about the boxes.
+    pool is not this function's business: with nobody waiting it answers for the boxes.
     """
     from openoutsend.core.sending_window import next_window_open
     from openoutsend.emails.models import Mailbox
     from openoutsend.emails.models.mailbox import _local_midnight
 
     now = now or timezone.now()
+    waiting = _openers()
+    earliest = max(now, waiting[0].due_at) if waiting else now
     tomorrow = _local_midnight() + timedelta(days=1)
     return min(
         (
-            next_window_open(max(now, box.next_send_at or now))
-            if box.headroom_today() > 0 else next_window_open(tomorrow)
+            next_window_open(max(earliest, box.next_send_at or earliest))
+            if box.headroom_today() > 0 else next_window_open(max(earliest, tomorrow))
             for box in Mailbox.objects.all()
         ),
         default=None,

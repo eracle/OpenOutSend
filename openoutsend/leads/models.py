@@ -4,7 +4,7 @@ Three tables, and each one answers a question the boundary contract asks:
 
 - **Lead** — the person, keyed on the producer's own `lead_id`. Every field on it is
   a field of the record, so nothing here is derived and nothing is inferred.
-- **Deal** — that person's conversation, one row per lead, carrying the finder's
+- **Deal** — that person's conversation, one row per lead per sequence, carrying the finder's
   `reason` and where it is in its sequence (`core/sequences.py`). This is also the
   row the send path walks. (What a message is written
   from — `product_docs`, `campaign_target`, `booking_link` — is not stored at all: it
@@ -121,11 +121,11 @@ class Outcome(models.TextChoices):
     useful here, to the operator and to the learner over the send log, and nowhere
     else.
 
-    **The last two are not the agent's**, which is why they are listed apart: the
-    agent may choose any of the first seven, and these two are written by the code
+    **The last three are not the agent's**, which is why they are listed apart: the
+    agent may choose any of the first seven, and these three are written by the code
     that learns the fact. They are outcomes all the same — a deal that ended because
     somebody asked to stop ended for a reason, and the reader of a funnel should not
-    have to know that two of the nine are kept in a different column.
+    have to know that three of the ten are kept in a different column.
     """
 
     CONVERTED = "converted"
@@ -145,22 +145,31 @@ class Outcome(models.TextChoices):
     # when it is really a dead mailbox misstates what happened to whoever reads the
     # funnel later.
     UNDELIVERABLE = "undeliverable"
+    # Every step of the sequence was already past its grace when the lead was
+    # enrolled (`planner.opening_step`), so nothing was ever sent. Not `unresponsive`:
+    # nobody was asked anything.
+    MISSED = "missed"
 
 
 class Deal(models.Model):
-    """One lead's conversation — the row ingest writes and the send path reads.
+    """One lead's conversation in one sequence — the row ingest writes and the send path reads.
 
-    `lead` is the identity key, one-to-one, because idempotency is the whole reason
+    `(lead, sequence)` is the identity key, because idempotency is the whole reason
     the pipe is allowed to be lossy: a re-ingest has to land on the same row or
-    recovery-by-re-running is a way of mailing people twice.
+    recovery-by-re-running is a way of mailing people twice. A lead enrolled in a
+    second sequence gets a second deal; the history the model writes from already
+    spans every deal of the lead (`core/agents/history.py`).
     """
 
     class Meta:
         indexes = [
             models.Index(fields=["state"], name="deal_state_idx"),
         ]
+        constraints = [
+            models.UniqueConstraint(fields=["lead", "sequence"], name="deal_lead_sequence_uniq"),
+        ]
 
-    lead = models.OneToOneField(Lead, on_delete=models.CASCADE, related_name="deal")
+    lead = models.ForeignKey(Lead, on_delete=models.CASCADE, related_name="deals")
     state = models.CharField(max_length=32, choices=DealState.choices, default=DealState.READY)
     outcome = models.CharField(max_length=20, choices=Outcome.choices, blank=True, default="")
     # Why the LLM chose this lead, in its own words. **Operator-facing**: it is the
@@ -193,6 +202,17 @@ class Deal(models.Model):
     # first one goes. Follow-ups and replies are not steps and never move it.
     sequence = models.CharField(max_length=500, default="cold")
     step = models.PositiveSmallIntegerField(null=True, blank=True)
+
+    # ── What the piped line carried for this sequence ─────────────
+    #
+    # `fields` is every key of the record that is not the lead's own column or one of
+    # the two below: what the step prompts can name (`emails/steps/send.step_fields`).
+    # It belongs to the enrolment, not the person, so it lives here and not on `Lead`.
+    # `start_at` is what `E0`'s delay counts from, the ingest time when the line has
+    # none. `stop` ends the deal's steps — a payment, exported as `"stop": true`.
+    fields = models.JSONField(default=dict, blank=True)
+    start_at = models.DateTimeField(default=timezone.now)
+    stop = models.BooleanField(default=False)
 
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)

@@ -11,6 +11,7 @@ from unittest.mock import patch
 from django.utils import timezone
 
 from openoutsend.core.agents.outreach import OutreachDecision
+from openoutsend.core.sequences import cold
 from openoutsend.emails.models import Mailbox, Thread
 from openoutsend.emails.sender import (
     ATTRIBUTION,
@@ -18,7 +19,7 @@ from openoutsend.emails.sender import (
     operator_bcc,
     send_email,
 )
-from openoutsend.emails.steps.send import send_first_email
+from openoutsend.emails.steps.send import send_first_email, step_fields
 from openoutsend.leads.models import DealState
 from openoutsend.planner import emailable_deals, free_for_first_email
 from openoutsend.tests.emails import maillog
@@ -336,7 +337,7 @@ class TestSendFirstEmail:
             side_effect=lambda mailbox, *a, **kw: maillog.outbound(
                 mailbox, message_id="mid@corp.com"),
         ) as send:
-            next_state = send_first_email(deal, box, None)
+            next_state = send_first_email(deal, box, cold().first, None)
         deal.save()
         return send, next_state
 
@@ -423,7 +424,33 @@ class TestSendFirstEmail:
         ), patch(
             "openoutsend.emails.sender.send_email",
         ) as send:
-            next_state = send_first_email(deal, box, None)
+            next_state = send_first_email(deal, box, cold().first, None)
 
         send.assert_not_called()
         assert next_state is None
+
+
+@pytest.mark.django_db
+class TestStepFields:
+    """What a step prompt's ``{{ field }}`` can name."""
+
+    def test_the_piped_fields_sit_beside_the_lead_columns(self):
+        deal = DealFactory(
+            lead=LeadFactory(first_name="Asha"),
+            fields={"order_url": "https://pay.example/1", "leads": [{"name": "Bo"}]},
+        )
+
+        fields = step_fields(deal, None)
+
+        assert fields["first_name"] == "Asha"
+        assert fields["order_url"] == "https://pay.example/1"
+        assert fields["leads"] == [{"name": "Bo"}]
+        assert fields["prompt_line"] == ""
+
+    def test_a_piped_field_cannot_shadow_the_drawn_prompt_line(self):
+        from openoutsend.core.prompt_lines import choose
+
+        line = choose("plain-ask")
+        deal = DealFactory(fields={"prompt_line": "piped"})
+
+        assert step_fields(deal, line)["prompt_line"] == line.prompt

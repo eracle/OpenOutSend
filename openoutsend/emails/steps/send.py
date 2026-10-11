@@ -1,15 +1,14 @@
 # openoutsend/emails/steps/send.py
-"""The first email — the only cold message this person will ever get.
+"""Sending a sequence step — the first, which opens a thread, and every later one in it.
 
-The outreach agent opens the conversation, SMTP sends it, and the send is recorded
-on the Deal, which moves it to EMAILED. From there the deal is only ever touched
-again if the recipient answers.
+The outreach agent writes the step from its prompt and the whole history, SMTP sends
+it, and the send is recorded on the Deal: the first moves it to EMAILED, every one
+moves `deal.step`.
 
-That is the whole reason this step is the one under a cap. A first email is *cold
-volume*, which is what a receiver punishes; a reply inside a thread someone started
-is not, and goes out with no cap and no spacing (``steps/reply.py``). So the two
-guards — the box's measured daily ceiling and the ≥3-minute spacing — live here and
-nowhere else.
+Every step is *cold volume*, which is what a receiver punishes; a reply inside a
+thread someone started is not, and goes out with no cap and no spacing
+(``steps/reply.py``). So each send here rewrites its box's spacing clock
+(``space_out``), and the planner only hands over a step whose box may send.
 """
 from __future__ import annotations
 
@@ -31,12 +30,12 @@ from openoutsend.leads.models import DealState
 logger = logging.getLogger(__name__)
 
 
-def send_first_email(deal, mailbox, prompt_line) -> DealState | None:
-    """Open the conversation with *deal* from *mailbox*. Returns the next state.
+def send_first_email(deal, mailbox, step, prompt_line) -> DealState | None:
+    """Open the conversation with *deal* from *mailbox* with *step*. Returns the next state.
 
-    The message is written from the first step of the deal's sequence
-    (``core/sequences.py``) — for cold, ``E0-opener.md``. The caller has already
-    established that this box may send right now (``planner.free_for_first_email``).
+    *step* is the deal's opening step (``planner.opening_step``) — ``E0`` unless it was
+    past its grace when the lead arrived; for cold, ``E0-opener.md``. The caller has
+    already established that this box may send right now (``planner.free_for_first_email``).
     Returns ``None`` without sending if the lead was suppressed while the agent was
     writing — an unsubscribe can land in the seconds an LLM call takes, and this is the
     last gate before the message goes.
@@ -51,11 +50,9 @@ def send_first_email(deal, mailbox, prompt_line) -> DealState | None:
     move the model was not shown.
     """
     from openoutsend.core.agents.outreach import run_outreach_agent
-    from openoutsend.core.sequences import for_deal
     from openoutsend.emails.sender import suppressed
     from openoutsend.leads.summaries import materialize_profile_summary_if_missing
 
-    step = for_deal(deal).first
     if not step.uses_prompt_line:
         prompt_line = None
     logger.info("%s %s via %s (%s, %s)",
@@ -75,16 +72,16 @@ def send_first_email(deal, mailbox, prompt_line) -> DealState | None:
                         prompt=prompt, step=step)
 
 
-def send_drafted_email(deal, mailbox, subject: str, message: str, prompt_line) -> DealState | None:
+def send_drafted_email(deal, mailbox, step, subject: str, message: str,
+                       prompt_line) -> DealState | None:
     """Open the conversation with a subject/message an agent wrote, not `AI_MODEL`.
 
     The mirror image of `send_first_email` with the LLM call removed — everything
     after it (the suppression recheck, the SMTP send, the deal bookkeeping, the
     spacing clock) is identical, because none of that cares who wrote the words.
-    It is still the sequence's first step, and recorded as one; there is no rendered
+    It is still the deal's opening *step*, and recorded as one; there is no rendered
     prompt to record, because the calling agent wrote from its own context.
     """
-    from openoutsend.core.sequences import for_deal
     from openoutsend.emails.sender import suppressed
 
     logger.info("%s %s via %s (agent-drafted)",
@@ -97,11 +94,95 @@ def send_drafted_email(deal, mailbox, subject: str, message: str, prompt_line) -
         return None
 
     return _finish_send(deal, mailbox, subject, message, prompt_line,
-                        prompt="", step=for_deal(deal).first)
+                        prompt="", step=step)
+
+
+def send_next_step(deal, step, prompt_line) -> DealState | None:
+    """Write *step* to *deal* in its own thread, from its own box. Returns the next state.
+
+    The planner has established the step is due and the thread's box may send
+    (``planner.cold_sends_due``). Same thread and no new subject: the reader sees one
+    conversation, and the step's prompt says what this email is for. ``prompt_line``
+    follows ``send_first_email``'s rule and is dropped by a step that does not name it.
+    """
+    from openoutsend.leads.summaries import materialize_profile_summary_if_missing
+
+    if not step.uses_prompt_line:
+        prompt_line = None
+    logger.info("%s %s via %s (%s)", colored("▶ step", "blue", attrs=["bold"]),
+                deal.lead.public_id, deal.mailbox.from_address, step.path.name)
+
+    materialize_profile_summary_if_missing(deal.lead)
+    prompt = step.render(**step_fields(deal, prompt_line))
+    return send_in_thread(deal, prompt, step=step, prompt_line=prompt_line)
+
+
+def send_in_thread(deal, prompt: str, *, step=None, prompt_line=None) -> DealState | None:
+    """Have the agent write *prompt* in *deal*'s thread, and send what it wrote.
+
+    The shared tail of a later step and a follow-up — every send we make into a thread
+    nobody has answered. Returns ``None`` when the deal stays where it is: sent, or
+    nothing sent because the lead was suppressed while the agent wrote, or the agent
+    answered with something other than a message.
+
+    *step* is recorded on the send and moves ``deal.step``; a follow-up has none.
+    """
+    from openoutsend.core.agents.outreach import run_outreach_agent
+    from openoutsend.core.operator import get_active_user
+    from openoutsend.emails.sender import operator_bcc, send_email, suppressed
+    from openoutsend.emails.steps.reply import ends_in_an_opt_out, honour_opt_out, thread_ids
+
+    decision = run_outreach_agent(deal, prompt)
+
+    # Written to somebody who has said nothing, so there is no opt-out here to read
+    # and no prompt offers one. It is honoured anyway if the agent reaches for it: the
+    # alternative is the branch below, which logs the decision and discards it —
+    # leaving a deal the agent judged an opt-out sendable again next pass.
+    if ends_in_an_opt_out(decision):
+        return honour_opt_out(deal)
+    if decision.action == "mark_completed":
+        logger.info("%s judged not worth another email: %s",
+                    deal.lead.public_id, decision.outcome)
+        deal.outcome = decision.outcome
+        return DealState.COMPLETED
+    if decision.action != "send_message":
+        logger.warning("agent for %s answered %s in thread — sending nothing",
+                       deal.lead.public_id, decision.action)
+        return None
+
+    # Last gate before the message goes, exactly as the opener has: an opt-out can
+    # land in the seconds an LLM call takes, and a bounce may have suppressed the
+    # address since the pool was built.
+    if suppressed(deal.lead):
+        logger.warning("%s was suppressed mid-run — not sending", deal.lead.public_id)
+        return None
+
+    chain = thread_ids(deal)
+    send_email(
+        deal.mailbox,
+        deal.lead.email,
+        # The original subject, unchanged and with no "Re:" — they never wrote back,
+        # so there is nothing to be replying to. The threading headers are what put
+        # it in the same conversation; the subject only has to not lie about it.
+        deal.email_subject,
+        decision.message,
+        bcc=operator_bcc(get_active_user()),
+        in_reply_to=chain[-1] if chain else None,
+        references=" ".join(chain) or None,
+        thread=deal.thread,
+        prompt_line=prompt_line,
+        prompt=prompt,
+        step=step,
+    )
+    if step is not None:
+        deal.step = step.number
+    space_out(deal.mailbox, timezone.now())
+    return None
 
 
 def step_fields(deal, prompt_line) -> dict:
-    """What a step file's ``{{ field }}`` can name: the lead's record, and the drawn move.
+    """What a step file's ``{{ field }}`` can name: the lead's record, the fields piped
+    for this sequence over it, and the drawn move.
 
     ``prompt_line`` is always defined — ``""`` when none was drawn — so a step can test
     ``{% if prompt_line %}`` under ``StrictUndefined``.
@@ -115,6 +196,7 @@ def step_fields(deal, prompt_line) -> dict:
         "website": lead.website,
         "linkedin_url": lead.linkedin_url,
         "email": lead.email,
+        **deal.fields,
         "prompt_line": prompt_line.prompt if prompt_line else "",
     }
 

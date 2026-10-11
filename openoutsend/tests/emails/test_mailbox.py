@@ -112,6 +112,20 @@ def test_an_elapsed_clock_does_not_answer_in_the_past():
 
 
 @pytest.mark.django_db
+def test_a_free_box_waits_for_the_earliest_opener_to_fall_due():
+    """A lead enrolled for later is not worth waking for now, however free the box."""
+    from openoutsend.tests.factories import DealFactory, LeadFactory
+
+    now = timezone.now()
+    _box()
+    DealFactory(lead=LeadFactory(email="later@acme.com"),
+                start_at=now + timedelta(hours=5), created_at=now)
+
+    with _open_window():
+        assert next_first_email_at(now) == now + timedelta(hours=5)
+
+
+@pytest.mark.django_db
 def test_the_soonest_box_wins():
     """One free box is all a send needs, so the pool answers with its earliest."""
     now = timezone.now()

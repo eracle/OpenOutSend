@@ -1,14 +1,18 @@
-"""The two questions a send pass asks: who is waiting, and who wrote back."""
+"""The questions a send pass asks: who is waiting, who wrote back, and what opens a deal."""
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from django.utils import timezone
 
+from openoutsend.core.business_time import add_business_days, business_days_between
+from openoutsend.core.sequences import Sequence, Step
 from openoutsend.emails.models import Kind, Thread
 from openoutsend.leads.models import DealState, Outcome
-from openoutsend.planner import emailable_deals, unanswered_replies
+from openoutsend.planner import emailable_deals, opening_step, unanswered_replies
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.factories import DealFactory, LeadFactory
 
@@ -107,3 +111,130 @@ def test_unanswered_replies_answers_the_oldest_reply_first():
     maillog.inbound(box, thread=fresh.thread)
 
     assert list(unanswered_replies()) == [waited, fresh]
+
+
+# ── A deal's opening step ─────────────────────────────────────────
+#
+# Fixed dates, because the rule is in business days: 2026-10-05 is a Monday.
+
+
+def _three_steps() -> Sequence:
+    return Sequence(name="s", steps=tuple(
+        Step(number=n, days=days, name=f"e{n}", path=Path(f"E{n}.md"), source="")
+        for n, days in enumerate((2, 3, 5))
+    ))
+
+
+def _enrolled(start: str, arrived: str = "2026-10-05T09:00:00+00:00"):
+    return SimpleNamespace(start_at=datetime.fromisoformat(start),
+                           created_at=datetime.fromisoformat(arrived))
+
+
+def test_e0_is_due_its_days_after_start_at():
+    step, due = opening_step(_enrolled("2026-10-05T09:00:00+00:00"), _three_steps())
+
+    assert step.number == 0
+    assert due == datetime.fromisoformat("2026-10-07T00:00:00+00:00")
+
+
+def test_an_e0_past_its_grace_on_arrival_is_skipped_and_e1_counts_from_its_due_time():
+    """E0 was due Wednesday 30 September, three business days before the lead arrived."""
+    step, due = opening_step(_enrolled("2026-09-28T09:00:00+00:00"), _three_steps())
+
+    assert step.number == 1
+    assert due == datetime.fromisoformat("2026-10-05T00:00:00+00:00")
+
+
+def test_a_lead_arriving_after_every_step_was_due_opens_with_nothing():
+    assert opening_step(_enrolled("2026-08-03T09:00:00+00:00"), _three_steps()) is None
+
+
+def test_waiting_in_our_own_queue_never_skips_a_step():
+    """Lateness is measured against the arrival, not today: the queue is ours."""
+    deal = _enrolled("2026-08-03T09:00:00+00:00", arrived="2026-08-03T09:00:00+00:00")
+
+    step, _ = opening_step(deal, _three_steps())
+
+    assert step.number == 0
+
+
+# ── One queue, oldest due first ───────────────────────────────────
+#
+# Friday 2026-10-09 at noon; cold's opener is due the moment the lead arrives, and a
+# follow-up three business days after the send it follows.
+
+FRIDAY_NOON = datetime.fromisoformat("2026-10-09T12:00:00+00:00")
+
+
+def _opener_waiting_since(when: str):
+    moment = datetime.fromisoformat(when)
+    return DealFactory(lead=LeadFactory(email="new@acme.com"), start_at=moment, created_at=moment)
+
+
+def _quiet_threads(box, count: int, written: str):
+    """*count* cold threads whose opener went out at *written* and drew no answer."""
+    for n in range(count):
+        thread = Thread.objects.create(mailbox=box)
+        DealFactory(lead=LeadFactory(email=f"quiet{n}@acme.com"), state=DealState.EMAILED,
+                    mailbox=box, thread=thread, email_subject="Hi", step=0)
+        maillog.outbound(box, thread=thread, to=f"quiet{n}@acme.com", step=0,
+                         sent_at=datetime.fromisoformat(written))
+
+
+def _queue(now):
+    from unittest.mock import patch
+
+    from openoutsend.planner import cold_sends_due
+
+    with patch("openoutsend.core.sending_window.within_sending_window", return_value=True):
+        return [send.kind for send, _ in cold_sends_due(now)]
+
+
+def test_a_backlog_of_later_sends_cannot_hold_a_waiting_opener_back(site_config):
+    """Twenty threads fall due Thursday; the opener has waited since Monday, so it goes first.
+
+    However many threads fall due after it, a first send's due time does not move —
+    which is what makes the 102-follow-ups-to-1-opener week unreachable.
+    """
+    box = maillog.mailbox(daily_limit=50)
+    _quiet_threads(box, 20, written="2026-10-05T08:00:00+00:00")
+    _opener_waiting_since("2026-10-05T09:00:00+00:00")
+
+    kinds = _queue(FRIDAY_NOON)
+
+    assert kinds[0] == "opener"
+    assert kinds.count("follow_up") == 20
+
+
+def test_sends_due_before_the_opener_go_before_it(site_config):
+    """Oldest due first both ways: a thread due last week is not overtaken by a new lead."""
+    box = maillog.mailbox(daily_limit=50)
+    _quiet_threads(box, 3, written="2026-09-28T08:00:00+00:00")
+    _opener_waiting_since("2026-10-05T09:00:00+00:00")
+
+    assert _queue(FRIDAY_NOON) == ["follow_up", "follow_up", "follow_up", "opener"]
+
+
+def test_an_opener_not_yet_due_is_not_in_the_queue(site_config):
+    box = maillog.mailbox(daily_limit=50)
+    _quiet_threads(box, 1, written="2026-10-05T08:00:00+00:00")
+    DealFactory(lead=LeadFactory(email="later@acme.com"),
+                start_at=FRIDAY_NOON + timedelta(days=3), created_at=FRIDAY_NOON)
+
+    assert _queue(FRIDAY_NOON) == ["follow_up"]
+
+
+# ── Business days forward ─────────────────────────────────────────
+
+
+def test_add_business_days_steps_over_the_weekend():
+    friday = datetime.fromisoformat("2026-10-09T15:00:00+00:00")
+
+    assert add_business_days(friday, 1) == datetime.fromisoformat("2026-10-12T00:00:00+00:00")
+    assert business_days_between(friday, add_business_days(friday, 3)) == 3
+
+
+def test_add_business_days_of_zero_is_the_start_itself():
+    friday = datetime.fromisoformat("2026-10-09T15:00:00+00:00")
+
+    assert add_business_days(friday, 0) == friday

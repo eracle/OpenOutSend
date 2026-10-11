@@ -67,9 +67,10 @@ outsend send all               # until nobody is left to email
 ```
 
 A pass, in order: read the mailbox (an opt-out overnight suppresses someone before anything is
-written to them), answer every thread the lead replied in, follow up on ones gone quiet, then open as
-many first emails as the guards allow *right now*. Replies and follow-ups ignore the daily cap and
-spacing clock; **openers are the only cold volume**, so they are the only thing capped.
+written to them), answer every thread the lead replied in, then send as many openers, later steps and
+follow-ups as the guards allow *right now* — one queue, oldest due first, so a backlog of threads can
+never hold new leads at zero. Replies ignore the daily cap, the spacing clock and the sending window;
+**every step and follow-up is cold volume**, and they share one capped, spaced budget per box.
 
 `outsend send 5` waits — sleeping out the spacing clock, the daily ceiling and the sending window
 between passes, including overnight or across a weekend if that is what the guards say. `outsend send
@@ -115,7 +116,7 @@ the other, or either without `--agent-draft`, is refused before any mail moves.
 ## Reading the output
 
 Nothing here prints a CSV — sending has no rows to hand on. Everything is narration on **stderr**:
-counts (`read 2 new message(s) · answered 1 · followed up 0 · opened 3`), the gate holding a pass that
+counts (`read 2 new message(s) · answered 1 · sent 0 later step(s) · followed up 0 · opened 3`), the gate holding a pass that
 did nothing (*"no mailbox connected, so nothing can be sent"* rather than a silent zero), and, for a
 goal, how the run ended (`opened 5 of 5 conversation(s) in 3 pass(es)`, or `stopped at ...` with the
 wall it hit). **Never report a pass that did nothing as "no leads to send"** — read the holding line;

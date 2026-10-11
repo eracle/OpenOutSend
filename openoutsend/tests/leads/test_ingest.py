@@ -8,6 +8,7 @@ import io
 import json
 
 import pytest
+from django.utils import timezone
 
 from openoutsend.leads.ingest import ingest
 from openoutsend.leads.models import Deal, DealState, Lead, Outcome
@@ -59,6 +60,31 @@ def test_re_ingesting_the_same_row_changes_nothing():
 
     assert Lead.objects.count() == 1
     assert Deal.objects.count() == 1
+
+
+def test_a_lead_lands_in_cold_unless_told_otherwise():
+    ingest(stream(record()))
+
+    assert Deal.objects.get().sequence == "cold"
+
+
+def test_the_same_lead_in_another_sequence_gets_a_deal_of_its_own():
+    ingest(stream(record()))
+    ingest(stream(record()), sequence="/seqs/sample-to-order")
+    ingest(stream(record()), sequence="/seqs/sample-to-order")
+
+    assert Lead.objects.count() == 1
+    assert sorted(Deal.objects.values_list("sequence", flat=True)) == ["/seqs/sample-to-order", "cold"]
+
+
+def test_a_new_sequence_does_not_reopen_a_finished_deal_in_another():
+    ingest(stream(record()))
+    Deal.objects.update(state=DealState.COMPLETED, outcome=Outcome.NOT_INTERESTED)
+
+    ingest(stream(record()), sequence="/seqs/relaunch")
+
+    assert Deal.objects.get(sequence="cold").outcome == Outcome.NOT_INTERESTED
+    assert Deal.objects.get(sequence="/seqs/relaunch").state == DealState.READY
 
 
 def test_latest_wins_on_a_correction():
@@ -124,6 +150,63 @@ def test_blank_lines_are_not_rows():
     assert (result.stored, result.skipped) == (1, 0)
 
 
+# ── The sequence's own fields ─────────────────────────────────────
+
+
+def test_the_other_keys_become_the_deals_prompt_fields():
+    ingest(stream(record(order_url="https://pay.example/1", leads=[{"name": "Bo"}])))
+
+    assert Deal.objects.get().fields == {"order_url": "https://pay.example/1", "leads": [{"name": "Bo"}]}
+
+
+def test_prompt_fields_merge_latest_wins_key_by_key():
+    ingest(stream(record(order_url="https://pay.example/1", product="audits")))
+    ingest(stream(record(order_url="https://pay.example/2", product=None, buyer="")))
+
+    assert Deal.objects.get().fields == {"order_url": "https://pay.example/2", "product": "audits"}
+
+
+def test_start_at_is_the_ingest_time_when_the_line_has_none():
+    before = timezone.now()
+    ingest(stream(record()))
+
+    assert before <= Deal.objects.get().start_at <= timezone.now()
+
+
+def test_start_at_is_read_from_the_line_and_kept_when_a_later_one_omits_it():
+    ingest(stream(record(start_at="2026-10-07T09:12:00Z")))
+    ingest(stream(record()))
+
+    deal = Deal.objects.get()
+    assert deal.start_at.isoformat() == "2026-10-07T09:12:00+00:00"
+    assert "start_at" not in deal.fields
+
+
+def test_a_start_at_with_no_offset_is_utc():
+    ingest(stream(record(start_at="2026-10-07T09:12:00")))
+
+    assert Deal.objects.get().start_at.isoformat() == "2026-10-07T09:12:00+00:00"
+
+
+def test_a_re_export_with_stop_lands_on_the_same_deal():
+    ingest(stream(record()))
+    assert Deal.objects.get().stop is False
+
+    ingest(stream(record(stop=True)))
+
+    deal = Deal.objects.get()
+    assert deal.stop is True
+    assert "stop" not in deal.fields
+
+
+@pytest.mark.parametrize("bad", [{"start_at": "next tuesday"}, {"start_at": 5}, {"stop": "yes"}])
+def test_an_engine_field_it_cannot_read_makes_the_line_malformed(bad, caplog):
+    result = ingest(stream(record(**bad)))
+
+    assert (result.stored, result.skipped) == (0, 1)
+    assert "line 1 skipped" in caplog.text
+
+
 # ── The door ──────────────────────────────────────────────────────
 
 
@@ -134,6 +217,16 @@ def test_a_suppressed_address_arrives_unsendable():
 
     assert (result.stored, result.suppressed) == (1, 1)
     assert Deal.objects.get().outcome == Outcome.UNSUBSCRIBED
+
+
+def test_an_opt_out_follows_the_lead_into_a_new_sequence():
+    ingest(stream(record()))
+    suppress_email("anna@example.com", reason="asked to stop")
+
+    result = ingest(stream(record()), sequence="/seqs/relaunch")
+
+    assert result.suppressed == 1
+    assert Deal.objects.get(sequence="/seqs/relaunch").outcome == Outcome.UNSUBSCRIBED
 
 
 def test_a_re_ingest_never_resurrects_an_opt_out():

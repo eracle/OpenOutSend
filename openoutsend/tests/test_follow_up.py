@@ -210,8 +210,8 @@ class TestTheFollowUpItself:
         assert agent.call_args.args[1] == FOLLOW_UP_PROMPT
         assert send.call_args.kwargs["prompt"] == FOLLOW_UP_PROMPT
         # Not a step, and no move of its own: it keeps the opener's from the history.
-        assert "step" not in send.call_args.kwargs
-        assert "prompt_line" not in send.call_args.kwargs
+        assert send.call_args.kwargs["step"] is None
+        assert send.call_args.kwargs["prompt_line"] is None
 
     def test_a_lead_suppressed_mid_run_is_not_chased(self, operator):
         """The same last gate the opener has — a bounce or an opt-out may have landed."""

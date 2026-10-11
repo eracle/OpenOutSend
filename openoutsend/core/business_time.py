@@ -11,7 +11,7 @@ missed holiday costs one slightly-off number in a prompt.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 SATURDAY = 5
 
@@ -29,6 +29,22 @@ def business_days_between(start: datetime, end: datetime) -> int:
     """
     return _business_days_in_range(start.date() + timedelta(days=1),
                                    end.date() + timedelta(days=1))
+
+
+def add_business_days(start: datetime, days: int) -> datetime:
+    """The first moment ``days`` working days after ``start``, by ``business_days_between``.
+
+    ``start`` itself for ``0``; otherwise midnight, in ``start``'s zone, of the
+    ``days``-th weekday after ``start.date()`` — the moment the count reaches ``days``.
+    """
+    if days <= 0:
+        return start
+    day = start.date()
+    counted = 0
+    while counted < days:
+        day += timedelta(days=1)
+        counted += is_business_day(day)
+    return datetime.combine(day, time.min, tzinfo=start.tzinfo)
 
 
 # ── Internals ─────────────────────────────────────────────────────

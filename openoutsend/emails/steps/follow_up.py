@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import logging
 
-from django.utils import timezone
 from termcolor import colored
 
 from openoutsend.leads.models import DealState
@@ -72,56 +71,10 @@ def send_follow_up(deal) -> DealState | None:
     a lead suppressed while the agent was writing, or an agent that answered with
     something other than a message.
     """
-    from openoutsend.core.agents.outreach import run_outreach_agent
-    from openoutsend.core.operator import get_active_user
-    from openoutsend.emails.sender import operator_bcc, send_email, suppressed
-    from openoutsend.emails.steps.reply import ends_in_an_opt_out, honour_opt_out, thread_ids
-    from openoutsend.emails.steps.send import space_out
+    from openoutsend.emails.steps.send import send_in_thread
 
     logger.info("%s %s", colored("▶ follow-up", "cyan", attrs=["bold"]), deal.lead.public_id)
-
-    decision = run_outreach_agent(deal, FOLLOW_UP_PROMPT)
-
-    # A chase is written to somebody who has said nothing, so there is no opt-out here
-    # to read and the prompt does not offer one. It is honoured anyway if the agent
-    # reaches for it: the alternative is the branch below, which logs the decision and
-    # discards it — leaving a deal the agent judged an opt-out sendable again next pass.
-    if ends_in_an_opt_out(decision):
-        return honour_opt_out(deal)
-    if decision.action == "mark_completed":
-        logger.info("%s judged not worth another email: %s",
-                    deal.lead.public_id, decision.outcome)
-        deal.outcome = decision.outcome
-        return DealState.COMPLETED
-    if decision.action != "send_message":
-        logger.warning("follow-up agent for %s answered %s — sending nothing",
-                       deal.lead.public_id, decision.action)
-        return None
-
-    # Last gate before the message goes, exactly as the opener has: an opt-out can
-    # land in the seconds an LLM call takes, and a bounce may have suppressed the
-    # address since the pool was built.
-    if suppressed(deal.lead):
-        logger.warning("%s was suppressed mid-run — not following up", deal.lead.public_id)
-        return None
-
-    chain = thread_ids(deal)
-    send_email(
-        deal.mailbox,
-        deal.lead.email,
-        # The original subject, unchanged and with no "Re:" — they never wrote back,
-        # so there is nothing to be replying to. The threading headers are what put
-        # it in the same conversation; the subject only has to not lie about it.
-        deal.email_subject,
-        decision.message,
-        bcc=operator_bcc(get_active_user()),
-        in_reply_to=chain[-1] if chain else None,
-        references=" ".join(chain) or None,
-        thread=deal.thread,
-        prompt=FOLLOW_UP_PROMPT,
-    )
-    space_out(deal.mailbox, timezone.now())
-    return None
+    return send_in_thread(deal, FOLLOW_UP_PROMPT)
 
 
 def give_up(deal) -> DealState:

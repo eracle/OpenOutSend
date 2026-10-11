@@ -7,8 +7,10 @@ everything the engine reads, and the body is the prompt and nothing else::
     E<number>[-<days>d]-<name>.md
 
 - ``E<number>`` is the order. Numbers compare as numbers, so ``E10`` follows ``E9``.
-- ``<days>d`` is the gap in business days: ``E0`` counts from when the lead was
-  enrolled, every later step from the previous step's send. No segment means ``0d``.
+- ``<days>d`` is the gap in business days: ``E0`` counts from the deal's ``start_at``
+  (the ingest time when the piped line has none), every later step from the previous
+  step's send. No segment means ``0d``. The planner reads them (``planner.opening_step``,
+  ``planner.steps_due``).
 - ``<name>`` is for the person reading the folder.
 
 **The body is rendered by Jinja with ``StrictUndefined``.** ``{{ field }}`` is filled in

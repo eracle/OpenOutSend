@@ -5,8 +5,9 @@ exits; it transmits nothing. Every rule here is the boundary contract's, and eac
 exists because the pipe is **at-least-once into an idempotent receiver**: recovery is
 running it again, so nothing may depend on a line arriving exactly once.
 
-- **Keyed on `lead_id`.** A re-ingest lands on the row it landed on last time, or
-  re-running the pipe is a way of mailing people twice.
+- **Keyed on `lead_id` and the sequence.** A re-ingest into the same sequence lands on
+  the deal it landed on last time, or re-running the pipe is a way of mailing people
+  twice. The same lead piped into another sequence gets a deal of its own there.
 - **Latest wins, field by field** — a re-ingest is a *correction*: a lead re-qualified
   under a changed ICP has a new `reason`, and an address filled in by a later
   enrichment beats the blank it replaces. An empty value never overwrites a stored
@@ -15,6 +16,10 @@ running it again, so nothing may depend on a line arriving exactly once.
   stored — we still know who they are — and its deal is parked `UNSUBSCRIBED`, which
   no later ingest lifts. A blank address has nothing to check, which is why
   `emails/sender.suppressed` asks again at send.
+- **Every other key is kept on the deal** as a field the step prompts can name, and
+  merged the same way: latest wins key by key, a missing or null key changes nothing.
+  `start_at` and `stop` are the two the engine reads itself, so a line carrying one it
+  cannot read is malformed rather than half-stored.
 - **An address that *changed* is re-checked**, because ingest is lead-keyed while
   suppression is address-keyed: a corrected address is an unsuppressed one until
   something looks again.
@@ -28,8 +33,11 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime
+from datetime import timezone as dt_timezone
 from typing import IO
 
+from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from openoutsend.leads.models import Deal, DealState, Lead, Outcome
@@ -50,6 +58,10 @@ LEAD_FIELDS = (
     "profile_text",
 )
 
+# The keys that are not prompt fields: the lead's columns, the deal's own columns, and
+# the two the engine reads.
+NOT_PROMPT_FIELDS = frozenset({"lead_id", "reason", "qualified_at", "start_at", "stop", *LEAD_FIELDS})
+
 
 @dataclass
 class IngestResult:
@@ -65,8 +77,8 @@ class IngestResult:
         return self.skipped == 0
 
 
-def ingest(stream: IO[str]) -> IngestResult:
-    """Read JSON Lines from *stream*. Returns what happened.
+def ingest(stream: IO[str], sequence: str = "cold") -> IngestResult:
+    """Read JSON Lines from *stream* into *sequence*. Returns what happened.
 
     Line by line, so a stream that stops halfway has already delivered every complete
     record before the break — which is the property JSON Lines was chosen for, and the
@@ -81,7 +93,7 @@ def ingest(stream: IO[str]) -> IngestResult:
         if record is None:
             result.skipped += 1
             continue
-        _store(record, result)
+        _store(record, sequence, result)
     return result
 
 
@@ -107,14 +119,32 @@ def _parse(line: str, number: int) -> dict | None:
     if not str(record.get("lead_id") or "").strip():
         logger.error("line %d skipped: no lead_id", number)
         return None
+    if record.get("start_at") is not None and _start_at(record) is None:
+        logger.error("line %d skipped: start_at is not an ISO datetime", number)
+        return None
+    if record.get("stop") is not None and not isinstance(record["stop"], bool):
+        logger.error("line %d skipped: stop is not true or false", number)
+        return None
     return record
 
 
-def _store(record: dict, result: IngestResult) -> None:
-    """Upsert one record's lead and deal, and count what it turned out to be."""
+def _start_at(record: dict) -> datetime | None:
+    """The record's `start_at` as an aware datetime, or None if absent or unreadable.
+
+    A value with no offset is read as UTC, the zone every producer's timestamps are in.
+    """
+    value = record.get("start_at")
+    parsed = parse_datetime(value) if isinstance(value, str) else None
+    if parsed is not None and timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, dt_timezone.utc)
+    return parsed
+
+
+def _store(record: dict, sequence: str, result: IngestResult) -> None:
+    """Upsert one record's lead and its deal in *sequence*, and count what it turned out to be."""
     lead, address_changed = _upsert_lead(record)
     suppressed = _check_the_door(lead, address_changed)
-    _upsert_deal(lead, record, suppressed)
+    _upsert_deal(lead, sequence, record, suppressed)
 
     result.stored += 1
     if suppressed:
@@ -162,8 +192,8 @@ def _check_the_door(lead: Lead, address_changed: bool) -> bool:
     return suppressed
 
 
-def _upsert_deal(lead: Lead, record: dict, suppressed: bool) -> Deal:
-    """This lead's row, created or corrected.
+def _upsert_deal(lead: Lead, sequence: str, record: dict, suppressed: bool) -> Deal:
+    """This lead's row in *sequence*, created or corrected.
 
     `reason` is refreshed on every arrival — that is the correction a re-ingest most
     often *is*. The state is not: a conversation that has started or ended is this
@@ -177,7 +207,7 @@ def _upsert_deal(lead: Lead, record: dict, suppressed: bool) -> Deal:
     if suppressed:
         opening = {"state": DealState.COMPLETED, "outcome": Outcome.UNSUBSCRIBED}
     deal, created = Deal.objects.get_or_create(
-        lead=lead, defaults=opening,
+        lead=lead, sequence=sequence, defaults=opening,
     )
 
     updated = []
@@ -193,7 +223,34 @@ def _upsert_deal(lead: Lead, record: dict, suppressed: bool) -> Deal:
         deal.state = DealState.COMPLETED
         deal.outcome = Outcome.UNSUBSCRIBED
         updated += ["state", "outcome"]
+    updated += _merge_sequence_fields(deal, record)
 
     if updated:
         deal.save(update_fields=[*updated, "updated_at"])
     return deal
+
+
+def _merge_sequence_fields(deal: Deal, record: dict) -> list[str]:
+    """Write the record's prompt fields, `start_at` and `stop` onto *deal*. Returns the columns changed.
+
+    Latest wins key by key, and a null or blank value is *never told*, as for the
+    lead's columns. `stop` is latest-wins too: the exporter derives it from its own
+    state, so a `false` after a `true` is that state changing back.
+    """
+    changed = []
+    incoming = {
+        key: value for key, value in record.items()
+        if key not in NOT_PROMPT_FIELDS and value is not None and value != ""
+    }
+    merged = {**deal.fields, **incoming}
+    if merged != deal.fields:
+        deal.fields = merged
+        changed.append("fields")
+    start_at = _start_at(record)
+    if start_at and deal.start_at != start_at:
+        deal.start_at = start_at
+        changed.append("start_at")
+    if isinstance(record.get("stop"), bool) and deal.stop != record["stop"]:
+        deal.stop = record["stop"]
+        changed.append("stop")
+    return changed

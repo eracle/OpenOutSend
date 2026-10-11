@@ -15,7 +15,7 @@ The frame carries no rules. Those come with each prompt.
 
 ## What a step file receives
 
-A step file (`core/sequences.py`) is rendered before the model reads it, with the fields `emails/steps/send.step_fields` builds: the lead's fields and `prompt_line`, the drawn move's text. A `{{ field }}` the deal does not carry is an error for that deal, never an empty string.
+A step file (`core/sequences.py`) is rendered before the model reads it, with the fields `emails/steps/send.step_fields` builds: the lead's fields, every other key the piped line carried for this sequence (`Deal.fields`, any JSON value: a link, a list of leads), and `prompt_line`, the drawn move's text. A `{{ field }}` the deal does not carry is an error for that deal, never an empty string.
 
 ## The history
 

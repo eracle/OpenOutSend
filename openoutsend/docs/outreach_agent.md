@@ -9,14 +9,15 @@ One agent writes every email OpenOutSend sends, from the cold open to the last r
 ## Flow
 
 ```
-first email due                     follow-up due                    an unanswered reply
-  (a box is free)                     (silence, gap elapsed)           (outranks both)
-        │                                   │                                │
-send_first_email(deal, box, line)   send_follow_up(deal)             answer_reply(deal)
-  ← emails/steps/send.py              ← emails/steps/follow_up.py      ← emails/steps/reply.py
-  prompt: the sequence's E0 file      prompt: FOLLOW_UP_PROMPT         prompt: REPLY_PROMPT
-        │                                   │                                │
-        └──────────── run_outreach_agent(deal, prompt, *, opener) ───────────┘
+first step due                    later step due                 follow-up due                  an unanswered reply
+  (a box is free)                   (its days since the last)      (silence, gap elapsed)         (outranks all)
+        │                                 │                              │                              │
+send_first_email(deal, box,       send_next_step(deal,           send_follow_up(deal)           answer_reply(deal)
+                 step, line)                     step, line)
+  ← emails/steps/send.py            ← emails/steps/send.py         ← emails/steps/follow_up.py    ← emails/steps/reply.py
+  prompt: the opening step file     prompt: that step's file       prompt: FOLLOW_UP_PROMPT       prompt: REPLY_PROMPT
+        │                                 │                              │                              │
+        └─────────────────────── run_outreach_agent(deal, prompt, *, opener) ─────────────────────────┘
                       ← core/agents/outreach.py
                       system: frame.j2 · user: history + "Write this email now" + prompt
 
@@ -24,7 +25,7 @@ send_first_email(deal, box, line)   send_follow_up(deal)             answer_repl
   the mail log, classify reads the stored bytes, project acts on the reading.
 ```
 
-`send_pass.py` calls the three in the order reply, follow-up, opener; the planner's docstring gives the reason. A reply is exempt from the daily cap, the spacing and the sending window. A follow-up and an opener share one budget.
+`send_pass.py` answers replies first, then sends openers, later steps and follow-ups as one queue, oldest due first (`planner.cold_sends_due`), so no kind can starve another. A reply is exempt from the daily cap, the spacing and the sending window. Every step and follow-up shares one budget.
 
 ## The three prompts
 

@@ -230,9 +230,13 @@ def _run_to_goal(args: argparse.Namespace) -> int:
 def _report(result) -> None:
     """The counts a pass or a whole run produced, in the same words for both."""
     print(f"read {result.mirrored} new message(s) · answered {result.answered} · "
-          f"followed up {result.followed_up} · opened {result.opened}", file=sys.stderr)
+          f"sent {result.stepped} later step(s) · followed up {result.followed_up} · "
+          f"opened {result.opened}", file=sys.stderr)
     if result.gave_up:
         print(f"{result.gave_up} lead(s) never answered and were closed", file=sys.stderr)
+    if result.missed:
+        print(f"{result.missed} lead(s) arrived with every step past its grace and were closed",
+              file=sys.stderr)
     if result.failed:
         print(f"{result.failed} send(s) failed — see above; the next pass tries them again",
               file=sys.stderr)

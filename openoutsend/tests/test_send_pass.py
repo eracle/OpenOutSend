@@ -22,20 +22,22 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture
 def steps():
-    """The five things a pass calls out to, stubbed, with the order they were called in."""
+    """The six things a pass calls out to, stubbed, with the order they were called in."""
     order: list[str] = []
     with patch("openoutsend.emails.mail_pass.run_mail_pass") as mail, \
             patch("openoutsend.emails.warmth.measure_pool") as measure, \
             patch("openoutsend.emails.steps.reply.answer_reply") as reply, \
+            patch("openoutsend.emails.steps.send.send_next_step") as step, \
             patch("openoutsend.emails.steps.follow_up.send_follow_up") as chase, \
             patch("openoutsend.emails.steps.send.send_first_email") as send:
         mail.side_effect = lambda: (order.append("read"), (0, 0, 0))[1]
         measure.side_effect = lambda: order.append("measure")
         reply.side_effect = lambda deal: order.append("answer")
+        step.side_effect = lambda deal, step, prompt_line: order.append("step")
         chase.side_effect = lambda deal: order.append("follow_up")
-        send.side_effect = lambda deal, mailbox, prompt_line: order.append("open")
-        yield SimpleNamespace(mail=mail, measure=measure, reply=reply, chase=chase,
-                              send=send, order=order)
+        send.side_effect = lambda deal, mailbox, step, prompt_line: order.append("open")
+        yield SimpleNamespace(mail=mail, measure=measure, reply=reply, step=step,
+                              chase=chase, send=send, order=order)
 
 
 def _waiting(address="lead@acme.com"):
@@ -256,7 +258,7 @@ def test_a_follow_up_and_an_opener_compete_for_the_same_slot(steps):
     """The whole fix for 102-follow-ups-to-1-opener: one budget, not two.
 
     A box with room for exactly one cold email, one lead waiting to be opened and one
-    gone quiet. Only one message leaves — the follow-up, because it runs first — and
+    gone quiet. Only one message leaves — the follow-up, because it has been due longer — and
     the opener waits for the next pass rather than being sent out of a reserve.
     """
     box = maillog.mailbox(daily_limit=1)

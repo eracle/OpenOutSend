@@ -44,7 +44,7 @@ a second, separate invocation is what mails them:
 uv tool install openoutsend             # or pip install -e . from a checkout
 outsend check                           # confirm the environment can send from a box
 outfind find 50 --json | outsend        # store
-outsend send                            # one pass: read, answer, follow up, open
+outsend send                            # one pass: read, answer, later steps, follow up, open
 outsend send 5                          # or: keep going until 5 are open
 outsend send all                        # or: until nobody is left to email
 ```

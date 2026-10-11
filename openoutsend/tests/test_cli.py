@@ -152,7 +152,8 @@ def test_send_runs_one_pass(connected, capsys):
     from openoutsend.core.agent_draft import OFF
     run.assert_called_once_with(None, agent_draft=OFF)
     narration = capsys.readouterr().err
-    assert "read 2 new message(s) · answered 1 · followed up 0 · opened 3" in narration
+    assert ("read 2 new message(s) · answered 1 · sent 0 later step(s) · followed up 0 · "
+            "opened 3") in narration
 
 
 def test_a_count_runs_to_the_goal_instead_of_passing_once(connected, capsys):

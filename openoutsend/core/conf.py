@@ -131,7 +131,7 @@ SEND_INTERVAL_JITTER_MAX_SECONDS = 90
 #
 # **The number of follow-ups is the length of the gaps.** Two after a sequence's last
 # step, then the deal ends `unresponsive`; after an earlier step, only those that land
-# before the next step is due (`planner._follow_up_is_due`). The number is deliberately
+# before the next step is due (`planner._follow_up_due_at`). The number is deliberately
 # small: cold volume is what damages a sending domain, and a third touch is already
 # likelier to draw a complaint than a reply.
 #
@@ -140,6 +140,18 @@ SEND_INTERVAL_JITTER_MAX_SECONDS = 90
 # because its steps already say everything it means to say.
 # ----------------------------------------------------------------------
 FOLLOW_UP_GAPS_BUSINESS_DAYS = (3, 5)    # the first after 3 days, the second 5 after that
+
+# ----------------------------------------------------------------------
+# Grace (planner.opening_step) — how late a deal's first step may still go.
+#
+# A lead piped in with an old `start_at` (a request from last month, exported today)
+# has steps whose due time had already passed when it arrived. Sending them now would
+# answer an event the reader has forgotten, so a step already more than this many
+# business days overdue *on arrival* is skipped, and the next counts from when the
+# skipped one was due. Measured against the enrolment, never against today: a lead
+# who waited in a long queue was on time when it arrived, and the queue is ours.
+# ----------------------------------------------------------------------
+GRACE_DAYS = 2
 
 
 def follow_ups_on() -> bool:

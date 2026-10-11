@@ -25,6 +25,7 @@ import pytest
 from django.utils import timezone
 
 from openoutsend.core.agents.outreach import OutreachDecision
+from openoutsend.core.sequences import cold
 from openoutsend.emails.mail_pass import run_mail_pass
 from openoutsend.emails.models import Mailbox
 from openoutsend.emails.sender import (
@@ -279,7 +280,7 @@ class TestSendGuards:
                    side_effect=_suppress_then_decide), \
              patch("openoutsend.leads.summaries.materialize_profile_summary_if_missing"), \
              patch("openoutsend.emails.sender.send_email") as send:
-            assert send_first_email(deal, box, None) is None
+            assert send_first_email(deal, box, cold().first, None) is None
 
         send.assert_not_called()
         deal.refresh_from_db()

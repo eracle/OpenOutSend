@@ -4,7 +4,7 @@
 OpenOutFind's mirror of this (``--agent-qualify``) threads state through a contextvar,
 because its call sits four layers below the CLI (``job -> cycle -> top_up ->
 qualify``). This one is three ordinary parameters away
-(``_send -> run_send_pass -> _open_conversations``), so a plain dataclass passed
+(``_send -> run_send_pass -> _send_cold``), so a plain dataclass passed
 down says the same thing without module-level state.
 """
 from __future__ import annotations
