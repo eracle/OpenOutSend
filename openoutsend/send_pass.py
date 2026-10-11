@@ -45,6 +45,7 @@ import logging
 from dataclasses import dataclass
 
 from openoutsend.core.agent_draft import OFF, AgentDraft
+from openoutsend.core.sequences import COLD
 from openoutsend.errors import DraftPending
 
 logger = logging.getLogger(__name__)
@@ -78,9 +79,13 @@ class PassResult:
         return self.failed == 0
 
 
-def run_send_pass(prompt_line_name: str | None = None,
-                  narrate: bool = True, agent_draft: AgentDraft = OFF) -> PassResult:
+def run_send_pass(prompt_line_name: str | None = None, narrate: bool = True,
+                  agent_draft: AgentDraft = OFF, sequence: str = COLD) -> PassResult:
     """Read, answer, open — once — and report. Never raises for a failed send.
+
+    ``sequence`` is the key of the one sequence this pass closes and sends
+    (``core/sequences.key``). Reading the mail and answering replies are not scoped:
+    they are the install's, whichever sequence the thread began in.
 
     ``prompt_line_name`` pins every opener in this pass to one move
     (``core/prompt_lines.py``); left unset, each opener draws its own at random, which
@@ -102,9 +107,9 @@ def run_send_pass(prompt_line_name: str | None = None,
     result.mirrored, result.classified, result.projected = run_mail_pass()
     measure_pool()
     _answer_replies(result)
-    _close_ended(result)
-    _send_cold(result, prompt_line_name, agent_draft)
-    result.holding = _what_is_holding()
+    _close_ended(result, sequence)
+    _send_cold(result, sequence, prompt_line_name, agent_draft)
+    result.holding = _what_is_holding(sequence)
     if narrate:
         logger.info("%s", result.holding)
     return result
@@ -130,7 +135,7 @@ def _answer_replies(result: PassResult) -> None:
             result.failed += 1
 
 
-def _close_ended(result: PassResult) -> None:
+def _close_ended(result: PassResult, sequence: str) -> None:
     """End the deals past their last touch, and the ones that can never become due.
 
     Closing costs no send, so it is not gated on a box at all — a deal is closed
@@ -140,18 +145,18 @@ def _close_ended(result: PassResult) -> None:
     from openoutsend.leads.models import DealState, Outcome
     from openoutsend.planner import exhausted_touches, missed_enrolments
 
-    for deal in exhausted_touches():
+    for deal in exhausted_touches(sequence):
         _apply(deal, give_up(deal))
         result.gave_up += 1
 
-    for deal in missed_enrolments():
+    for deal in missed_enrolments(sequence):
         logger.info("%s arrived with every step past its grace — closing", deal.lead.public_id)
         deal.outcome = Outcome.MISSED
         _apply(deal, DealState.COMPLETED)
         result.missed += 1
 
 
-def _send_cold(result: PassResult, prompt_line_name: str | None = None,
+def _send_cold(result: PassResult, sequence: str, prompt_line_name: str | None = None,
                agent_draft: AgentDraft = OFF) -> None:
     """Send every cold email the guards allow now — openers, later steps, follow-ups.
 
@@ -178,7 +183,7 @@ def _send_cold(result: PassResult, prompt_line_name: str | None = None,
     """
     from openoutsend.planner import cold_sends_due
 
-    for send, box in cold_sends_due(openers=not agent_draft.active):
+    for send, box in cold_sends_due(sequence=sequence, openers=not agent_draft.active):
         try:
             _apply(send.deal, _write_and_send(send, box, prompt_line_name))
         except Exception:
@@ -188,7 +193,7 @@ def _send_cold(result: PassResult, prompt_line_name: str | None = None,
         _count(result, send.kind)
 
     if agent_draft.active:
-        _open_with_agent_draft(result, agent_draft)
+        _open_with_agent_draft(result, agent_draft, sequence)
 
 
 def _write_and_send(send, box, prompt_line_name: str | None):
@@ -217,7 +222,7 @@ def _count(result: PassResult, kind: str) -> None:
         result.followed_up += 1
 
 
-def _open_with_agent_draft(result: PassResult, agent_draft: AgentDraft) -> None:
+def _open_with_agent_draft(result: PassResult, agent_draft: AgentDraft, sequence: str) -> None:
     """Answer the one deal already handed to the calling agent, or hand one back.
 
     Mirrors OpenOutFind's ``_resume_agent_qualification``: the pending deal does not
@@ -235,9 +240,10 @@ def _open_with_agent_draft(result: PassResult, agent_draft: AgentDraft) -> None:
     from openoutsend.leads.models import PendingDraft
     from openoutsend.planner import free_for_first_email, openers_due, opening_step
 
-    pending = PendingDraft.objects.select_related("deal__lead").first()
+    pending = (PendingDraft.objects.filter(deal__sequence=sequence)
+               .select_related("deal__lead").first())
     if pending is None:
-        due = openers_due()
+        due = openers_due(sequence=sequence)
         if not due:
             return
         deal = due[0].deal
@@ -300,7 +306,7 @@ def _apply(deal, next_state) -> None:
     deal.save()
 
 
-def _what_is_holding() -> str:
+def _what_is_holding(sequence: str) -> str:
     """One line of counts, and the gate holding them, said as its consequence.
 
     *"No mailbox connected, so nothing can be sent"* tells the operator why a pass did
@@ -311,7 +317,7 @@ def _what_is_holding() -> str:
     from openoutsend.emails.models import Mailbox
     from openoutsend.planner import emailable_deals, unanswered_replies
 
-    waiting = emailable_deals().count()
+    waiting = emailable_deals(sequence).count()
     to_answer = unanswered_replies().count()
     counts = f"{waiting} waiting to be emailed · {to_answer} reply(ies) to answer"
 

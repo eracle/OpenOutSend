@@ -53,7 +53,8 @@ The two invocations are separate on purpose: a pipe's right-hand side must not b
 while a producer is still writing, and the cadences differ — leads arrive when `find` runs, mail moves
 on the mailbox's clock. So the cron line is two entries, not one command doing both.
 
-It reads JSON Lines on stdin, upserts on `lead_id`, checks every address against the
+It reads JSON Lines on stdin, upserts on `lead_id` within the sequence (cold, unless `--sequence`
+names another; see *Sequences* below), checks every address against the
 suppression list at the door, skips and counts a malformed line, prints the counts to **stderr**,
 and exits 0 when every line became a row. Its database is
 `~/.openoutsend/data/db.sqlite3` (`OUTSEND_HOME` / `OUTSEND_DB` override it) and it migrates itself on
@@ -119,6 +120,40 @@ install. A reply at any point ends the follow-ups and the conversation takes ove
 cap, one spacing clock and one sending window with the openers, rather than claiming ahead of them out
 of a budget of their own. A reply obeys none of the three, because answering someone who wrote to you
 is not cold volume and holding the answer until Monday is worse than sending it at 21:00.
+
+### Sequences
+
+Cold outreach is one sequence, built in. Any other is a folder of prompt files, one per email, kept
+wherever its owner keeps it and named on the command line:
+
+```
+after-a-demo/
+  E0-1d-thanks-and-one-question.md
+  E1-3d-the-thing-they-asked-about.md
+  E2-5d-last-note.md
+```
+
+```bash
+some-export --json | outsend --sequence after-a-demo    # enrol or update, exit
+outsend send --sequence after-a-demo                    # mail the steps now due, in this sequence only
+```
+
+- **The filename is the schedule**: `E<number>[-<days>d]-<name>.md`. `E0` goes its days after the
+  lead's `start_at` (the ingest time when the line has none); every later step goes its days after the
+  previous step, in business days, on the same thread and box. A bad name, a duplicate or missing
+  number, a `0d` after `E0` or a Jinja syntax error fails the command that named the folder.
+- **The body is the prompt**, rendered by Jinja with every key of the piped line that is not a lead
+  column: `{{ first_name }}`, `{{ booking_url }}`, whatever the export carries. A field the line lacks
+  is an error for that lead, never a blank.
+- **One deal per lead per sequence.** The same `lead_id` piped into cold and into an event sequence is
+  two deals. Re-piping into the same sequence is a correction, latest wins key by key, and a line with
+  `"stop": true` takes the lead out of every remaining send.
+- **A pass sends one sequence.** `outsend send` mails cold and nothing else; `outsend send --sequence F`
+  mails `F` and nothing else. Reading the mail and answering replies are the install's, whichever
+  sequence a thread began in, and a reply stops the remaining steps.
+- **Follow-ups are per install** (`OUTSEND_FOLLOW_UPS`); an install mailing event sequences usually
+  turns them off. With them on, each lands only if it fits before the next step is due.
+
 **`outsend check` verifies what a run needs** — what this install sells and to whom, the name that
 signs the mail, and a mailbox to send it from — and it runs implicitly on every send, so a setup step
 is never something a timer discovers. **It comes from the environment and nothing is asked**, on a
@@ -229,7 +264,7 @@ idempotent — lives in
 [`roadmap/p1-e2-find-send-boundary-contract.md`](https://github.com/eracle/openoutreach-docs/blob/main/roadmap/p1-e2-find-send-boundary-contract.md)
 in the `openoutreach-docs` repo. The parts this side owes:
 
-- **Ingest is idempotent**, keyed on `lead_id`, so the pipe is allowed to be lossy and
+- **Ingest is idempotent**, keyed on `lead_id` and the sequence, so the pipe is allowed to be lossy and
   recovery is running it again.
 - **Suppression is checked at the door and is terminal** — the legal duty came here with `emails/`, and
   a re-ingest must never resurrect somebody who opted out. An address that *changed* is re-checked,

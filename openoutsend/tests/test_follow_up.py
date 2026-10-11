@@ -137,21 +137,24 @@ class TestFittingBeforeTheNextStep:
     """``E0 ── 3d: follow-up 1 ── 5d: follow-up 2 ── E1``, and only what lands before E1."""
 
     def test_a_follow_up_that_lands_before_the_next_step_goes(self, tmp_path):
-        _pursued(touches=1, days_ago=7, sequence=_two_steps(tmp_path, days=10))
+        sequence = _two_steps(tmp_path, days=10)
+        _pursued(touches=1, days_ago=7, sequence=sequence)
 
-        assert len(awaiting_follow_up(now=_monday())) == 1
+        assert len(awaiting_follow_up(now=_monday(), sequence=sequence)) == 1
 
     def test_one_that_would_land_on_or_after_it_is_skipped(self, tmp_path):
         """E1 is due 3 business days after E0: the first follow-up is due then too, so it never goes."""
-        _pursued(touches=1, days_ago=7, sequence=_two_steps(tmp_path, days=3))
+        sequence = _two_steps(tmp_path, days=3)
+        _pursued(touches=1, days_ago=7, sequence=sequence)
 
-        assert awaiting_follow_up(now=_monday()) == []
+        assert awaiting_follow_up(now=_monday(), sequence=sequence) == []
 
     def test_a_deal_with_a_step_still_to_come_is_not_exhausted(self, tmp_path):
         """Out of follow-ups, but E1 has not gone: the pursuit is not over."""
-        _pursued(touches=ALL_TOUCHES, days_ago=30, sequence=_two_steps(tmp_path, days=20))
+        sequence = _two_steps(tmp_path, days=20)
+        _pursued(touches=ALL_TOUCHES, days_ago=30, sequence=sequence)
 
-        assert exhausted_touches() == []
+        assert exhausted_touches(sequence) == []
 
 
 class TestGivingUp:

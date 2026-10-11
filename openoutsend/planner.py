@@ -18,6 +18,11 @@ context was re-read five times inside a single window.
 
 **The rules the planner keeps:**
 
+- **A pass sends one sequence.** Every pool that sends or closes takes the sequence's
+  key (``core/sequences.key``; ``cold`` by default), so `outsend send` never mails an
+  event sequence's steps and `outsend send --sequence F` never mails cold. Replies are
+  the exception (`unanswered_replies`): the mail is read for the whole install, and
+  whoever wrote in is answered in whichever pass reads it.
 - **One budget per box.** Every step of every sequence and every follow-up counts
   against its box's headroom, spacing and window. Only a reply to someone who wrote in
   is exempt: it is not cold volume, and answering within minutes is more human, not less.
@@ -40,11 +45,13 @@ from datetime import datetime, timedelta
 from django.db.models import Count, F, OuterRef, Q, Subquery
 from django.utils import timezone
 
+from openoutsend.core.sequences import COLD
+
 # ── What is due ───────────────────────────────────────────────────
 
 
-def emailable_deals():
-    """Deals waiting for their first email, oldest first — due or not yet.
+def emailable_deals(sequence: str = COLD):
+    """Deals in *sequence* waiting for their first email, oldest first — due or not yet.
 
     Three conditions and no more: the state, an address to send to, and no piped
     `stop`. Whether the first step is *due* is not a column — it is on disk and in
@@ -61,7 +68,7 @@ def emailable_deals():
     from openoutsend.leads.models import Deal, DealState
 
     return (
-        Deal.objects.filter(state=DealState.READY, stop=False)
+        Deal.objects.filter(state=DealState.READY, stop=False, sequence=sequence)
         .exclude(lead__email="")
         .select_related("lead")
         .order_by("created_at")
@@ -88,36 +95,37 @@ class DueSend:
     due_at: datetime
 
 
-def openers_due(now=None) -> list[DueSend]:
-    """Each deal whose first send is due now, oldest-due first.
+def openers_due(now=None, sequence: str = COLD) -> list[DueSend]:
+    """Each deal in *sequence* whose first send is due now, oldest-due first.
 
     The step is the deal's opening one (`opening_step`): ``E0`` unless the lead arrived
     with ``E0`` already past its grace. Deals with nothing left to open are not here —
     `missed_enrolments` closes them.
     """
     now = now or timezone.now()
-    return [send for send in _openers() if send.due_at <= now]
+    return [send for send in _openers(sequence) if send.due_at <= now]
 
 
-def _openers() -> list[DueSend]:
-    """Every deal's first send, due or not yet, oldest-due first."""
+def _openers(sequence: str) -> list[DueSend]:
+    """Every first send in *sequence*, due or not yet, oldest-due first."""
     sequence_of = _sequences()
     sends = []
-    for deal in emailable_deals():
+    for deal in emailable_deals(sequence):
         opening = opening_step(deal, sequence_of(deal))
         if opening is not None:
             sends.append(DueSend(OPENER, deal, *opening))
     return sorted(sends, key=lambda send: send.due_at)
 
 
-def missed_enrolments() -> list:
-    """`READY` deals every step of whose sequence was past its grace when they arrived.
+def missed_enrolments(sequence: str = COLD) -> list:
+    """`READY` deals in *sequence* every step of which was past its grace when they arrived.
 
     Nothing will ever be sent to them, so they are closed rather than left waiting —
     a deal that can never become due would hold `send all` open forever.
     """
     sequence_of = _sequences()
-    return [deal for deal in emailable_deals() if opening_step(deal, sequence_of(deal)) is None]
+    return [deal for deal in emailable_deals(sequence)
+            if opening_step(deal, sequence_of(deal)) is None]
 
 
 def opening_step(deal, sequence) -> tuple | None:
@@ -140,8 +148,8 @@ def opening_step(deal, sequence) -> tuple | None:
     return None
 
 
-def steps_due(now=None) -> list[DueSend]:
-    """Each written-to deal whose next step is due, oldest-due first.
+def steps_due(now=None, sequence: str = COLD) -> list[DueSend]:
+    """Each written-to deal in *sequence* whose next step is due, oldest-due first.
 
     The next step is due its days after the previous step's send — read off the mail
     log (`_since_last_step`), never after a follow-up, so chasing silence never moves a
@@ -154,7 +162,7 @@ def steps_due(now=None) -> list[DueSend]:
     now = now or timezone.now()
     candidates = (
         _open_threads()
-        .filter(stop=False, step__isnull=False)
+        .filter(sequence=sequence, stop=False, step__isnull=False)
         .annotate(last_in=_newest_turn(Direction.INBOUND))
         .filter(last_in__isnull=True)
         .select_related("lead", "mailbox")
@@ -201,8 +209,8 @@ def unanswered_replies():
     )
 
 
-def awaiting_follow_up(now=None):
-    """`EMAILED` deals nobody answered, due a follow-up. Longest-waiting first.
+def awaiting_follow_up(now=None, sequence: str = COLD):
+    """`EMAILED` deals in *sequence* nobody answered, due a follow-up. Longest-waiting first.
 
     **The mirror image of `unanswered_replies`**: same two timestamps, the opposite
     comparison. There, their newest turn is newer than ours and the ball is in our
@@ -239,7 +247,8 @@ def awaiting_follow_up(now=None):
         _open_threads()
         .annotate(last_in=_newest_turn(Direction.INBOUND),
                   last_out=_newest_turn(Direction.OUTBOUND))
-        .filter(last_in__isnull=True, last_out__isnull=False, step__isnull=False, stop=False)
+        .filter(sequence=sequence, last_in__isnull=True, last_out__isnull=False,
+                step__isnull=False, stop=False)
         .filter(last_out__lte=now - timedelta(days=min(FOLLOW_UP_GAPS_BUSINESS_DAYS)))
         .select_related("lead", "mailbox")
         .order_by("last_out")
@@ -253,8 +262,8 @@ def awaiting_follow_up(now=None):
     return sorted(sends, key=lambda send: send.due_at)
 
 
-def exhausted_touches():
-    """`EMAILED` deals past their last step and its follow-ups, who answered none of it.
+def exhausted_touches(sequence: str = COLD):
+    """`EMAILED` deals in *sequence* past its last step and its follow-ups, who answered none of it.
 
     The end of the pursuit. Separate from `awaiting_follow_up` because closing one
     costs no send: it is not gated on a mailbox, a window or a daily cap, so a run
@@ -275,7 +284,8 @@ def exhausted_touches():
     candidates = (
         _open_threads()
         .annotate(last_in=_newest_turn(Direction.INBOUND), touches=_outbound_turns())
-        .filter(last_in__isnull=True, step__isnull=False, stop=False, touches__gt=follow_ups)
+        .filter(sequence=sequence, last_in__isnull=True, step__isnull=False, stop=False,
+                touches__gt=follow_ups)
         .select_related("lead")
         .order_by("created_at")
     )
@@ -422,7 +432,7 @@ def free_for_first_email():
     return max(ranked, key=lambda pair: pair[1])[0]
 
 
-def cold_sends_due(now=None, *, openers: bool = True) -> Iterator[tuple]:
+def cold_sends_due(now=None, *, sequence: str = COLD, openers: bool = True) -> Iterator[tuple]:
     """``(send, box)`` for each cold send that may go now — oldest due first, of any kind.
 
     Openers, later steps and follow-ups are one queue ordered by how long each has been
@@ -441,7 +451,8 @@ def cold_sends_due(now=None, *, openers: bool = True) -> Iterator[tuple]:
     ``openers`` off the openers are left out, for a pass whose openers are drafted by a
     calling agent instead (``send_pass._open_with_agent_draft``).
     """
-    queue = steps_due(now) + awaiting_follow_up(now) + (openers_due(now) if openers else [])
+    queue = (steps_due(now, sequence) + awaiting_follow_up(now, sequence)
+             + (openers_due(now, sequence) if openers else []))
     pool_open = True
     for send in sorted(queue, key=lambda send: send.due_at):
         if send.kind != OPENER:
@@ -475,7 +486,7 @@ def _thread_box(deal):
 # ── When next ─────────────────────────────────────────────────────
 
 
-def next_first_email_at(now=None):
+def next_first_email_at(now=None, sequence: str = COLD):
     """When the pool could next open a conversation, or ``None`` if it never could.
 
     ``free_for_first_email`` says *not now* and cannot say *why* or *for how long* —
@@ -499,7 +510,7 @@ def next_first_email_at(now=None):
     from openoutsend.emails.models.mailbox import _local_midnight
 
     now = now or timezone.now()
-    waiting = _openers()
+    waiting = _openers(sequence)
     earliest = max(now, waiting[0].due_at) if waiting else now
     tomorrow = _local_midnight() + timedelta(days=1)
     return min(

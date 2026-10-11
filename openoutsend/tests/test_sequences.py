@@ -108,3 +108,26 @@ class TestCold:
             cold = sequences.cold()
 
         assert [step.name for step in cold.steps] == ["mine", "also"]
+
+
+class TestKey:
+    """What `--sequence` turns into: the name a deal records and a later run loads."""
+
+    def test_no_folder_is_cold(self):
+        assert sequences.key(None) == sequences.COLD
+
+    def test_a_folder_is_its_absolute_path(self, tmp_path, monkeypatch):
+        _folder(tmp_path, **{"E0-a.md": "x"})
+        monkeypatch.chdir(tmp_path.parent)
+
+        assert sequences.key(tmp_path.name) == str(tmp_path.resolve())
+
+    def test_a_bad_folder_fails_when_it_is_named(self, tmp_path):
+        _folder(tmp_path, **{"E0-a.md": "x", "E2-1d-b.md": "y"})
+
+        with pytest.raises(SequenceError, match="E1 is missing"):
+            sequences.key(str(tmp_path))
+
+    def test_a_missing_folder_fails_when_it_is_named(self, tmp_path):
+        with pytest.raises(SequenceError, match="no such sequence folder"):
+            sequences.key(str(tmp_path / "nope"))

@@ -38,6 +38,7 @@ import jinja2
 from jinja2 import meta
 
 from openoutsend.defaults import state_dir
+from openoutsend.errors import OutsendError
 
 SHIPPED_DIR = Path(__file__).resolve().parent.parent / "sequences"
 
@@ -51,8 +52,12 @@ NOT_A_STEP = {"README.md"}
 _ENV = jinja2.Environment(undefined=jinja2.StrictUndefined, autoescape=False)
 
 
-class SequenceError(Exception):
-    """A sequence folder is malformed, or a step cannot be rendered for a deal."""
+class SequenceError(OutsendError):
+    """A sequence folder is malformed, or a step cannot be rendered for a deal.
+
+    An ``OutsendError``, because a typo in a folder the operator named is an answer
+    for them, not a traceback.
+    """
 
 
 @dataclass(frozen=True)
@@ -126,6 +131,20 @@ def cold() -> Sequence:
     """The built-in cold sequence — the operator's copy if there is one."""
     override = operator_dir() / COLD
     return load(override if override.is_dir() else SHIPPED_DIR / COLD, COLD)
+
+
+def key(folder: str | None) -> str:
+    """The name a deal records for the sequence in *folder* — ``cold`` when none is given.
+
+    An absolute path, because ``for_deal`` loads it again on a later run from wherever
+    that run was started. The folder is loaded here, so a bad one fails the command that
+    named it, before a line is ingested or a mail sent.
+    """
+    if folder is None:
+        return COLD
+    path = Path(folder).expanduser().resolve()
+    load(path, str(path))
+    return str(path)
 
 
 def for_deal(deal) -> Sequence:

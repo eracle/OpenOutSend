@@ -38,7 +38,7 @@ def connected(site_config, monkeypatch):
 
 
 def _args(**kwargs) -> Namespace:
-    return Namespace(**{"command": "send", "prompt_line": None,
+    return Namespace(**{"command": "send", "prompt_line": None, "sequence": None,
                         "count": None, "debug": False, "agent_draft": False,
                         "subject": None, "body": None, "json_output": False, **kwargs})
 
@@ -87,6 +87,48 @@ def test_a_count_belongs_to_send():
     """`outsend check 5` means nothing, and silently ignoring the 5 is worse than saying so."""
     with pytest.raises(SystemExit):
         _parse_args(["check", "5"])
+
+
+# ── --sequence ────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("argv", [["--sequence", "s"], ["send", "--sequence", "s"]])
+def test_the_pipe_and_send_take_a_sequence(argv):
+    assert _parse_args(argv).sequence == "s"
+
+
+def test_check_takes_no_sequence():
+    with pytest.raises(SystemExit):
+        _parse_args(["check", "--sequence", "s"])
+
+
+def test_send_passes_the_sequence_folder_as_its_key(connected, tmp_path):
+    (tmp_path / "E0-hello.md").write_text("Say hello.")
+    with patch("openoutsend.send_pass.run_send_pass", return_value=PassResult()) as run:
+        _send(_args(sequence=str(tmp_path)))
+
+    assert run.call_args.kwargs["sequence"] == str(tmp_path.resolve())
+
+
+def test_a_bad_sequence_folder_ends_the_command_before_any_mail_moves(connected, tmp_path):
+    with patch("openoutsend.send_pass.run_send_pass") as run, \
+            pytest.raises(OutsendError, match="no such sequence folder"):
+        _send(_args(sequence=str(tmp_path / "nope")))
+
+    run.assert_not_called()
+
+
+def test_the_pipe_enrols_into_the_named_sequence(db, tmp_path, monkeypatch):
+    import io
+
+    from openoutsend.__main__ import _ingest
+    from openoutsend.leads.models import Deal
+
+    (tmp_path / "E0-hello.md").write_text("Say hello.")
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"lead_id": "a", "email": "a@b.com"}\n'))
+
+    assert _ingest(_args(command=None, sequence=str(tmp_path))) == 0
+    assert Deal.objects.get().sequence == str(tmp_path.resolve())
 
 
 # ── --agent-draft ─────────────────────────────────────────────────
@@ -150,7 +192,7 @@ def test_send_runs_one_pass(connected, capsys):
         assert _send(_args()) == 0
 
     from openoutsend.core.agent_draft import OFF
-    run.assert_called_once_with(None, agent_draft=OFF)
+    run.assert_called_once_with(None, agent_draft=OFF, sequence="cold")
     narration = capsys.readouterr().err
     assert ("read 2 new message(s) · answered 1 · sent 0 later step(s) · followed up 0 · "
             "opened 3") in narration
@@ -165,7 +207,7 @@ def test_a_count_runs_to_the_goal_instead_of_passing_once(connected, capsys):
             patch("openoutsend.send_pass.run_send_pass") as single:
         assert _send(_args(count=5)) == 0
 
-    job.assert_called_once_with(5, None)
+    job.assert_called_once_with(5, None, sequence="cold")
     single.assert_not_called()
     assert "opened 5 of 5 conversation(s) in 6 pass(es)" in capsys.readouterr().err
 

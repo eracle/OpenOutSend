@@ -42,7 +42,7 @@ def _run(goal, passes, slept, opening_in=timedelta(minutes=4)):
     """
     with patch("openoutsend.send_job.run_send_pass", side_effect=passes) as pass_, \
             patch("openoutsend.send_job._next_opening",
-                  side_effect=lambda: timezone.now() + opening_in
+                  side_effect=lambda _sequence:timezone.now() + opening_in
                   if opening_in is not None else None):
         result = run_send_job(goal, sleep=slept.append)
     return result, pass_
@@ -160,7 +160,7 @@ def test_an_interrupt_hands_back_what_was_already_sent(waiting, slept):
     with patch("openoutsend.send_job.run_send_pass",
                side_effect=[PassResult(opened=3), KeyboardInterrupt()]), \
             patch("openoutsend.send_job._next_opening",
-                  side_effect=lambda: timezone.now()):
+                  side_effect=lambda _sequence:timezone.now()):
         result = run_send_job(9, sleep=slept.append)
 
     assert (result.opened, result.reached) == (3, False)
@@ -199,7 +199,7 @@ class TestTheGoalThatIsThePool:
 
         with patch("openoutsend.send_job.run_send_pass", side_effect=one_conversation), \
                 patch("openoutsend.send_job._next_opening",
-                      side_effect=lambda: timezone.now()):
+                      side_effect=lambda _sequence:timezone.now()):
             result = run_send_job(ALL, sleep=slept.append)
 
         assert (result.opened, result.passes) == (3, 3)

@@ -2,8 +2,10 @@
 
     openoutreach find 50 --json | outsend
 
-**On the pipe it takes no verb and no arguments.** Things on the right of a pipe
-conventionally take none: `| less`, `| jq`, `| tee`. The two verbs it does have are the
+**On the pipe it takes no verb**, as things on the right of a pipe conventionally
+don't: `| less`, `| jq`, `| tee`. Its one option is `--sequence DIR`, the folder of step
+files the lines are enrolled into; without it they go to the built-in cold sequence, and
+`send` takes the same flag to mail that sequence and no other. The two verbs it does have are the
 ones that are not on the pipe at all: `send`, which reads no stdin and mails what is
 already stored, and `init`, which asks for what a first run needs — what this install
 sells and to whom, the model that writes it, who is signing the mail, and the mailbox
@@ -31,12 +33,14 @@ import logging
 import os
 import sys
 
-USAGE = """outsend                          read JSON Lines on stdin, store them, exit
-outsend send [N|all] [--prompt-line ID]
-                                 one pass: read the mail, answer replies, open what the
+USAGE = """outsend [--sequence DIR]         read JSON Lines on stdin, enrol them, exit
+outsend send [N|all] [--sequence DIR] [--prompt-line ID]
+                                 one pass: read the mail, answer replies, send what the
                                  guards allow right now. With N, keep at it until N
                                  conversations are open, waiting out the send clocks;
-                                 with `all`, until nobody is left to email
+                                 with `all`, until nobody is left to email.
+                                 --sequence names a folder of step files; without it,
+                                 both verbs act on the built-in cold sequence
 outsend send --agent-draft [--subject S --body B]
                                  opt the opener step out of AI_MODEL: stop at the first
                                  deal needing one (error type draft_pending, carrying
@@ -77,6 +81,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("count", nargs="?", type=_goal, default=None,
                         help="how many conversations to open before returning, or `all` "
                              "to empty the pool; omit for a single pass")
+    parser.add_argument("--sequence", default=None, metavar="DIR",
+                        help="the sequence folder to enrol into or send; omit for the "
+                             "built-in cold sequence")
     parser.add_argument("--prompt-line", default=None, dest="prompt_line",
                         help="open every email in this pass with one named prompt line; "
                              "omit to draw one at random per send")
@@ -94,6 +101,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.count is not None and args.command != "send":
         parser.error("a count belongs to `send` — `outsend send 5`")
+    if args.sequence is not None and args.command == "check":
+        parser.error("--sequence belongs to the pipe and to `send`")
     if args.agent_draft and args.count is not None:
         parser.error("--agent-draft has no count yet — `outsend send --agent-draft`")
     if (args.subject or args.body) and not args.agent_draft:
@@ -151,10 +160,11 @@ def _boot() -> None:
 
 
 def _ingest(args: argparse.Namespace) -> int:
-    """Read stdin and report what happened."""
+    """Read stdin into the named sequence and report what happened."""
+    from openoutsend.core.sequences import key
     from openoutsend.leads.ingest import ingest
 
-    result = ingest(sys.stdin)
+    result = ingest(sys.stdin, sequence=key(args.sequence))
     print(f"stored {result.stored} lead(s)", file=sys.stderr)
     if result.suppressed:
         print(f"{result.suppressed} of them are suppressed and will not be emailed", file=sys.stderr)
@@ -186,23 +196,25 @@ def _send(args: argparse.Namespace) -> int:
     the run stopped short of it, so a timer's failure mail carries both. Falling short
     is a real answer rather than a crash: the run says which wall it hit.
     """
+    from openoutsend.core.sequences import key
     from openoutsend.first_run import check_ready
 
+    sequence = key(args.sequence)
     check_ready(agent_draft_active=args.agent_draft)
-    return _run_to_goal(args) if args.count else _run_one_pass(args)
+    return _run_to_goal(args, sequence) if args.count else _run_one_pass(args, sequence)
 
 
-def _run_one_pass(args: argparse.Namespace) -> int:
+def _run_one_pass(args: argparse.Namespace, sequence: str) -> int:
     from openoutsend.core.agent_draft import AgentDraft
     from openoutsend.send_pass import run_send_pass
 
     agent_draft = AgentDraft(active=args.agent_draft, subject=args.subject, body=args.body)
-    result = run_send_pass(args.prompt_line, agent_draft=agent_draft)
+    result = run_send_pass(args.prompt_line, agent_draft=agent_draft, sequence=sequence)
     _report(result)
     return 0 if result.ok else 1
 
 
-def _run_to_goal(args: argparse.Namespace) -> int:
+def _run_to_goal(args: argparse.Namespace, sequence: str) -> int:
     """`outsend send N` (or `all`) — and the one line that says how the run ended.
 
     A goal that was not reached is reported as its own sentence rather than folded into
@@ -214,7 +226,7 @@ def _run_to_goal(args: argparse.Namespace) -> int:
     """
     from openoutsend.send_job import run_send_job
 
-    run = run_send_job(args.count, args.prompt_line)
+    run = run_send_job(args.count, args.prompt_line, sequence=sequence)
     _report(run.totals)
     if run.reached and run.drained_the_pool:
         print(f"opened {run.opened} conversation(s) in {run.passes} pass(es) — "

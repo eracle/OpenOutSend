@@ -46,13 +46,15 @@ user set it; do not export credentials or invent a product description for them.
 outfind find 50 --json | outsend
 ```
 
-`outsend` with no verb reads JSON Lines on stdin, stores each row keyed on `lead_id`, checks every
+`outsend` with no verb reads JSON Lines on stdin, stores each row keyed on `lead_id` within its
+sequence (the built-in cold one unless `--sequence DIR` names a folder of step files), checks every
 address against the suppression list at the door, and exits. It transmits nothing at that moment —
 ingesting and sending are separate invocations, because a pipe's right-hand side must not block on
 the network while a producer is still writing.
 
-- **Idempotent, keyed on `lead_id`.** Running the same pipe twice is a correction (latest field wins),
-  never a duplicate — re-piping after a partial failure is always safe.
+- **Idempotent, keyed on `lead_id` and the sequence.** Running the same pipe twice is a correction
+  (latest field wins), never a duplicate — re-piping after a partial failure is always safe. The
+  same lead piped into two sequences is two deals.
 - **A malformed line is skipped and counted**, named on stderr, non-zero exit — the rows behind it
   cost the finder real money, so the batch is never aborted over one bad line.
 - **A blank `email` is stored, not rejected.** An address is an enrichment a later re-ingest can fill
@@ -64,7 +66,12 @@ the network while a producer is still writing.
 outsend send                 # one pass: read the mail, answer replies, open what the guards allow now
 outsend send 5                # keep passing until 5 conversations are open, waiting out the send clocks
 outsend send all               # until nobody is left to email
+outsend send --sequence DIR    # the same, for the sequence in DIR instead of cold
 ```
+
+**A pass sends one sequence**: cold by default, or the folder `--sequence` names. Name the same
+folder the leads were piped in with, or the pass finds nobody to email. Replies are answered in any
+pass, whatever sequence the thread began in.
 
 A pass, in order: read the mailbox (an opt-out overnight suppresses someone before anything is
 written to them), answer every thread the lead replied in, then send as many openers, later steps and

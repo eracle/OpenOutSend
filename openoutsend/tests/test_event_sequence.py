@@ -14,6 +14,7 @@ from django.db.models import F
 from django.utils import timezone
 
 from openoutsend.core.agents.outreach import OutreachDecision
+from openoutsend.core.sequences import COLD, key
 from openoutsend.emails.models import Direction, Mailbox, Message
 from openoutsend.leads.ingest import ingest
 from openoutsend.leads.models import Deal, DealState, Outcome
@@ -34,12 +35,12 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture
 def sequence(tmp_path):
-    """The three-step folder, as an operator keeps it."""
+    """The three-step folder, as an operator keeps it, under the key `--sequence` gives it."""
     folder = tmp_path / "sample-to-order"
     folder.mkdir()
     for name, body in STEPS.items():
         (folder / name).write_text(body, encoding="utf-8")
-    return str(folder)
+    return key(str(folder))
 
 
 @pytest.fixture
@@ -80,7 +81,7 @@ def _deal() -> Deal:
 
 def test_nothing_goes_before_the_first_step_is_due(written, sequence):
     _enrol(sequence)
-    run_send_pass()
+    run_send_pass(sequence=sequence)
 
     assert written == []
     assert _deal().state == DealState.READY
@@ -91,7 +92,7 @@ def test_each_step_goes_on_its_day_in_one_thread_and_then_it_ends(written, seque
 
     for _ in range(3):
         _two_weeks_pass()
-        run_send_pass()
+        run_send_pass(sequence=sequence)
 
     assert written == [
         ("Ask Asha which lead was wrong. They sell payroll audits.", True),
@@ -105,7 +106,7 @@ def test_each_step_goes_on_its_day_in_one_thread_and_then_it_ends(written, seque
     assert set(sends.values_list("subject", flat=True)) == {"Your ten leads"}
 
     _two_weeks_pass()
-    run_send_pass()
+    run_send_pass(sequence=sequence)
 
     deal = _deal()
     assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.UNRESPONSIVE)
@@ -115,8 +116,8 @@ def test_each_step_goes_on_its_day_in_one_thread_and_then_it_ends(written, seque
 def test_a_step_does_not_go_before_its_days(written, sequence):
     _enrol(sequence)
     _two_weeks_pass()
-    run_send_pass()
-    run_send_pass()
+    run_send_pass(sequence=sequence)
+    run_send_pass(sequence=sequence)
 
     assert len(written) == 1
 
@@ -124,11 +125,11 @@ def test_a_step_does_not_go_before_its_days(written, sequence):
 def test_a_piped_stop_ends_the_steps(written, sequence):
     _enrol(sequence)
     _two_weeks_pass()
-    run_send_pass()
+    run_send_pass(sequence=sequence)
 
     _enrol(sequence, stop=True)
     _two_weeks_pass()
-    run_send_pass()
+    run_send_pass(sequence=sequence)
 
     assert len(written) == 1
     assert _deal().state == DealState.EMAILED
@@ -137,30 +138,56 @@ def test_a_piped_stop_ends_the_steps(written, sequence):
 def test_a_stopped_lead_is_never_opened(written, sequence):
     _enrol(sequence, stop=True)
     _two_weeks_pass()
-    run_send_pass()
+    run_send_pass(sequence=sequence)
 
     assert written == []
 
 
 def test_a_lead_arriving_after_every_step_was_due_is_closed_unwritten(written, sequence):
     _enrol(sequence, start_at=(timezone.now() - timedelta(days=90)).isoformat())
-    run_send_pass()
+    run_send_pass(sequence=sequence)
 
     assert written == []
     deal = _deal()
     assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.MISSED)
 
 
+def test_a_cold_pass_never_sends_an_event_sequence(written, sequence):
+    """`outsend send` with no `--sequence` mails cold, and nothing else."""
+    _enrol(sequence)
+    _two_weeks_pass()
+    run_send_pass(sequence=COLD)
+
+    assert written == []
+    assert _deal().state == DealState.READY
+
+
+def test_an_event_pass_never_opens_a_cold_lead(written, sequence):
+    _enrol(COLD)
+    _two_weeks_pass()
+    run_send_pass(sequence=sequence)
+
+    assert written == []
+    assert _deal().state == DealState.READY
+
+
+def test_one_lead_in_two_sequences_is_two_deals(written, sequence):
+    _enrol(COLD)
+    _enrol(sequence)
+
+    assert set(Deal.objects.values_list("sequence", flat=True)) == {COLD, sequence}
+
+
 def test_a_reply_stops_the_remaining_steps(written, sequence):
     _enrol(sequence)
     _two_weeks_pass()
-    run_send_pass()
+    run_send_pass(sequence=sequence)
     deal = _deal()
     maillog.inbound(deal.mailbox, thread=deal.thread, sender=LEAD["email"])
 
     with patch("openoutsend.emails.steps.reply.answer_reply", return_value=None) as answer:
         _two_weeks_pass()
-        run_send_pass()
+        run_send_pass(sequence=sequence)
 
     answer.assert_called_once()
     assert len(written) == 1

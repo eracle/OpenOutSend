@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
+from openoutsend.core.sequences import COLD
 from openoutsend.emails.models import Thread
 from openoutsend.leads.models import DealState, Outcome
 from openoutsend.send_pass import PassResult, _what_is_holding, run_send_pass
@@ -208,20 +209,20 @@ def test_no_free_box_means_no_openers(steps):
 def test_the_gate_is_named_as_its_consequence_when_no_box_is_connected():
     _waiting()
 
-    assert "no mailbox connected" in _what_is_holding()
+    assert "no mailbox connected" in _what_is_holding(COLD)
 
 
 def test_the_gate_is_named_when_the_day_is_spent():
     maillog.mailbox(daily_limit=0)
 
-    assert "no send headroom left today" in _what_is_holding()
+    assert "no send headroom left today" in _what_is_holding(COLD)
 
 
 def test_the_gate_is_named_outside_sending_hours():
     maillog.mailbox()
 
     with patch("openoutsend.core.sending_window.within_sending_window", return_value=False):
-        assert "outside sending hours" in _what_is_holding()
+        assert "outside sending hours" in _what_is_holding(COLD)
 
 
 def test_the_counts_are_said_even_when_nothing_is_holding():
@@ -229,7 +230,7 @@ def test_the_counts_are_said_even_when_nothing_is_holding():
     _waiting()
 
     with patch("openoutsend.core.sending_window.within_sending_window", return_value=True):
-        line = _what_is_holding()
+        line = _what_is_holding(COLD)
 
     assert "1 waiting to be emailed" in line
     assert "5 first email(s) left today" in line
