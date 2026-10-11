@@ -120,7 +120,7 @@ def body_text(msg: EmailMessage) -> str:
 
     Prefers the first ``text/plain`` part (skipping attachments); the whole
     payload is the fallback for a non-multipart message. Quoted history is
-    trimmed so ``chat_summary`` and the agent see only the lead's new words.
+    trimmed so the history the agent reads holds only the lead's new words.
     """
     return _strip_quoted(_first_text_plain(msg))
 

@@ -14,7 +14,7 @@ from django.utils import timezone
 
 from openoutsend.core.agents.outreach import OutreachDecision
 from openoutsend.emails.models import Mailbox
-from openoutsend.emails.steps.reply import answer_reply
+from openoutsend.emails.steps.reply import REPLY_PROMPT, answer_reply
 from openoutsend.leads.models import DealState
 from openoutsend.planner import unanswered_replies
 from openoutsend.tests.emails import maillog
@@ -150,6 +150,18 @@ class TestAnswerReply:
         assert kwargs["thread"] == deal.thread
         assert send.call_args.args[2] == "Re: Hi"
         assert deal.thread.messages.filter(message_id="sent@infra.com").exists()
+
+    def test_a_reply_records_the_prompt_it_was_written_from(self, operator):
+        """The next message's history replays this prompt, so the send must carry it."""
+        box = _box()
+        deal = _emailed(box)
+        _reply(deal)
+
+        send, _ = self._run(
+            deal, OutreachDecision(action="send_message", message="Glad to."))
+
+        assert send.call_args.kwargs["prompt"] == REPLY_PROMPT
+        assert send.call_args.kwargs["prompt_line"] is None
 
     def test_answering_makes_the_deal_quiet_again(self, operator):
         box = _box()

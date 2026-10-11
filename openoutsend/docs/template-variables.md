@@ -1,18 +1,26 @@
 # Prompt Context Reference
 
-This describes what the outreach agent's prompt receives. There is one prompt, `core/templates/prompts/outreach_agent.j2`, branching on `is_first_touch`; the shared half of its context is assembled in **`core/agents/prompt.py`** (`base_context`, `_format_facts`) and the conversation half in `core/agents/outreach.py` (`_render_system_prompt`).
+This describes what the outreach agent is given. Every call has two parts: the **frame**, `core/templates/prompts/frame.j2`, as the system prompt, with its variables assembled in **`core/agents/prompt.py`** (`base_context`); and the **user message**, built in `core/agents/outreach.py` (`conversation`): the history with the lead, then the prompt for this email.
 
-There is **no Voyager profile dict** — the browser/scraping channel was removed. Lead context comes from the licensed Lead Finder payload that was stored at discovery, not from a live fetch.
+There is **no Voyager profile dict**: the browser/scraping channel was removed. Lead context comes from the licensed Lead Finder payload that was stored at discovery, not from a live fetch.
 
-## What the prompts receive
+## What the frame receives
 
-- **Campaign context** — `product_docs`, `campaign_target`, and `booking_link` from the `Campaign`.
-- **Seller identity** — the operator's name (`core/operator.py:seller_name()`, read from the Django `User` / `SiteConfig`, not scraped), used to keep the LLM from misattributing greetings in a reply.
-- **Lead facts** — the deal's `profile_summary`: a mem0-style JSON fact list materialized once from the lead's **stored `profile_text`** (headline, company description, title, seniority, industry, location). No positions/education/URNs — those came from the retired scrape and no longer exist.
-- **Conversation facts** (in thread only) — the deal's `chat_summary` (running fact list folded from IMAP-read replies) plus a recency window of verbatim turns from the mail log, `today`, and the unanswered-outgoing counters. Omitted entirely on a first touch.
+- **Campaign context**: `product_docs`, `campaign_target` and `booking_link`, from the install's config (`OUTSEND_PRODUCT_DOCS`, `OUTSEND_CAMPAIGN_TARGET`, `OUTSEND_BOOKING_LINK`).
+- **Seller identity**: `self_name`, the operator's name (`core/operator.py:seller_full_name()`), used to keep the LLM from misattributing greetings in a reply.
+- **Lead facts**: `profile_summary`, the fact list extracted once from the lead's **stored `profile_text`** (headline, company description, title, seniority, industry, location), or that text itself if the extraction has not run.
+- **`today`**, the date the email is written.
+
+The frame carries no rules. Those come with each prompt.
+
+## What a step file receives
+
+A step file (`core/sequences.py`) is rendered before the model reads it, with the fields `emails/steps/send.step_fields` builds: the lead's fields and `prompt_line`, the drawn move's text. A `{{ field }}` the deal does not carry is an error for that deal, never an empty string.
+
+## The history
+
+`core/agents/history.py:history(lead, now)`: every turn in every thread of every deal the lead is in, oldest first and verbatim. Each of our sends shows the prompt it was written from and the email as sent, each of theirs shows their words, and a `[NO REPLY for N business days]` marker follows each of our sends that went unanswered. Empty on a first touch, so an opener is written from its prompt alone.
 
 ## Output
 
-`OutreachDecision{action, subject?, message?, outcome?}` at both ends of the thread. `subject` is required on a first touch and omitted in thread; `outcome` is required with `mark_completed`. There is no `follow_up_hours` — nothing is scheduled, so the agent is never asked when to speak next.
-
-To see the exact fields passed to the template, read `core/agents/prompt.py:base_context` and `core/agents/outreach.py:_render_system_prompt`. The fact-list shapes are produced by `core/db/summaries.py`.
+`OutreachDecision{action, subject?, message?, outcome?}` for every message. `subject` is required on an opener and omitted in thread; `outcome` is required with `mark_completed`. There is no `follow_up_hours`: nothing is scheduled, so the agent is never asked when to speak next.

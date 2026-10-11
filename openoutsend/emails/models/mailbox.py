@@ -101,7 +101,8 @@ class Mailbox(models.Model):
     # Sign-off appended verbatim to every email sent from this box (opener and
     # follow-ups alike). Per box, not global: the signature is part of the sending
     # identity, and a second box is usually a second identity. The email agent is
-    # told never to sign (prompts/outreach_agent.j2), so this is the only sign-off.
+    # told its signature is added after the body (prompts/frame.j2), so this is the
+    # only sign-off.
     # NULL and "" are distinct: NULL means never asked (the onboarding signature
     # step backfills those), "" means the operator declined one and must stick —
     # collapsing them would re-ask a declining operator on every startup.

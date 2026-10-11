@@ -108,9 +108,14 @@ returns when the conversations are open, whether that takes four minutes or span
 firing a bare `outsend send` remains the other way to run it, and the two do not conflict — the pass is
 the same either way, and nothing here is state a lost process would strand.
 
+**Every email is written from the whole history with that person.** The model reads every earlier
+prompt, every email sent, every reply and how long each silence lasted, verbatim, and then the prompt
+for the email at hand. The first email's prompt is a file, `openoutsend/sequences/cold/E0-opener.md`;
+a copy of the `cold/` folder at `~/.openoutsend/sequences/cold/` replaces it whole.
+
 **A lead who never answers gets two more emails, then the pursuit ends** — after three working days,
-then five, and the deal closes as `unresponsive`. A reply at any point ends the sequence and the
-conversation takes over. **Follow-ups are cold volume and are treated as such**: they share one daily
+then five, and the deal closes as `unresponsive`. `OUTSEND_FOLLOW_UPS=off` turns those two off for the
+install. A reply at any point ends the follow-ups and the conversation takes over. **Follow-ups are cold volume and are treated as such**: they share one daily
 cap, one spacing clock and one sending window with the openers, rather than claiming ahead of them out
 of a budget of their own. A reply obeys none of the three, because answering someone who wrote to you
 is not cold volume and holding the answer until Monday is worse than sending it at 21:00.
@@ -164,6 +169,8 @@ came across with the transport now assert against this side's own models.
 | `openoutsend/emails/` | app `outsend_emails` — the transport: SMTP, IMAP sync, the mail pass, threads, delivery policy, warmth |
 | `openoutsend/core/` | app `outsend_core` — the outreach agent, its templates, the sending window, and the stored site configuration |
 | `openoutsend/docs/` | how the agent and its templating work |
+| `openoutsend/sequences/` | the built-in cold sequence, one prompt file per step |
+| `openoutsend/planner.py` | what is due, from which box, and when the next send can go |
 | `openoutsend/settings.py` | this repo's own Django settings — one host of the apps, not the only one |
 | `openoutsend/defaults.py` | what any host must splat: `APPS`, `state_dir()`, `app_settings()` |
 | `openoutsend/send_pass.py` | one pass — read, answer, open — and the line saying what held it |
@@ -195,6 +202,7 @@ The environment is the operator seam — the only way in a timer has:
 | `OUTSEND_MAILBOX_ADDRESS` / `OUTSEND_MAILBOX_PASSWORD` | the box to send from, and its **app password** — a Google box rejects the login password |
 | `OUTSEND_SMTP_HOST` / `OUTSEND_SMTP_PORT` / `OUTSEND_IMAP_HOST` / `OUTSEND_IMAP_PORT` | only for a box that is not on Google Workspace; those four default to Gmail's and are never prompted for |
 | `OUTSEND_SIGNATURE` | the sign-off appended to every send from that box; empty declines one for good |
+| `OUTSEND_FOLLOW_UPS` | `off` stops the two follow-ups to a lead who never answered; on by default |
 | `OUTSEND_HOME` / `OUTSEND_DB` | where the store lives |
 
 **These are read on every run, and none of them is remembered.** Remembering what

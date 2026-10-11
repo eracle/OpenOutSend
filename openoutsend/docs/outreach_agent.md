@@ -1,63 +1,70 @@
 # Outreach Agent
 
-One agent runs the whole email conversation, from the cold open to the last reply. It is doing **Mom Test research, not selling**: the goal of a thread is a candid answer about how the lead works today, not a booked meeting.
+One agent writes every email OpenOutSend sends, from the cold open to the last reply. In cold outreach it is doing **Mom Test research, not selling**: the goal of a thread is a candid answer about how the lead works today, not a booked meeting.
 
-**Three touches at most, then the pursuit ends.** The agent opens, and if nobody answers it writes twice more — after three working days, then five — before the deal closes as `unresponsive`. A reply at any point takes the lead out of that sequence for good, and the conversation continues instead.
+**Every message is the same call.** The frame (`core/templates/prompts/frame.j2`) is the system prompt, the whole history with this lead (`core/agents/history.py`) comes next, and the prompt for the email being written comes last. An opener, a follow-up and a reply differ only in that last prompt, and each lives with the step that sends it.
 
 **The agent never decides *when*.** There is no clock it owns and no `wait` action: the planner in `planner.py` derives who is due from timestamps in the mail log, and the agent is only ever asked what to write.
-
-The cold open, a follow-up and the in-thread replies are the same voice doing the same job, so all three render from **one** prompt (`core/templates/prompts/outreach_agent.j2`), branching on the stage the caller names.
 
 ## Flow
 
 ```
-READY_TO_EMAIL deal                       EMAILED deal whose newest message is inbound
-  (cycle row 3, a box is free)              (cycle row 2, outranks opening a new one)
-        │                                         │
-send_first_email(deal, mailbox)           answer_reply(deal)
-  ← emails/steps/send.py                    ← emails/steps/reply.py
-        │                                         │
-        │                                         ├─ fold the new replies into chat_summary
-        │                                         │
-        └─────── run_outreach_agent(deal) ────────┘
-                 ← core/agents/outreach.py
+first email due                     follow-up due                    an unanswered reply
+  (a box is free)                     (silence, gap elapsed)           (outranks both)
+        │                                   │                                │
+send_first_email(deal, box, line)   send_follow_up(deal)             answer_reply(deal)
+  ← emails/steps/send.py              ← emails/steps/follow_up.py      ← emails/steps/reply.py
+  prompt: the sequence's E0 file      prompt: FOLLOW_UP_PROMPT         prompt: REPLY_PROMPT
+        │                                   │                                │
+        └──────────── run_outreach_agent(deal, prompt, *, opener) ───────────┘
+                      ← core/agents/outreach.py
+                      system: frame.j2 · user: history + "Write this email now" + prompt
 
   emails/mail_pass.py:run_mail_pass — on its own interval: sync mirrors each box into
   the mail log, classify reads the stored bytes, project acts on the reading.
 ```
 
-Replies outrank openers, and are exempt from the daily cap, the spacing and the working-hours window.
+`send_pass.py` calls the three in the order reply, follow-up, opener; the planner's docstring gives the reason. A reply is exempt from the daily cap, the spacing and the sending window. A follow-up and an opener share one budget.
+
+## The three prompts
+
+- **A sequence step**: a step file (`core/sequences.py`). Cold's only step is `sequences/cold/E0-opener.md`, which carries the cold rules (75 words, no link, no meeting request, sourced claims only) and draws the move from the prompt-line pool with `{{ prompt_line }}`.
+- **A follow-up**: `FOLLOW_UP_PROMPT` in `emails/steps/follow_up.py`. It is sent only when `OUTSEND_FOLLOW_UPS` is on (the default), after `FOLLOW_UP_GAPS_BUSINESS_DAYS = (3, 5)` of silence, and only if it lands before the deal's next step is due. It sees the opener's prompt in the history, so it keeps the opener's move without the prompt line being read back to it.
+- **A reply**: `REPLY_PROMPT` in `emails/steps/reply.py`, carrying the two modes, Discovery (the default, and where the agent stays) and Pitching (only on an explicit pull).
+
+**The rules live in the prompts.** The frame carries none, so a step that needs a link says so, and cold's word ceiling sits in cold's own prompts. There is no validation of content after the fact and no retry; a draft is sent as written.
+
+## The history
+
+Every turn in every thread of every deal the lead is in, oldest first and verbatim, with no cap:
+
+```
+[2026-10-01] PROMPT YOU WERE GIVEN:   the step's prompt, as rendered when it was sent
+[2026-10-01] YOU SENT (subject "…"):  the email, as sent
+[NO REPLY for 3 business days]
+[2026-10-06] PROMPT YOU WERE GIVEN:   the follow-up prompt
+[2026-10-06] YOU SENT (subject "…"):
+[2026-10-07] THEY WROTE:              their reply, quoted history stripped
+```
+
+Each send records its rendered prompt on the `Message` (`prompt`, `prompt_path`, `step`), so the history replays what the model was actually asked even after a step file is edited. Bounces and out-of-office mail are facts about the thread, not turns, and never reach the model.
 
 ## Decision
 
-`run_outreach_agent` builds context (campaign docs + booking link, the lead's `profile_summary`, and — in thread only — the `chat_summary` plus a recency window of verbatim messages) and makes **one** structured LLM call returning an `OutreachDecision`:
+`run_outreach_agent` makes **one** structured LLM call returning an `OutreachDecision`:
 
 | Action | Effect |
 |--------|--------|
-| `send_message` | **First touch:** the decision also carries a `subject`; the opener is sent, the thread it opened recorded on the deal, the deal moved to `EMAILED`. **In thread:** threaded reply via `emails/sender.py` (`References` = every Message-ID in the thread, `In-Reply-To` = the last of them), recorded in the mail log as an outbound `Message` in the same thread. The deal stays `EMAILED` — writing our own message is what makes it stop being actionable. |
+| `send_message` | **First touch:** the decision also carries a `subject`; the opener is sent, the thread it opened recorded on the deal, the deal moved to `EMAILED`. **In thread:** threaded reply via `emails/sender.py` (`References` = every Message-ID in the thread, `In-Reply-To` = the last of them), recorded in the mail log as an outbound `Message` in the same thread. |
 | `mark_completed` | Close the Deal `COMPLETED` with the agent's `Outcome`. |
-| `suppress` | A worded unsubscribe: put the address on the account-wide list and close the deal `COMPLETED` with the `unsubscribed` outcome. No reply is sent. The list is what is terminal; the deal is a deal that ended. |
+| `suppress` | A worded unsubscribe: put the address on the account-wide list and close the deal `COMPLETED` with the `unsubscribed` outcome. No reply is sent. |
 
-**`suppress` and the `unsubscribed` outcome are one decision the model can word two ways**, and `ends_in_an_opt_out` reads them as one — a decision naming that outcome while reaching for `mark_completed` is honoured as a suppression, because a model that judged the reply correctly must not be able to leave the address off the list by putting the answer in the other field. Both `answer_reply` and `write_follow_up` ask that first, before branching on the action.
+**`suppress` and the `unsubscribed` outcome are one decision the model can word two ways**, and `ends_in_an_opt_out` reads them as one: a decision naming that outcome while reaching for `mark_completed` is honoured as a suppression. Both `answer_reply` and `send_follow_up` ask that first, before branching on the action.
 
-A first touch is constrained to `send_message` with a `subject` (`_validate_opener`) — there is nothing to complete before the thread exists. The prompt is told the thread's age in **working** days (`business_days_between`).
+An opener (`opener=True`) must be `send_message` with a `subject` (`_validate_opener`); there is nothing to complete before the thread exists.
 
-## Summaries
+## What the agent knows about the lead
 
-All summary LLM calls go through `core/db/summaries.py` (mem0-style):
-
-- `materialize_profile_summary_if_missing(deal)` builds `profile_summary` before the opener, from the lead's **stored** `profile_text`.
-- `update_chat_summary(deal, new_messages, seller_name=…)` folds newly-read replies into `chat_summary` via `reconcile_facts` (mem0 ADD/UPDATE/DELETE/NONE). The mem0 update prompt is vendored under `core/vendor/mem0/`.
-
-The `chat_summary` fact list is where a thread's research value accumulates — free text, not structured fields.
-
-## Prompt
-
-One template, `core/templates/prompts/outreach_agent.j2`: `Strategy` / `Actions` / `Capabilities and honesty` / `Rules`, with the context blocks above them.
-
-`## Strategy` is **two modes**:
-
-- **Discovery** — the default, and where the agent stays. Understand their world without mentioning the product. Carries the standing list of what to steer toward (company/team shape, current workflow, current tooling and its cost, the last thing that broke, the trigger, who else decides), because what we learn here is the point of the thread.
-- **Pitching** — entered only on an explicit pull (they ask what you do, how you could help, or for a call). A problem the product solves is *not* a cue to pitch — it's the cue to dig deeper. When it does happen: one or two plain sentences, then back to discovery.
+`leads/summaries.py:materialize_profile_summary_if_missing(lead)` extracts a fact list from the lead's stored `profile_text` once, before the opener. The frame shows those facts, or the raw text if the extraction has not run. The history replaces any summary of the conversation itself.
 
 See [Template Variables](./template-variables.md).
