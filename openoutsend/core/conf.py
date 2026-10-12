@@ -164,6 +164,34 @@ def follow_ups_on() -> bool:
 
     return env_flag("OUTSEND_FOLLOW_UPS")
 
+
+# ----------------------------------------------------------------------
+# Banned phrases (emails/steps/drafts.py) — what no step or follow-up may say.
+#
+# ``OUTSEND_BANNED_PHRASES`` names a file, one phrase per line; blank lines and lines
+# starting with ``#`` are not phrases. Matched case-insensitively against the message
+# as it would be sent. The library ships none: which words an operator will not have
+# sent in their name is theirs to say. A path that cannot be read is an error, not an
+# empty list, because a typo there would silently lift every ban.
+# ----------------------------------------------------------------------
+
+
+def banned_phrases() -> tuple[str, ...]:
+    """The phrases in the ``OUTSEND_BANNED_PHRASES`` file, or none when it is unset."""
+    import os
+
+    from openoutsend.errors import OutsendError
+
+    path = os.environ.get("OUTSEND_BANNED_PHRASES", "").strip()
+    if not path:
+        return ()
+    try:
+        lines = Path(path).expanduser().read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise OutsendError(f"OUTSEND_BANNED_PHRASES: {exc}") from exc
+    return tuple(line.strip() for line in lines
+                 if line.strip() and not line.strip().startswith("#"))
+
 # Mean realized gap: the floor plus the expected value of U[min, max].
 MEAN_SEND_INTERVAL_SECONDS = MIN_SEND_INTERVAL_SECONDS + (
     SEND_INTERVAL_JITTER_MIN_SECONDS + SEND_INTERVAL_JITTER_MAX_SECONDS) / 2

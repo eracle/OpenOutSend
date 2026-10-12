@@ -413,14 +413,15 @@ class TestSendFirstEmail:
         box = _box(daily_limit=10)
         deal = _ready("lead@corp.com")
 
+        def write_while_they_opt_out(d, prompt, opener=False):
+            suppress_email(d.lead.email, reason="opted out mid-run")
+            return OutreachDecision(action="send_message", subject="s", message="m")
+
         with patch(
             "openoutsend.leads.summaries.materialize_profile_summary_if_missing",
         ), patch(
             "openoutsend.core.agents.outreach.run_outreach_agent",
-            side_effect=lambda d, prompt, opener=False: (
-                suppress_email(d.lead.email, reason="opted out mid-run")
-                or OutreachDecision(action="send_message", subject="s", message="m")
-            ),
+            side_effect=write_while_they_opt_out,
         ), patch(
             "openoutsend.emails.sender.send_email",
         ) as send:

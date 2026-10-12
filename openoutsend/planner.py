@@ -53,8 +53,8 @@ from django.utils import timezone
 def emailable_deals(sequence: str | None = None):
     """Deals waiting for their first email, oldest first — due or not yet.
 
-    Three conditions and no more: the state, an address to send to, and no piped
-    `stop`. Whether the first step is *due* is not a column — it is on disk and in
+    Four conditions and no more: the state, an address to send to, no piped `stop`, and
+    no held draft (`emails/steps/drafts.py`). Whether the first step is *due* is not a column — it is on disk and in
     business days — so `openers_due` asks it of what this returns.
     **Suppression is not a fourth filter** — an opt-out moves every open deal for that
     address to `UNSUBSCRIBED` when it lands, and ingest parks a suppressed row there on
@@ -68,7 +68,7 @@ def emailable_deals(sequence: str | None = None):
     from openoutsend.leads.models import Deal, DealState
 
     return (
-        _scoped(Deal.objects.filter(state=DealState.READY, stop=False), sequence)
+        _scoped(Deal.objects.filter(state=DealState.READY, stop=False, held=""), sequence)
         .exclude(lead__email="")
         .select_related("lead")
         .order_by("created_at")
@@ -162,7 +162,7 @@ def steps_due(now=None, sequence: str | None = None) -> list[DueSend]:
     now = now or timezone.now()
     candidates = (
         _open_threads(sequence)
-        .filter(stop=False, step__isnull=False)
+        .filter(stop=False, held="", step__isnull=False)
         .annotate(last_in=_newest_turn(Direction.INBOUND))
         .filter(last_in__isnull=True)
         .select_related("lead", "mailbox")
@@ -247,7 +247,8 @@ def awaiting_follow_up(now=None, sequence: str | None = None):
         _open_threads(sequence)
         .annotate(last_in=_newest_turn(Direction.INBOUND),
                   last_out=_newest_turn(Direction.OUTBOUND))
-        .filter(last_in__isnull=True, last_out__isnull=False, step__isnull=False, stop=False)
+        .filter(last_in__isnull=True, last_out__isnull=False, step__isnull=False,
+                stop=False, held="")
         .filter(last_out__lte=now - timedelta(days=min(FOLLOW_UP_GAPS_BUSINESS_DAYS)))
         .select_related("lead", "mailbox")
         .order_by("last_out")

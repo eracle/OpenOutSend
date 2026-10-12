@@ -63,6 +63,7 @@ class PassResult:
     followed_up: int = 0
     gave_up: int = 0
     missed: int = 0
+    held: int = 0
     failed: int = 0
 
     holding: str = ""
@@ -200,7 +201,7 @@ def _send_cold(result: PassResult, sequence: str | None, reached: set,
             logger.exception("%s to %s failed", send.kind, send.deal.lead.public_id)
             result.failed += 1
             return
-        _count(result, send.kind)
+        _count(result, send)
 
     if agent_draft.active:
         _open_with_agent_draft(result, agent_draft, sequence, reached)
@@ -220,13 +221,15 @@ def _write_and_send(send, box, prompt_line_name: str | None):
     return send_follow_up(send.deal)
 
 
-def _count(result: PassResult, kind: str) -> None:
-    """Add one send of *kind* to the pass's counts."""
+def _count(result: PassResult, send) -> None:
+    """Add *send* to the pass's counts: by its kind, or as held if its draft was."""
     from openoutsend.planner import OPENER, STEP
 
-    if kind == OPENER:
+    if send.deal.held:
+        result.held += 1
+    elif send.kind == OPENER:
         result.opened += 1
-    elif kind == STEP:
+    elif send.kind == STEP:
         result.stepped += 1
     else:
         result.followed_up += 1
@@ -288,11 +291,14 @@ def _open_with_agent_draft(result: PassResult, agent_draft: AgentDraft, sequence
     step, _ = opening_step(deal, for_deal(deal))
     try:
         _apply(deal, send_drafted_email(deal, mailbox, step, pending.subject, pending.body, None))
-        result.opened += 1
     except Exception:
         logger.exception("first email to %s failed", deal.lead.public_id)
         result.failed += 1
         return
+    if deal.held:
+        result.held += 1
+    else:
+        result.opened += 1
     pending.delete()
 
 
@@ -329,11 +335,15 @@ def _what_is_holding(sequence: str | None) -> str:
     """
     from openoutsend.core.sending_window import within_sending_window
     from openoutsend.emails.models import Mailbox
+    from openoutsend.leads.models import Deal
     from openoutsend.planner import emailable_deals, unanswered_replies
 
     waiting = emailable_deals(sequence).count()
     to_answer = unanswered_replies().count()
     counts = f"{waiting} waiting to be emailed · {to_answer} reply(ies) to answer"
+    held = Deal.objects.exclude(held="").filter(outcome="").count()
+    if held:
+        counts += f" · {held} held draft(s) — fix and pipe the line again"
 
     if not Mailbox.objects.exists():
         return f"{counts} · no mailbox connected, so nothing can be sent — run `outsend check`"

@@ -213,6 +213,10 @@ class Deal(models.Model):
     fields = models.JSONField(default=dict, blank=True)
     start_at = models.DateTimeField(default=timezone.now)
     stop = models.BooleanField(default=False)
+    # Why the last draft was not sent, when it failed twice: a placeholder naming a
+    # field the line lacks, or a banned phrase (`emails/steps/drafts.py`). A held deal
+    # is in no send pool; piping its line again clears it, and the next pass redrafts.
+    held = models.TextField(blank=True, default="")
 
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)

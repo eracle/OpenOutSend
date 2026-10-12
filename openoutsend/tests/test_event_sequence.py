@@ -6,6 +6,7 @@ off, as an install mailing an event sequence runs them.
 """
 import io
 import json
+from contextlib import contextmanager
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -207,6 +208,64 @@ def test_a_lead_in_two_sequences_gets_one_message_a_pass(written, sequence):
     assert len(written) == 2
     assert set(Deal.objects.filter(thread__isnull=False)
                .values_list("sequence", flat=True)) == {COLD, sequence}
+
+
+def test_a_placeholder_the_model_wrote_is_filled_before_it_goes(sequence, site_config):
+    _enrol(sequence, order_url="https://buy.example.com/412")
+    _two_weeks_pass()
+
+    with _model_writing("Order here: {order_url}"):
+        run_send_pass(sequence=sequence)
+
+    sent = Message.objects.get(direction=Direction.OUTBOUND)
+    assert sent.body_text == "Order here: https://buy.example.com/412"
+
+
+def test_a_draft_failing_twice_is_held_until_the_line_is_piped_again(sequence, site_config):
+    _enrol(sequence)
+    _two_weeks_pass()
+
+    with _model_writing("Order here: {order_url}") as calls:
+        result = run_send_pass(sequence=sequence)
+        assert (result.held, calls.call_count) == (1, 2)
+        assert _deal().held == "unknown placeholder {order_url}"
+
+        run_send_pass(sequence=sequence)
+        assert calls.call_count == 2
+
+        _enrol(sequence, order_url="https://buy.example.com/412")
+        result = run_send_pass(sequence=sequence)
+
+    assert (result.opened, result.held) == (1, 0)
+    assert _deal().held == ""
+
+
+def test_a_banned_phrase_is_never_sent(sequence, site_config, tmp_path, monkeypatch):
+    banned = tmp_path / "banned.txt"
+    banned.write_text("circle back\n", encoding="utf-8")
+    monkeypatch.setenv("OUTSEND_BANNED_PHRASES", str(banned))
+    _enrol(sequence)
+    _two_weeks_pass()
+
+    with _model_writing("Happy to Circle Back."):
+        run_send_pass(sequence=sequence)
+
+    assert not Message.objects.filter(direction=Direction.OUTBOUND).exists()
+    assert _deal().held == 'banned phrase "circle back"'
+
+
+@contextmanager
+def _model_writing(message: str):
+    """Every stub the pass needs, with the model writing *message* every time. Yields the model."""
+    maillog.mailbox("ada@corp.com", daily_limit=10)
+    written = OutreachDecision(action="send_message", message=message, subject="Your ten leads")
+    with patch("openoutsend.emails.mail_pass.run_mail_pass", return_value=(0, 0, 0)), \
+            patch("openoutsend.core.sending_window.within_sending_window", return_value=True), \
+            patch("openoutsend.leads.summaries.materialize_profile_summary_if_missing"), \
+            patch("openoutsend.core.agents.outreach.run_outreach_agent",
+                  return_value=written) as model, \
+            patch("openoutsend.emails.sender._deliver"):
+        yield model
 
 
 def test_a_reply_stops_the_remaining_steps(written, sequence):

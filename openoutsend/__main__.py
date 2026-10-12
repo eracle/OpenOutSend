@@ -198,11 +198,14 @@ def _send(args: argparse.Namespace) -> int:
     the run stopped short of it, so a timer's failure mail carries both. Falling short
     is a real answer rather than a crash: the run says which wall it hit.
     """
+    from openoutsend.core.conf import banned_phrases
     from openoutsend.core.sequences import key
     from openoutsend.first_run import check_ready
 
     # No folder sends every sequence in the install; a folder narrows the pass to it.
     sequence = key(args.sequence) if args.sequence is not None else None
+    # Read once here so an unreadable list fails the command, not the first send.
+    banned_phrases()
     check_ready(agent_draft_active=args.agent_draft)
     return _run_to_goal(args, sequence) if args.count else _run_one_pass(args, sequence)
 
@@ -252,6 +255,9 @@ def _report(result) -> None:
     if result.missed:
         print(f"{result.missed} lead(s) arrived with every step past its grace and were closed",
               file=sys.stderr)
+    if result.held:
+        print(f"{result.held} draft(s) held, not sent — see above; pipe the line again "
+              "once it is fixed", file=sys.stderr)
     if result.failed:
         print(f"{result.failed} send(s) failed — see above; the next pass tries them again",
               file=sys.stderr)
