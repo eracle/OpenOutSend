@@ -1,0 +1,1 @@
+{"lead_id": "demo-001", "email": "sam@example.com", "first_name": "Sam", "company": "Example Co", "start_at": "2026-10-06T15:00:00Z", "demo_notes": "Runs a 6-person support team; tickets live in a shared inbox; wants to stop losing threads.", "open_question": "Can it import the last year of tickets?", "booking_url": "https://cal.example.com/sam", "stop": false}

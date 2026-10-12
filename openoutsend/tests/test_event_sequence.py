@@ -8,6 +8,7 @@ import io
 import json
 from contextlib import contextmanager
 from datetime import timedelta
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -304,6 +305,50 @@ def test_an_agent_drafted_opener_opens_the_sequence_with_its_placeholders_filled
     sent = Message.objects.get(direction=Direction.OUTBOUND)
     assert (sent.step, sent.sequence) == (0, sequence)
     assert sent.body_text == "Order here: https://buy.example.com/412"
+
+
+# ── The shipped example, examples/sequences/after-a-demo ──────────
+
+EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "sequences" / "after-a-demo"
+
+
+def _example_line(**overrides) -> str:
+    line = json.loads((EXAMPLE / "leads.jsonl").read_text(encoding="utf-8"))
+    return json.dumps({**line, "start_at": timezone.now().isoformat(), **overrides}) + "\n"
+
+
+def test_the_example_sends_its_three_steps_with_the_booking_link_filled(site_config, monkeypatch):
+    monkeypatch.setenv("OUTSEND_FOLLOW_UPS", "off")
+    after_a_demo = key(str(EXAMPLE))
+    ingest(io.StringIO(_example_line()), sequence=after_a_demo)
+
+    with _model_writing("Happy to walk through it: {booking_url}") as model:
+        for _ in range(3):
+            _two_weeks_pass()
+            run_send_pass(sequence=after_a_demo)
+
+    prompts = [call.args[1] for call in model.call_args_list]
+    assert "Runs a 6-person support team" in prompts[0]
+    assert "Can it import the last year of tickets?" in prompts[1]
+    sends = Message.objects.filter(direction=Direction.OUTBOUND, sequence=after_a_demo)
+    assert list(sends.order_by("sent_at").values_list("step", flat=True)) == [0, 1, 2]
+    assert {body for body in sends.values_list("body_text", flat=True)} == {
+        "Happy to walk through it: https://cal.example.com/sam"}
+
+
+def test_the_example_stops_when_the_line_is_piped_with_stop(site_config, monkeypatch):
+    monkeypatch.setenv("OUTSEND_FOLLOW_UPS", "off")
+    after_a_demo = key(str(EXAMPLE))
+    ingest(io.StringIO(_example_line()), sequence=after_a_demo)
+
+    with _model_writing("Thanks for the demo.") as model:
+        _two_weeks_pass()
+        run_send_pass(sequence=after_a_demo)
+        ingest(io.StringIO(_example_line(stop=True)), sequence=after_a_demo)
+        _two_weeks_pass()
+        run_send_pass(sequence=after_a_demo)
+
+    assert model.call_count == 1
 
 
 # ── OUTSEND_REPLIES=person ────────────────────────────────────────

@@ -146,14 +146,28 @@ outsend send --sequence after-a-demo                    # or in this one alone
 - **The body is the prompt**, rendered by Jinja with every key of the piped line that is not a lead
   column: `{{ first_name }}`, `{{ booking_url }}`, whatever the export carries. A field the line lacks
   is an error for that lead, never a blank.
+- **`{field}` is what the model writes.** A prompt that asks for the link "written exactly as
+  `{order_url}`" gets the placeholder back, and it is filled in from the piped line after the model
+  has written, so a link or a price is never typed wrong. A placeholder naming a field the line lacks,
+  or a phrase from `OUTSEND_BANNED_PHRASES`, is redrafted once and then **held**: never sent, reported,
+  and out of every send until its line is piped again.
 - **One deal per lead per sequence.** The same `lead_id` piped into cold and into an event sequence is
   two deals. Re-piping into the same sequence is a correction, latest wins key by key, and a line with
   `"stop": true` takes the lead out of every remaining send.
 - **A pass sends every sequence**, cold among them, in one queue, oldest due first, because they all
-  spend the same boxes' cap, spacing and window. `--sequence F` narrows a pass to `F`. Reading the
-  mail and answering replies are never narrowed, and a reply stops the remaining steps.
+  spend the same boxes' cap, spacing and window, and **at most one message per address**. `--sequence
+  F` narrows a pass to `F`. Reading the mail and answering replies are never narrowed.
+- **Replies are per install** (`OUTSEND_REPLIES`). With `agent`, the default, the agent answers and
+  the remaining steps stop. With `person`, each reply is listed once for you to answer by hand, a
+  worded unsubscribe in it is still honoured, and the steps go on.
 - **Follow-ups are per install** (`OUTSEND_FOLLOW_UPS`); an install mailing event sequences usually
   turns them off. With them on, each lands only if it fits before the next step is due.
+- **Every send records** its sequence, its step, the step file's path, the prompt as rendered and,
+  when one was drawn, the prompt line's id.
+
+[`examples/sequences/after-a-demo/`](examples/sequences/after-a-demo/) is a whole sequence to copy:
+three emails after a product demo, with a piped date, `{{ field }}`, a `{booking_url}` placeholder
+and the `stop` field, and the four commands that run it.
 
 **`outsend check` verifies what a run needs** — what this install sells and to whom, the name that
 signs the mail, and a mailbox to send it from — and it runs implicitly on every send, so a setup step
@@ -239,6 +253,8 @@ The environment is the operator seam — the only way in a timer has:
 | `OUTSEND_SMTP_HOST` / `OUTSEND_SMTP_PORT` / `OUTSEND_IMAP_HOST` / `OUTSEND_IMAP_PORT` | only for a box that is not on Google Workspace; those four default to Gmail's and are never prompted for |
 | `OUTSEND_SIGNATURE` | the sign-off appended to every send from that box; empty declines one for good |
 | `OUTSEND_FOLLOW_UPS` | `off` stops the two follow-ups to a lead who never answered; on by default |
+| `OUTSEND_REPLIES` | who answers a reply: `agent` (the default) writes back and stops the remaining steps; `person` lists it for you, still honours a worded unsubscribe, and lets the steps go on |
+| `OUTSEND_BANNED_PHRASES` | a file of phrases no step or follow-up may contain, one per line, `#` for comments; none by default |
 | `OUTSEND_HOME` / `OUTSEND_DB` | where the store lives |
 
 **These are read on every run, and none of them is remembered.** Remembering what

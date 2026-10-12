@@ -70,8 +70,16 @@ outsend send --sequence DIR    # the same, narrowed to the sequence in DIR
 ```
 
 **A bare pass sends every sequence the install holds**, the built-in cold one among them, in one
-queue. `--sequence DIR` narrows it to that folder. Replies are answered in any pass, whatever
-sequence the thread began in.
+queue, at most one message per address. `--sequence DIR` narrows it to that folder. Replies are
+answered in any pass, whatever sequence the thread began in. With `OUTSEND_REPLIES=person` they are
+not answered at all: each new one is printed once as `reply to answer by hand: …` for the operator,
+a worded unsubscribe in it is still honoured, and the steps go on.
+
+**A draft can be held.** A step prompt may ask for `{field}` placeholders, which are filled from the
+piped line after the model writes. A placeholder the line lacks, or a phrase from
+`OUTSEND_BANNED_PHRASES`, is redrafted once, then held and reported as `draft(s) held`. Nothing is
+sent for that lead until its line is piped again, which is how you say the field or the prompt is
+fixed. `examples/sequences/after-a-demo/` in the repo is a whole sequence to copy.
 
 A pass, in order: read the mailbox (an opt-out overnight suppresses someone before anything is
 written to them), answer every thread the lead replied in, then send as many openers, later steps and
@@ -86,7 +94,8 @@ would report `send 5` as falling short at three of five — it is the same endin
 inverted, so prefer `all` to typing a count that goes stale as you type it.
 
 **A lead who never answers gets two more emails, then the pursuit ends** (after three working days,
-then five); a reply at any point ends the sequence and the conversation takes over instead.
+then five); a reply at any point ends the sequence and the conversation takes over instead, unless
+the install has `OUTSEND_REPLIES=person`.
 
 ## Answering the opener yourself, with no second LLM key
 

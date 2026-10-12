@@ -33,7 +33,7 @@ send_first_email(deal, box,       send_next_step(deal,           send_follow_up(
 - **A follow-up**: `FOLLOW_UP_PROMPT` in `emails/steps/follow_up.py`. It is sent only when `OUTSEND_FOLLOW_UPS` is on (the default), after `FOLLOW_UP_GAPS_BUSINESS_DAYS = (3, 5)` of silence, and only if it lands before the deal's next step is due. It sees the opener's prompt in the history, so it keeps the opener's move without the prompt line being read back to it.
 - **A reply**: `REPLY_PROMPT` in `emails/steps/reply.py`, carrying the two modes, Discovery (the default, and where the agent stays) and Pitching (only on an explicit pull).
 
-**The rules live in the prompts.** The frame carries none, so a step that needs a link says so, and cold's word ceiling sits in cold's own prompts. There is no validation of content after the fact and no retry; a draft is sent as written.
+**The rules live in the prompts.** The frame carries none, so a step that needs a link says so, and cold's word ceiling sits in cold's own prompts. Nothing judges the writing after the fact. The one check is narrower (`emails/steps/drafts.py`): a `{field}` placeholder the model wrote is filled from the piped line, and a placeholder naming a field the line lacks, or a phrase from `OUTSEND_BANNED_PHRASES`, is redrafted once and then held, never sent. Both are facts about the text, not judgements of it. Replies are not checked.
 
 ## The history
 
