@@ -166,6 +166,32 @@ def follow_ups_on() -> bool:
 
 
 # ----------------------------------------------------------------------
+# Who answers a reply (send_pass._answer_replies) — ``OUTSEND_REPLIES``.
+#
+# ``agent`` (the default): the outreach agent answers from the whole history, takes
+# the thread over, and the sequence's remaining steps stop — what cold mail wants.
+# ``person``: nothing automated answers. The reply is listed in the pass's report
+# once, a worded unsubscribe in it is still honoured (``core/agents/opt_out.py``), and
+# the steps continue — what an install mailing people who opted in wants, where a
+# question about an order is somebody's to answer by hand.
+# ----------------------------------------------------------------------
+REPLIES_BY_AGENT = "agent"
+REPLIES_BY_PERSON = "person"
+
+
+def replies_by() -> str:
+    """Who answers a reply in this install: ``agent`` or ``person``. Anything else is an error."""
+    import os
+
+    from openoutsend.errors import OutsendError
+
+    value = os.environ.get("OUTSEND_REPLIES", "").strip().lower() or REPLIES_BY_AGENT
+    if value not in (REPLIES_BY_AGENT, REPLIES_BY_PERSON):
+        raise OutsendError(f"OUTSEND_REPLIES is {value!r}: expected agent or person")
+    return value
+
+
+# ----------------------------------------------------------------------
 # Banned phrases (emails/steps/drafts.py) — what no step or follow-up may say.
 #
 # ``OUTSEND_BANNED_PHRASES`` names a file, one phrase per line; blank lines and lines

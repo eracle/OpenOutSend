@@ -281,3 +281,65 @@ def test_a_reply_stops_the_remaining_steps(written, sequence):
 
     answer.assert_called_once()
     assert len(written) == 1
+
+
+# ── OUTSEND_REPLIES=person ────────────────────────────────────────
+
+
+@pytest.fixture
+def by_person(monkeypatch):
+    monkeypatch.setenv("OUTSEND_REPLIES", "person")
+
+
+def _first_step_then_a_reply(sequence, text: str):
+    _enrol(sequence)
+    _two_weeks_pass()
+    run_send_pass(sequence=sequence)
+    deal = _deal()
+    maillog.inbound(deal.mailbox, thread=deal.thread, sender=LEAD["email"], body=text)
+
+
+def test_with_a_person_answering_a_reply_is_reported_once_and_the_steps_go_on(
+        written, sequence, by_person):
+    _first_step_then_a_reply(sequence, "Which country were these from?")
+
+    with patch("openoutsend.core.agents.opt_out.asks_to_stop", return_value=False) as judged:
+        reported = run_send_pass(sequence=sequence)
+        again = run_send_pass(sequence=sequence)
+        _two_weeks_pass()
+        run_send_pass(sequence=sequence)
+
+    assert reported.for_a_person == [f"{LEAD['email']} — Your ten leads"]
+    assert again.for_a_person == []
+    judged.assert_called_once()
+    assert [prompt for prompt, _ in written] == [
+        "Ask Asha which lead was wrong. They sell payroll audits.",
+        "Offer to steer the list for payroll audits.",
+    ]
+
+
+def test_with_a_person_answering_a_worded_unsubscribe_is_still_honoured(
+        written, sequence, by_person):
+    from openoutsend.leads.suppression import is_suppressed
+
+    _first_step_then_a_reply(sequence, "Please take me off your list.")
+
+    with patch("openoutsend.core.agents.opt_out.asks_to_stop", return_value=True):
+        result = run_send_pass(sequence=sequence)
+    _two_weeks_pass()
+    run_send_pass(sequence=sequence)
+
+    assert result.for_a_person == []
+    assert is_suppressed(LEAD["email"])
+    assert (_deal().state, _deal().outcome) == (DealState.COMPLETED, Outcome.UNSUBSCRIBED)
+    assert len(written) == 1
+
+
+def test_an_unknown_replies_setting_is_an_error(monkeypatch):
+    from openoutsend.core.conf import replies_by
+    from openoutsend.errors import OutsendError
+
+    monkeypatch.setenv("OUTSEND_REPLIES", "robot")
+
+    with pytest.raises(OutsendError, match="OUTSEND_REPLIES"):
+        replies_by()

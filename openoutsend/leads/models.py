@@ -217,6 +217,11 @@ class Deal(models.Model):
     # field the line lacks, or a banned phrase (`emails/steps/drafts.py`). A held deal
     # is in no send pool; piping its line again clears it, and the next pass redrafts.
     held = models.TextField(blank=True, default="")
+    # With `OUTSEND_REPLIES=person`: when the newest reply already handed to the person
+    # was received. Nothing automated answers it and the Sent folder is not read, so
+    # without this the same reply would be reported, and judged for an opt-out, on
+    # every pass (`send_pass._hand_to_person`).
+    reply_reported_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)

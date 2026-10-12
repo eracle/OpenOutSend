@@ -42,7 +42,7 @@ each wait be spent reading the mail rather than blocking inside one step of it.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from openoutsend.core.agent_draft import OFF, AgentDraft
 from openoutsend.errors import DraftPending
@@ -65,6 +65,9 @@ class PassResult:
     missed: int = 0
     held: int = 0
     failed: int = 0
+
+    for_a_person: list[str] = field(default_factory=list)
+    """The threads with a new reply nobody automated answered (``OUTSEND_REPLIES=person``)."""
 
     holding: str = ""
     """The counts line and the gate holding them, as ``_what_is_holding`` phrased it.
@@ -124,22 +127,53 @@ def _answer_replies(result: PassResult) -> set:
     back the same row forever. A failure costs that one conversation this pass, and
     the next pass tries it again.
 
+    With ``OUTSEND_REPLIES=person`` no reply is written: each is handed to the person
+    instead (``_hand_to_person``).
+
     The ids are every lead whose reply was taken up, answered or not: whoever just
     wrote in is sent no step of another sequence in the same pass (``_send_cold``).
     """
+    from openoutsend.core.conf import REPLIES_BY_PERSON, replies_by
     from openoutsend.emails.steps.reply import answer_reply
     from openoutsend.planner import unanswered_replies
 
+    by_person = replies_by() == REPLIES_BY_PERSON
     reached = set()
     for deal in list(unanswered_replies()):
         reached.add(deal.lead_id)
         try:
+            if by_person:
+                _hand_to_person(deal, result)
+                continue
             _apply(deal, answer_reply(deal))
             result.answered += 1
         except Exception:
             logger.exception("reply to %s failed", deal.lead.public_id)
             result.failed += 1
     return reached
+
+
+def _hand_to_person(deal, result: PassResult) -> None:
+    """Report *deal*'s new reply once, honouring it first if it asks us to stop.
+
+    Nothing is written to them: the person reads the thread in their own client. A
+    worded unsubscribe cannot wait for that person, because the next step would go
+    out regardless, so the reply is judged for one (``core/agents/opt_out.py``). The
+    deal remembers which reply it reported, so it is judged and listed once.
+    """
+    from openoutsend.core.agents.opt_out import asks_to_stop
+    from openoutsend.emails.models import Direction
+    from openoutsend.emails.steps.reply import honour_opt_out
+
+    unread = deal.thread.turns().filter(direction=Direction.INBOUND)
+    if deal.reply_reported_at is not None:
+        unread = unread.filter(sent_at__gt=deal.reply_reported_at)
+    if asks_to_stop("\n\n---\n\n".join(unread.values_list("body_text", flat=True))):
+        _apply(deal, honour_opt_out(deal))
+        return
+    deal.reply_reported_at = deal.last_in
+    _apply(deal, None)
+    result.for_a_person.append(f"{deal.lead.email} — {deal.email_subject}")
 
 
 def _close_ended(result: PassResult, sequence: str | None) -> None:
