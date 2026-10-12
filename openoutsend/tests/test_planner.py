@@ -181,13 +181,13 @@ def _quiet_threads(box, count: int, written: str):
                          sent_at=datetime.fromisoformat(written))
 
 
-def _queue(now):
+def _queue(now, reached=None):
     from unittest.mock import patch
 
     from openoutsend.planner import cold_sends_due
 
     with patch("openoutsend.core.sending_window.within_sending_window", return_value=True):
-        return [send.kind for send, _ in cold_sends_due(now)]
+        return [send.kind for send, _ in cold_sends_due(now, reached=reached)]
 
 
 def test_a_backlog_of_later_sends_cannot_hold_a_waiting_opener_back(site_config):
@@ -222,6 +222,17 @@ def test_an_opener_not_yet_due_is_not_in_the_queue(site_config):
                 start_at=FRIDAY_NOON + timedelta(days=3), created_at=FRIDAY_NOON)
 
     assert _queue(FRIDAY_NOON) == ["follow_up"]
+
+
+def test_a_lead_already_written_to_this_pass_is_left_for_the_next(site_config):
+    """A reply answered earlier in the pass counts: one message per address per pass."""
+    box = maillog.mailbox(daily_limit=50)
+    _quiet_threads(box, 1, written="2026-10-05T08:00:00+00:00")
+    opener = _opener_waiting_since("2026-10-05T09:00:00+00:00")
+    reached = {opener.lead_id}
+
+    assert _queue(FRIDAY_NOON, reached) == ["follow_up"]
+    assert len(reached) == 2
 
 
 # ── Business days forward ─────────────────────────────────────────

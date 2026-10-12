@@ -33,6 +33,8 @@ context was re-read five times inside a single window.
   The old arrangement — follow-ups claiming *ahead of* openers out of a separate
   budget — is what produced 102 follow-ups against 1 first email in a week; here there
   is one budget and one queue.
+- **At most one message per address per pass.** A lead in two sequences is two deals,
+  and a lead whose reply this pass answered is not sent a step besides it.
 - **An opening step more than `GRACE_DAYS` late on arrival is skipped, not sent late**
   (`opening_step`). Later steps count from the previous step, so they cannot be late.
 """
@@ -434,8 +436,8 @@ def free_for_first_email():
     return max(ranked, key=lambda pair: pair[1])[0]
 
 
-def cold_sends_due(now=None, *, sequence: str | None = None,
-                   openers: bool = True) -> Iterator[tuple]:
+def cold_sends_due(now=None, *, sequence: str | None = None, openers: bool = True,
+                   reached: set | None = None) -> Iterator[tuple]:
     """``(send, box)`` for each cold send that may go now — oldest due first, of any kind.
 
     Openers, later steps and follow-ups are one queue ordered by how long each has been
@@ -453,11 +455,20 @@ def cold_sends_due(now=None, *, sequence: str | None = None,
     send rewrites its box's spacing clock — which is why this is a generator. With
     ``openers`` off the openers are left out, for a pass whose openers are drafted by a
     calling agent instead (``send_pass._open_with_agent_draft``).
+
+    **At most one message per address per pass.** A lead in two sequences is two deals,
+    and both can fall due together; the older goes and the other waits for the next
+    pass. ``reached`` is the set of lead ids already written to in this pass — the
+    replies — and every send yielded here joins it, so the caller sees whom the pass
+    has reached.
     """
+    reached = set() if reached is None else reached
     queue = (steps_due(now, sequence) + awaiting_follow_up(now, sequence)
              + (openers_due(now, sequence) if openers else []))
     pool_open = True
     for send in sorted(queue, key=lambda send: send.due_at):
+        if send.deal.lead_id in reached:
+            continue
         if send.kind != OPENER:
             box = _thread_box(send.deal)
         elif pool_open:
@@ -467,6 +478,7 @@ def cold_sends_due(now=None, *, sequence: str | None = None,
         else:
             continue
         if box is not None:
+            reached.add(send.deal.lead_id)
             yield send, box
 
 

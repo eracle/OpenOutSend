@@ -193,6 +193,22 @@ def test_one_lead_in_two_sequences_is_two_deals(written, sequence):
     assert set(Deal.objects.values_list("sequence", flat=True)) == {COLD, sequence}
 
 
+def test_a_lead_in_two_sequences_gets_one_message_a_pass(written, sequence):
+    """Both deals fall due together, with two free boxes: one goes now, the other next pass."""
+    maillog.mailbox("bea@corp.com", daily_limit=10)
+    _enrol(COLD)
+    _enrol(sequence)
+    _two_weeks_pass()
+
+    run_send_pass()
+    assert len(written) == 1
+
+    run_send_pass()
+    assert len(written) == 2
+    assert set(Deal.objects.filter(thread__isnull=False)
+               .values_list("sequence", flat=True)) == {COLD, sequence}
+
+
 def test_a_reply_stops_the_remaining_steps(written, sequence):
     _enrol(sequence)
     _two_weeks_pass()

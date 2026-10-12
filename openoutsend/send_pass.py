@@ -106,33 +106,39 @@ def run_send_pass(prompt_line_name: str | None = None, narrate: bool = True,
     result = PassResult()
     result.mirrored, result.classified, result.projected = run_mail_pass()
     measure_pool()
-    _answer_replies(result)
+    reached = _answer_replies(result)
     _close_ended(result, sequence)
-    _send_cold(result, sequence, prompt_line_name, agent_draft)
+    _send_cold(result, sequence, reached, prompt_line_name, agent_draft)
     result.holding = _what_is_holding(sequence)
     if narrate:
         logger.info("%s", result.holding)
     return result
 
 
-def _answer_replies(result: PassResult) -> None:
-    """Answer every thread whose newest turn is theirs.
+def _answer_replies(result: PassResult) -> set:
+    """Answer every thread whose newest turn is theirs. Returns the lead ids it handled.
 
     The pool is materialised before the loop rather than re-queried: a deal whose
     reply *fails* to send keeps its state, so asking the database again would hand
     back the same row forever. A failure costs that one conversation this pass, and
     the next pass tries it again.
+
+    The ids are every lead whose reply was taken up, answered or not: whoever just
+    wrote in is sent no step of another sequence in the same pass (``_send_cold``).
     """
     from openoutsend.emails.steps.reply import answer_reply
     from openoutsend.planner import unanswered_replies
 
+    reached = set()
     for deal in list(unanswered_replies()):
+        reached.add(deal.lead_id)
         try:
             _apply(deal, answer_reply(deal))
             result.answered += 1
         except Exception:
             logger.exception("reply to %s failed", deal.lead.public_id)
             result.failed += 1
+    return reached
 
 
 def _close_ended(result: PassResult, sequence: str | None) -> None:
@@ -156,8 +162,8 @@ def _close_ended(result: PassResult, sequence: str | None) -> None:
         result.missed += 1
 
 
-def _send_cold(result: PassResult, sequence: str | None, prompt_line_name: str | None = None,
-               agent_draft: AgentDraft = OFF) -> None:
+def _send_cold(result: PassResult, sequence: str | None, reached: set,
+               prompt_line_name: str | None = None, agent_draft: AgentDraft = OFF) -> None:
     """Send every cold email the guards allow now — openers, later steps, follow-ups.
 
     One queue, oldest due first, in the planner's order (``planner.cold_sends_due``).
@@ -180,10 +186,14 @@ def _send_cold(result: PassResult, sequence: str | None, prompt_line_name: str |
     ``agent_draft.active`` hands the openers to ``_open_with_agent_draft`` instead — a
     calling agent answering in its own context rather than a second, separately keyed
     `AI_MODEL` call. Steps and follow-ups go as they always do.
+
+    ``reached`` holds the leads this pass has already written to, and gains every one
+    written here: one message per address per pass (``planner.cold_sends_due``).
     """
     from openoutsend.planner import cold_sends_due
 
-    for send, box in cold_sends_due(sequence=sequence, openers=not agent_draft.active):
+    for send, box in cold_sends_due(sequence=sequence, openers=not agent_draft.active,
+                                    reached=reached):
         try:
             _apply(send.deal, _write_and_send(send, box, prompt_line_name))
         except Exception:
@@ -193,7 +203,7 @@ def _send_cold(result: PassResult, sequence: str | None, prompt_line_name: str |
         _count(result, send.kind)
 
     if agent_draft.active:
-        _open_with_agent_draft(result, agent_draft, sequence)
+        _open_with_agent_draft(result, agent_draft, sequence, reached)
 
 
 def _write_and_send(send, box, prompt_line_name: str | None):
@@ -222,7 +232,8 @@ def _count(result: PassResult, kind: str) -> None:
         result.followed_up += 1
 
 
-def _open_with_agent_draft(result: PassResult, agent_draft: AgentDraft, sequence: str | None) -> None:
+def _open_with_agent_draft(result: PassResult, agent_draft: AgentDraft, sequence: str | None,
+                           reached: set) -> None:
     """Answer the one deal already handed to the calling agent, or hand one back.
 
     Mirrors OpenOutFind's ``_resume_agent_qualification``: the pending deal does not
@@ -264,13 +275,14 @@ def _open_with_agent_draft(result: PassResult, agent_draft: AgentDraft, sequence
         raise DraftPending(f"{pending.deal.lead.public_id} is still waiting on an opener",
                             payload=_candidate_payload(pending.deal.lead))
 
+    deal = pending.deal
     mailbox = free_for_first_email()
-    if mailbox is None:
-        # Answered, but no box is free right now — the same "nothing to do this
-        # pass" every other step reports quietly. The answer stays on `pending`.
+    if mailbox is None or deal.lead_id in reached:
+        # Answered, but no box is free right now, or this lead was already written
+        # to this pass — the same "nothing to do this pass" every other step reports
+        # quietly. The answer stays on `pending`.
         return
 
-    deal = pending.deal
     # Asked again rather than remembered: the answer was given for this deal's opening
     # step, and that is the one it is sent as.
     step, _ = opening_step(deal, for_deal(deal))
