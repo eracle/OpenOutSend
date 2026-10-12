@@ -16,10 +16,8 @@ that last prompt, and each lives with the step that sends it:
 
 **The rules live in the prompts, not in a check after the fact.** The frame carries
 none, so a step that needs a link just says so, and cold's word ceiling and no-link
-rule sit in cold's own prompts. Nothing judges the writing after the fact, and this
-call has no retry. The one check after it is narrower, and the caller's
-(``emails/steps/drafts.py``): a placeholder naming a field the deal lacks, or a banned
-phrase, is a fact about the text, and is redrafted once and then held.
+rule sit in cold's own prompts. There is no generator-side validation of content and
+no retry; a draft is sent as written.
 
 **The agent never decides *when*.** There is no ``wait`` action and no follow-up
 interval to choose: the planner (``planner.py``) decides who is due from timestamps

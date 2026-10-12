@@ -164,60 +164,6 @@ def follow_ups_on() -> bool:
 
     return env_flag("OUTSEND_FOLLOW_UPS")
 
-
-# ----------------------------------------------------------------------
-# Who answers a reply (send_pass._answer_replies) — ``OUTSEND_REPLIES``.
-#
-# ``agent`` (the default): the outreach agent answers from the whole history, takes
-# the thread over, and the sequence's remaining steps stop — what cold mail wants.
-# ``person``: nothing automated answers. The reply is listed in the pass's report
-# once, a worded unsubscribe in it is still honoured (``core/agents/opt_out.py``), and
-# the steps continue — what an install mailing people who opted in wants, where a
-# question about an order is somebody's to answer by hand.
-# ----------------------------------------------------------------------
-REPLIES_BY_AGENT = "agent"
-REPLIES_BY_PERSON = "person"
-
-
-def replies_by() -> str:
-    """Who answers a reply in this install: ``agent`` or ``person``. Anything else is an error."""
-    import os
-
-    from openoutsend.errors import OutsendError
-
-    value = os.environ.get("OUTSEND_REPLIES", "").strip().lower() or REPLIES_BY_AGENT
-    if value not in (REPLIES_BY_AGENT, REPLIES_BY_PERSON):
-        raise OutsendError(f"OUTSEND_REPLIES is {value!r}: expected agent or person")
-    return value
-
-
-# ----------------------------------------------------------------------
-# Banned phrases (emails/steps/drafts.py) — what no step or follow-up may say.
-#
-# ``OUTSEND_BANNED_PHRASES`` names a file, one phrase per line; blank lines and lines
-# starting with ``#`` are not phrases. Matched case-insensitively against the message
-# as it would be sent. The library ships none: which words an operator will not have
-# sent in their name is theirs to say. A path that cannot be read is an error, not an
-# empty list, because a typo there would silently lift every ban.
-# ----------------------------------------------------------------------
-
-
-def banned_phrases() -> tuple[str, ...]:
-    """The phrases in the ``OUTSEND_BANNED_PHRASES`` file, or none when it is unset."""
-    import os
-
-    from openoutsend.errors import OutsendError
-
-    path = os.environ.get("OUTSEND_BANNED_PHRASES", "").strip()
-    if not path:
-        return ()
-    try:
-        lines = Path(path).expanduser().read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        raise OutsendError(f"OUTSEND_BANNED_PHRASES: {exc}") from exc
-    return tuple(line.strip() for line in lines
-                 if line.strip() and not line.strip().startswith("#"))
-
 # Mean realized gap: the floor plus the expected value of U[min, max].
 MEAN_SEND_INTERVAL_SECONDS = MIN_SEND_INTERVAL_SECONDS + (
     SEND_INTERVAL_JITTER_MIN_SECONDS + SEND_INTERVAL_JITTER_MAX_SECONDS) / 2

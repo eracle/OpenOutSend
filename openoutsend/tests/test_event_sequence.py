@@ -215,50 +215,6 @@ def test_a_lead_in_two_sequences_gets_one_message_a_pass(written, sequence):
                .values_list("sequence", flat=True)) == {COLD, sequence}
 
 
-def test_a_placeholder_the_model_wrote_is_filled_before_it_goes(sequence, site_config):
-    _enrol(sequence, order_url="https://buy.example.com/412")
-    _two_weeks_pass()
-
-    with _model_writing("Order here: {order_url}"):
-        run_send_pass(sequence=sequence)
-
-    sent = Message.objects.get(direction=Direction.OUTBOUND)
-    assert sent.body_text == "Order here: https://buy.example.com/412"
-
-
-def test_a_draft_failing_twice_is_held_until_the_line_is_piped_again(sequence, site_config):
-    _enrol(sequence)
-    _two_weeks_pass()
-
-    with _model_writing("Order here: {order_url}") as calls:
-        result = run_send_pass(sequence=sequence)
-        assert (result.held, calls.call_count) == (1, 2)
-        assert _deal().held == "unknown placeholder {order_url}"
-
-        run_send_pass(sequence=sequence)
-        assert calls.call_count == 2
-
-        _enrol(sequence, order_url="https://buy.example.com/412")
-        result = run_send_pass(sequence=sequence)
-
-    assert (result.opened, result.held) == (1, 0)
-    assert _deal().held == ""
-
-
-def test_a_banned_phrase_is_never_sent(sequence, site_config, tmp_path, monkeypatch):
-    banned = tmp_path / "banned.txt"
-    banned.write_text("circle back\n", encoding="utf-8")
-    monkeypatch.setenv("OUTSEND_BANNED_PHRASES", str(banned))
-    _enrol(sequence)
-    _two_weeks_pass()
-
-    with _model_writing("Happy to Circle Back."):
-        run_send_pass(sequence=sequence)
-
-    assert not Message.objects.filter(direction=Direction.OUTBOUND).exists()
-    assert _deal().held == 'banned phrase "circle back"'
-
-
 @contextmanager
 def _model_writing(message: str):
     """Every stub the pass needs, with the model writing *message* every time. Yields the model."""
@@ -288,23 +244,22 @@ def test_a_reply_stops_the_remaining_steps(written, sequence):
     assert len(written) == 1
 
 
-def test_an_agent_drafted_opener_opens_the_sequence_with_its_placeholders_filled(
-        written, sequence):
+def test_an_agent_drafted_opener_opens_the_sequence(written, sequence):
     from openoutsend.core.agent_draft import AgentDraft
     from openoutsend.errors import DraftPending
 
-    _enrol(sequence, order_url="https://buy.example.com/412")
+    _enrol(sequence)
     _two_weeks_pass()
 
     with pytest.raises(DraftPending):
         run_send_pass(sequence=sequence, agent_draft=AgentDraft(active=True))
     result = run_send_pass(sequence=sequence, agent_draft=AgentDraft(
-        active=True, subject="Your ten leads", body="Order here: {order_url}"))
+        active=True, subject="Your ten leads", body="Which of the ten was wrong?"))
 
     assert (result.opened, written) == (1, [])
     sent = Message.objects.get(direction=Direction.OUTBOUND)
     assert (sent.step, sent.sequence) == (0, sequence)
-    assert sent.body_text == "Order here: https://buy.example.com/412"
+    assert sent.body_text == "Which of the ten was wrong?"
 
 
 # ── The shipped example, examples/sequences/after-a-demo ──────────
@@ -317,12 +272,12 @@ def _example_line(**overrides) -> str:
     return json.dumps({**line, "start_at": timezone.now().isoformat(), **overrides}) + "\n"
 
 
-def test_the_example_sends_its_three_steps_with_the_booking_link_filled(site_config, monkeypatch):
+def test_the_example_sends_its_three_steps_from_the_piped_fields(site_config, monkeypatch):
     monkeypatch.setenv("OUTSEND_FOLLOW_UPS", "off")
     after_a_demo = key(str(EXAMPLE))
     ingest(io.StringIO(_example_line()), sequence=after_a_demo)
 
-    with _model_writing("Happy to walk through it: {booking_url}") as model:
+    with _model_writing("Thanks for the demo.") as model:
         for _ in range(3):
             _two_weeks_pass()
             run_send_pass(sequence=after_a_demo)
@@ -330,10 +285,9 @@ def test_the_example_sends_its_three_steps_with_the_booking_link_filled(site_con
     prompts = [call.args[1] for call in model.call_args_list]
     assert "Runs a 6-person support team" in prompts[0]
     assert "Can it import the last year of tickets?" in prompts[1]
+    assert "https://cal.example.com/sam" in prompts[2]
     sends = Message.objects.filter(direction=Direction.OUTBOUND, sequence=after_a_demo)
     assert list(sends.order_by("sent_at").values_list("step", flat=True)) == [0, 1, 2]
-    assert {body for body in sends.values_list("body_text", flat=True)} == {
-        "Happy to walk through it: https://cal.example.com/sam"}
 
 
 def test_the_example_stops_when_the_line_is_piped_with_stop(site_config, monkeypatch):
@@ -349,65 +303,3 @@ def test_the_example_stops_when_the_line_is_piped_with_stop(site_config, monkeyp
         run_send_pass(sequence=after_a_demo)
 
     assert model.call_count == 1
-
-
-# ── OUTSEND_REPLIES=person ────────────────────────────────────────
-
-
-@pytest.fixture
-def by_person(monkeypatch):
-    monkeypatch.setenv("OUTSEND_REPLIES", "person")
-
-
-def _first_step_then_a_reply(sequence, text: str):
-    _enrol(sequence)
-    _two_weeks_pass()
-    run_send_pass(sequence=sequence)
-    deal = _deal()
-    maillog.inbound(deal.mailbox, thread=deal.thread, sender=LEAD["email"], body=text)
-
-
-def test_with_a_person_answering_a_reply_is_reported_once_and_the_steps_go_on(
-        written, sequence, by_person):
-    _first_step_then_a_reply(sequence, "Which country were these from?")
-
-    with patch("openoutsend.core.agents.opt_out.asks_to_stop", return_value=False) as judged:
-        reported = run_send_pass(sequence=sequence)
-        again = run_send_pass(sequence=sequence)
-        _two_weeks_pass()
-        run_send_pass(sequence=sequence)
-
-    assert reported.for_a_person == [f"{LEAD['email']} — Your ten leads"]
-    assert again.for_a_person == []
-    judged.assert_called_once()
-    assert [prompt for prompt, _ in written] == [
-        "Ask Asha which lead was wrong. They sell payroll audits.",
-        "Offer to steer the list for payroll audits.",
-    ]
-
-
-def test_with_a_person_answering_a_worded_unsubscribe_is_still_honoured(
-        written, sequence, by_person):
-    from openoutsend.leads.suppression import is_suppressed
-
-    _first_step_then_a_reply(sequence, "Please take me off your list.")
-
-    with patch("openoutsend.core.agents.opt_out.asks_to_stop", return_value=True):
-        result = run_send_pass(sequence=sequence)
-    _two_weeks_pass()
-    run_send_pass(sequence=sequence)
-
-    assert result.for_a_person == []
-    assert is_suppressed(LEAD["email"])
-    assert (_deal().state, _deal().outcome) == (DealState.COMPLETED, Outcome.UNSUBSCRIBED)
-    assert len(written) == 1
-
-
-def test_an_unknown_replies_setting_is_an_error(monkeypatch):
-    from openoutsend.core.conf import replies_by
-    from openoutsend.errors import OutsendError
-
-    monkeypatch.setenv("OUTSEND_REPLIES", "robot")
-
-    with pytest.raises(OutsendError, match="OUTSEND_REPLIES"):
-        replies_by()

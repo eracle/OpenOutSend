@@ -187,9 +187,8 @@ def _run_one_pass(prompt_line_name: str | None, result: SendJobResult,
     done = run_send_pass(prompt_line_name, narrate=False, sequence=sequence)
     result.passes += 1
     for count in ("mirrored", "classified", "projected", "answered",
-                  "opened", "stepped", "followed_up", "gave_up", "missed", "held", "failed"):
+                  "opened", "stepped", "followed_up", "gave_up", "missed", "failed"):
         setattr(result.totals, count, getattr(result.totals, count) + getattr(done, count))
-    result.totals.for_a_person += done.for_a_person
     return done
 
 

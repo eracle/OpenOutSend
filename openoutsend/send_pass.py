@@ -42,7 +42,7 @@ each wait be spent reading the mail rather than blocking inside one step of it.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from openoutsend.core.agent_draft import OFF, AgentDraft
 from openoutsend.errors import DraftPending
@@ -63,11 +63,7 @@ class PassResult:
     followed_up: int = 0
     gave_up: int = 0
     missed: int = 0
-    held: int = 0
     failed: int = 0
-
-    for_a_person: list[str] = field(default_factory=list)
-    """The threads with a new reply nobody automated answered (``OUTSEND_REPLIES=person``)."""
 
     holding: str = ""
     """The counts line and the gate holding them, as ``_what_is_holding`` phrased it.
@@ -127,53 +123,22 @@ def _answer_replies(result: PassResult) -> set:
     back the same row forever. A failure costs that one conversation this pass, and
     the next pass tries it again.
 
-    With ``OUTSEND_REPLIES=person`` no reply is written: each is handed to the person
-    instead (``_hand_to_person``).
-
     The ids are every lead whose reply was taken up, answered or not: whoever just
     wrote in is sent no step of another sequence in the same pass (``_send_cold``).
     """
-    from openoutsend.core.conf import REPLIES_BY_PERSON, replies_by
     from openoutsend.emails.steps.reply import answer_reply
     from openoutsend.planner import unanswered_replies
 
-    by_person = replies_by() == REPLIES_BY_PERSON
     reached = set()
     for deal in list(unanswered_replies()):
         reached.add(deal.lead_id)
         try:
-            if by_person:
-                _hand_to_person(deal, result)
-                continue
             _apply(deal, answer_reply(deal))
             result.answered += 1
         except Exception:
             logger.exception("reply to %s failed", deal.lead.public_id)
             result.failed += 1
     return reached
-
-
-def _hand_to_person(deal, result: PassResult) -> None:
-    """Report *deal*'s new reply once, honouring it first if it asks us to stop.
-
-    Nothing is written to them: the person reads the thread in their own client. A
-    worded unsubscribe cannot wait for that person, because the next step would go
-    out regardless, so the reply is judged for one (``core/agents/opt_out.py``). The
-    deal remembers which reply it reported, so it is judged and listed once.
-    """
-    from openoutsend.core.agents.opt_out import asks_to_stop
-    from openoutsend.emails.models import Direction
-    from openoutsend.emails.steps.reply import honour_opt_out
-
-    unread = deal.thread.turns().filter(direction=Direction.INBOUND)
-    if deal.reply_reported_at is not None:
-        unread = unread.filter(sent_at__gt=deal.reply_reported_at)
-    if asks_to_stop("\n\n---\n\n".join(unread.values_list("body_text", flat=True))):
-        _apply(deal, honour_opt_out(deal))
-        return
-    deal.reply_reported_at = deal.last_in
-    _apply(deal, None)
-    result.for_a_person.append(f"{deal.lead.email} — {deal.email_subject}")
 
 
 def _close_ended(result: PassResult, sequence: str | None) -> None:
@@ -235,7 +200,7 @@ def _send_cold(result: PassResult, sequence: str | None, reached: set,
             logger.exception("%s to %s failed", send.kind, send.deal.lead.public_id)
             result.failed += 1
             return
-        _count(result, send)
+        _count(result, send.kind)
 
     if agent_draft.active:
         _open_with_agent_draft(result, agent_draft, sequence, reached)
@@ -255,15 +220,13 @@ def _write_and_send(send, box, prompt_line_name: str | None):
     return send_follow_up(send.deal)
 
 
-def _count(result: PassResult, send) -> None:
-    """Add *send* to the pass's counts: by its kind, or as held if its draft was."""
+def _count(result: PassResult, kind: str) -> None:
+    """Add one send of *kind* to the pass's counts."""
     from openoutsend.planner import OPENER, STEP
 
-    if send.deal.held:
-        result.held += 1
-    elif send.kind == OPENER:
+    if kind == OPENER:
         result.opened += 1
-    elif send.kind == STEP:
+    elif kind == STEP:
         result.stepped += 1
     else:
         result.followed_up += 1
@@ -325,14 +288,11 @@ def _open_with_agent_draft(result: PassResult, agent_draft: AgentDraft, sequence
     step, _ = opening_step(deal, for_deal(deal))
     try:
         _apply(deal, send_drafted_email(deal, mailbox, step, pending.subject, pending.body, None))
+        result.opened += 1
     except Exception:
         logger.exception("first email to %s failed", deal.lead.public_id)
         result.failed += 1
         return
-    if deal.held:
-        result.held += 1
-    else:
-        result.opened += 1
     pending.delete()
 
 
@@ -369,15 +329,11 @@ def _what_is_holding(sequence: str | None) -> str:
     """
     from openoutsend.core.sending_window import within_sending_window
     from openoutsend.emails.models import Mailbox
-    from openoutsend.leads.models import Deal
     from openoutsend.planner import emailable_deals, unanswered_replies
 
     waiting = emailable_deals(sequence).count()
     to_answer = unanswered_replies().count()
     counts = f"{waiting} waiting to be emailed · {to_answer} reply(ies) to answer"
-    held = Deal.objects.exclude(held="").filter(outcome="").count()
-    if held:
-        counts += f" · {held} held draft(s) — fix and pipe the line again"
 
     if not Mailbox.objects.exists():
         return f"{counts} · no mailbox connected, so nothing can be sent — run `outsend check`"

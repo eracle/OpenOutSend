@@ -53,8 +53,8 @@ from django.utils import timezone
 def emailable_deals(sequence: str | None = None):
     """Deals waiting for their first email, oldest first — due or not yet.
 
-    Four conditions and no more: the state, an address to send to, no piped `stop`, and
-    no held draft (`emails/steps/drafts.py`). Whether the first step is *due* is not a column — it is on disk and in
+    Three conditions and no more: the state, an address to send to, and no piped
+    `stop`. Whether the first step is *due* is not a column — it is on disk and in
     business days — so `openers_due` asks it of what this returns.
     **Suppression is not a fourth filter** — an opt-out moves every open deal for that
     address to `UNSUBSCRIBED` when it lands, and ingest parks a suppressed row there on
@@ -68,7 +68,7 @@ def emailable_deals(sequence: str | None = None):
     from openoutsend.leads.models import Deal, DealState
 
     return (
-        _scoped(Deal.objects.filter(state=DealState.READY, stop=False, held=""), sequence)
+        _scoped(Deal.objects.filter(state=DealState.READY, stop=False), sequence)
         .exclude(lead__email="")
         .select_related("lead")
         .order_by("created_at")
@@ -153,23 +153,20 @@ def steps_due(now=None, sequence: str | None = None) -> list[DueSend]:
 
     The next step is due its days after the previous step's send — read off the mail
     log (`_since_last_step`), never after a follow-up, so chasing silence never moves a
-    sequence later. **A reply stops the remaining steps** when the agent answers
-    replies: whoever wrote back is in a conversation now, and the agent has taken the
-    thread over. With ``OUTSEND_REPLIES=person`` nothing has, so the steps continue.
+    sequence later. **A reply stops the remaining steps**: whoever wrote back is in a
+    conversation now, and the agent answering it has taken the thread over.
     """
     from openoutsend.core.business_time import add_business_days
-    from openoutsend.core.conf import REPLIES_BY_AGENT, replies_by
     from openoutsend.emails.models import Direction
 
     now = now or timezone.now()
     candidates = (
         _open_threads(sequence)
-        .filter(stop=False, held="", step__isnull=False)
+        .filter(stop=False, step__isnull=False)
+        .annotate(last_in=_newest_turn(Direction.INBOUND))
+        .filter(last_in__isnull=True)
         .select_related("lead", "mailbox")
     )
-    if replies_by() == REPLIES_BY_AGENT:
-        candidates = (candidates.annotate(last_in=_newest_turn(Direction.INBOUND))
-                      .filter(last_in__isnull=True))
     sequence_of = _sequences()
     sends = []
     for deal in candidates:
@@ -198,10 +195,6 @@ def unanswered_replies():
     messages reads the same and turns the query into a `GROUP BY` over every selected
     column — including everything `select_related` just widened it with. A correlated
     subquery per timestamp needs no grouping at all.
-
-    **A reply already handed to a person is not unanswered here** (``reply_reported_at``):
-    with ``OUTSEND_REPLIES=person`` their answer goes out from their own client, which
-    this side never reads, so ours would stay the older turn for good.
     """
     from openoutsend.emails.models import Direction
 
@@ -211,7 +204,6 @@ def unanswered_replies():
                   last_out=_newest_turn(Direction.OUTBOUND))
         .filter(last_in__isnull=False)
         .filter(Q(last_out__isnull=True) | Q(last_in__gt=F("last_out")))
-        .filter(Q(reply_reported_at__isnull=True) | Q(last_in__gt=F("reply_reported_at")))
         .select_related("lead", "mailbox")
         .order_by("last_in")
     )
@@ -255,8 +247,7 @@ def awaiting_follow_up(now=None, sequence: str | None = None):
         _open_threads(sequence)
         .annotate(last_in=_newest_turn(Direction.INBOUND),
                   last_out=_newest_turn(Direction.OUTBOUND))
-        .filter(last_in__isnull=True, last_out__isnull=False, step__isnull=False,
-                stop=False, held="")
+        .filter(last_in__isnull=True, last_out__isnull=False, step__isnull=False, stop=False)
         .filter(last_out__lte=now - timedelta(days=min(FOLLOW_UP_GAPS_BUSINESS_DAYS)))
         .select_related("lead", "mailbox")
         .order_by("last_out")

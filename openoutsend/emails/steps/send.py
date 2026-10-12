@@ -60,14 +60,9 @@ def send_first_email(deal, mailbox, step, prompt_line) -> DealState | None:
                 deal.lead.public_id, mailbox.from_address, step.path.name,
                 prompt_line.id if prompt_line else "no prompt line")
 
-    from openoutsend.emails.steps.drafts import hold, write_checked
-
     materialize_profile_summary_if_missing(deal.lead)
     prompt = step.render(**step_fields(deal, prompt_line))
-    opener, failures = write_checked(
-        lambda asked: run_outreach_agent(deal, asked, opener=True), prompt, piped_fields(deal))
-    if failures:
-        return hold(deal, failures)
+    opener = run_outreach_agent(deal, prompt, opener=True)
 
     if suppressed(deal.lead):
         logger.warning("%s was suppressed mid-run — not sending", deal.lead.public_id)
@@ -86,22 +81,12 @@ def send_drafted_email(deal, mailbox, step, subject: str, message: str,
     spacing clock) is identical, because none of that cares who wrote the words.
     It is still the deal's opening *step*, and recorded as one; there is no rendered
     prompt to record, because the calling agent wrote from its own context.
-
-    Its placeholders are filled and it is checked like any draft (``steps/drafts.py``),
-    but never redrafted: the writer is not ours to ask again, so a failure holds it.
     """
     from openoutsend.emails.sender import suppressed
-    from openoutsend.emails.steps.drafts import check, fill, hold
 
     logger.info("%s %s via %s (agent-drafted)",
                 colored("▶ first email", "blue", attrs=["bold"]),
                 deal.lead.public_id, mailbox.from_address)
-
-    fields = piped_fields(deal)
-    failures = check(subject, message, fields)
-    if failures:
-        return hold(deal, failures)
-    subject, message = fill(subject, fields), fill(message, fields)
 
     if suppressed(deal.lead):
         logger.warning("%s was suppressed while its draft waited — not sending",
@@ -140,20 +125,14 @@ def send_in_thread(deal, prompt: str, *, step=None, prompt_line=None) -> DealSta
     nothing sent because the lead was suppressed while the agent wrote, or the agent
     answered with something other than a message.
 
-    *step* is recorded on the send and moves ``deal.step``; a follow-up has none. What
-    the agent writes is checked and filled in first (``steps/drafts.py``), and held
-    after one redraft if it fails.
+    *step* is recorded on the send and moves ``deal.step``; a follow-up has none.
     """
     from openoutsend.core.agents.outreach import run_outreach_agent
     from openoutsend.core.operator import get_active_user
     from openoutsend.emails.sender import operator_bcc, send_email, suppressed
-    from openoutsend.emails.steps.drafts import hold, write_checked
     from openoutsend.emails.steps.reply import ends_in_an_opt_out, honour_opt_out, thread_ids
 
-    decision, failures = write_checked(
-        lambda asked: run_outreach_agent(deal, asked), prompt, piped_fields(deal))
-    if failures:
-        return hold(deal, failures)
+    decision = run_outreach_agent(deal, prompt)
 
     # Written to somebody who has said nothing, so there is no opt-out here to read
     # and no prompt offers one. It is honoured anyway if the agent reaches for it: the
@@ -203,19 +182,11 @@ def send_in_thread(deal, prompt: str, *, step=None, prompt_line=None) -> DealSta
 
 
 def step_fields(deal, prompt_line) -> dict:
-    """What a step file's ``{{ field }}`` can name: the piped fields and the drawn move.
+    """What a step file's ``{{ field }}`` can name: the lead's record, the fields piped
+    for this sequence over it, and the drawn move.
 
     ``prompt_line`` is always defined — ``""`` when none was drawn — so a step can test
     ``{% if prompt_line %}`` under ``StrictUndefined``.
-    """
-    return {**piped_fields(deal), "prompt_line": prompt_line.prompt if prompt_line else ""}
-
-
-def piped_fields(deal) -> dict:
-    """The lead's record and the fields piped for this sequence over it.
-
-    What a step's ``{{ field }}`` reads and what a ``{field}`` the model wrote is filled
-    from (``steps/drafts.py``).
     """
     lead = deal.lead
     return {
@@ -227,6 +198,7 @@ def piped_fields(deal) -> dict:
         "linkedin_url": lead.linkedin_url,
         "email": lead.email,
         **deal.fields,
+        "prompt_line": prompt_line.prompt if prompt_line else "",
     }
 
 

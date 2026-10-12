@@ -11,11 +11,9 @@ E2-5d-last-note.md                   5 business days after E1
 leads.jsonl                          one lead, as your export would print it
 ```
 
-- **`{{ field }}` is what the model reads.** `{{ demo_notes }}` and `{{ open_question }}` are filled
-  in from the piped line before the prompt reaches the model. A field the line lacks fails that lead.
-- **`{field}` is what the model writes.** The prompts ask for the booking link as `{booking_url}`;
-  the model copies the placeholder and OpenOutSend fills it in, so the link is never typed wrong. A
-  placeholder naming a field the line lacks is redrafted once, then held, never sent.
+- **`{{ field }}` is filled in from the piped line** before the prompt reaches the model:
+  `{{ demo_notes }}`, `{{ open_question }}`, `{{ booking_url }}`. A field the line lacks fails that
+  lead.
 - **`start_at` is the demo.** `E0` counts its one business day from it. Set it to the demo's real
   date before you pipe the line: a `start_at` already past `E0`'s grace skips that step.
 - **`"stop": true` ends it.** Re-pipe the line when the call is booked.

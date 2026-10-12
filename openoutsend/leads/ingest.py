@@ -231,12 +231,11 @@ def _upsert_deal(lead: Lead, sequence: str, record: dict, suppressed: bool) -> D
 
 
 def _merge_sequence_fields(deal: Deal, record: dict) -> list[str]:
-    """Write the record's prompt fields, `start_at` and `stop` onto *deal*, and lift a hold.
+    """Write the record's prompt fields, `start_at` and `stop` onto *deal*. Returns the columns changed.
 
     Latest wins key by key, and a null or blank value is *never told*, as for the
     lead's columns. `stop` is latest-wins too: the exporter derives it from its own
-    state, so a `false` after a `true` is that state changing back. Returns the
-    columns changed.
+    state, so a `false` after a `true` is that state changing back.
     """
     changed = []
     incoming = {
@@ -254,8 +253,4 @@ def _merge_sequence_fields(deal: Deal, record: dict) -> list[str]:
     if isinstance(record.get("stop"), bool) and deal.stop != record["stop"]:
         deal.stop = record["stop"]
         changed.append("stop")
-    if deal.held:
-        # Piping the line again is how the operator says the field or the ban is fixed.
-        deal.held = ""
-        changed.append("held")
     return changed

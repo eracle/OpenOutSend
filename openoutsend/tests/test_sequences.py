@@ -79,12 +79,6 @@ class TestRendering:
         with pytest.raises(SequenceError, match="first_name"):
             step.render()
 
-    def test_single_braces_reach_the_model_as_written(self, tmp_path):
-        """``{field}`` is what the model writes, for the engine to fill in after."""
-        step = load(_folder(tmp_path, **{"E0-a.md": "End with {order_url}."}), "s").first
-
-        assert step.render() == "End with {order_url}."
-
     def test_only_a_step_naming_the_prompt_line_draws_one(self, tmp_path):
         folder = _folder(tmp_path, **{"E0-a.md": "{{ prompt_line }}", "E1-2d-b.md": "Plain."})
         sequence = load(folder, "s")
