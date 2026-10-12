@@ -32,6 +32,7 @@ def send_email(
     prompt_line=None,
     prompt: str = "",
     step=None,
+    sequence: str = "",
 ):
     """Send ``body`` from ``mailbox`` to ``to_address``; return its ``Message`` row.
 
@@ -67,11 +68,12 @@ def send_email(
     ``prompt`` is what the message was written from, as rendered, and ``step`` the
     sequence step (``core/sequences.Step``) when it was one. Both are recorded so the
     next message's history replays what the model was asked, not what the file says
-    today (``core/agents/history.py``).
+    today (``core/agents/history.py``). ``sequence`` is the sending deal's sequence
+    key, recorded on every send a deal makes.
     """
     email_message = _build_message(
         mailbox, to_address, subject, body, bcc, in_reply_to, references)
-    row = _record_send(mailbox, email_message, body, thread, prompt_line, prompt, step)
+    row = _record_send(mailbox, email_message, body, thread, prompt_line, prompt, step, sequence)
     _deliver(mailbox, email_message, row)
     logger.info("email sent from %s to %s: %s [%s]",
                 mailbox.from_address, to_address, subject, email_message["Message-ID"])
@@ -231,7 +233,7 @@ def _mint_message_id(from_address: str) -> str:
 
 
 def _record_send(mailbox, email_message: EmailMessage, body: str, thread, prompt_line,
-                 prompt: str, step):
+                 prompt: str, step, sequence: str):
     """Write the outbound row *before* the transport runs, and thread it.
 
     Outbound is authoritative in a way inbound never is: we composed the body, so
@@ -263,6 +265,7 @@ def _record_send(mailbox, email_message: EmailMessage, body: str, thread, prompt
         prompt=prompt,
         prompt_path=str(step.path) if step else "",
         step=step.number if step else None,
+        sequence=sequence,
         sent_at=now,
         kind=Kind.OUTBOUND,
         classified_at=now,

@@ -164,6 +164,7 @@ def _send_reply(deal, decision) -> DealState | None:
         # comparison reads.
         prompt_line=None,
         prompt=REPLY_PROMPT,
+        sequence=deal.sequence,
     )
     return None
 

@@ -194,6 +194,7 @@ def send_in_thread(deal, prompt: str, *, step=None, prompt_line=None) -> DealSta
         prompt_line=prompt_line,
         prompt=prompt,
         step=step,
+        sequence=deal.sequence,
     )
     if step is not None:
         deal.step = step.number
@@ -241,6 +242,7 @@ def _finish_send(deal, mailbox, subject: str, message: str, prompt_line, *,
         prompt_line=prompt_line,
         prompt=prompt,
         step=step,
+        sequence=deal.sequence,
     )
 
     # The send wrote itself into the mail log and opened a thread; the deal just

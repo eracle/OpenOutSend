@@ -105,6 +105,10 @@ def test_each_step_goes_on_its_day_in_one_thread_and_then_it_ends(written, seque
     sends = deal.thread.messages.filter(direction=Direction.OUTBOUND).order_by("sent_at")
     assert list(sends.values_list("step", flat=True)) == [0, 1, 2]
     assert set(sends.values_list("subject", flat=True)) == {"Your ten leads"}
+    assert set(sends.values_list("sequence", flat=True)) == {sequence}
+    assert [path.rsplit("/", 1)[1] for path in sends.values_list("prompt_path", flat=True)] \
+        == list(STEPS)
+    assert sends.first().prompt == "Ask Asha which lead was wrong. They sell payroll audits."
 
     _two_weeks_pass()
     run_send_pass(sequence=sequence)
@@ -281,6 +285,25 @@ def test_a_reply_stops_the_remaining_steps(written, sequence):
 
     answer.assert_called_once()
     assert len(written) == 1
+
+
+def test_an_agent_drafted_opener_opens_the_sequence_with_its_placeholders_filled(
+        written, sequence):
+    from openoutsend.core.agent_draft import AgentDraft
+    from openoutsend.errors import DraftPending
+
+    _enrol(sequence, order_url="https://buy.example.com/412")
+    _two_weeks_pass()
+
+    with pytest.raises(DraftPending):
+        run_send_pass(sequence=sequence, agent_draft=AgentDraft(active=True))
+    result = run_send_pass(sequence=sequence, agent_draft=AgentDraft(
+        active=True, subject="Your ten leads", body="Order here: {order_url}"))
+
+    assert (result.opened, written) == (1, [])
+    sent = Message.objects.get(direction=Direction.OUTBOUND)
+    assert (sent.step, sent.sequence) == (0, sequence)
+    assert sent.body_text == "Order here: https://buy.example.com/412"
 
 
 # ── OUTSEND_REPLIES=person ────────────────────────────────────────
