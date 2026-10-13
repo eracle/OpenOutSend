@@ -107,7 +107,8 @@ def run_outreach_agent(deal, prompt: str, *, opener: bool = False) -> OutreachDe
         get_llm_model(),
         system_prompt=render_frame(deal),
         output_type=OutreachDecision,
-        model_settings={"temperature": 0.7, "timeout": 60},
+        # No temperature: the current Claude models reject one that isn't their default.
+        model_settings={"timeout": 60},
     )
     decision = _run_once(agent, conversation(deal, prompt), public_id)
     if opener:

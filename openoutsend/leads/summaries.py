@@ -72,7 +72,8 @@ def _run_extraction(system: str, text: str) -> list[str]:
         get_llm_model(),
         system_prompt=system,
         output_type=FactList,
-        model_settings={"temperature": 0.0, "timeout": 60},
+        # No temperature: the current Claude models reject one that isn't their default.
+        model_settings={"timeout": 60},
     )
     result: FactList = run_agent_sync(agent.run(text)).output
     return [fact for fact in result.facts if fact.strip()][:MAX_FACTS]
