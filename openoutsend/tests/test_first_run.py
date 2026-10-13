@@ -18,6 +18,7 @@ from openoutsend.errors import OutsendError
 from openoutsend.first_run import (
     MAILBOX_ENV,
     OPERATOR_ENV,
+    RESEND_ENV,
     SIGNATURE_ENV,
     TRANSPORT_ENV,
     check_ready,
@@ -43,7 +44,8 @@ _EVERYTHING = {
 def unconfigured_environment(monkeypatch):
     """No `OUTSEND_*` in scope, so a test about a missing value is about that value."""
     for variable in [*MESSAGE_ENV.values(), *LLM_ENV.values(), *OPERATOR_ENV.values(),
-                     *MAILBOX_ENV.values(), *TRANSPORT_ENV.values(), SIGNATURE_ENV]:
+                     *MAILBOX_ENV.values(), *TRANSPORT_ENV.values(), *RESEND_ENV.values(),
+                     SIGNATURE_ENV, "OUTSEND_TRANSPORT"]:
         monkeypatch.delenv(variable, raising=False)
 
 
@@ -231,6 +233,67 @@ def test_a_stored_box_keeps_what_it_measured(configured, smtp):
     box.refresh_from_db()
     assert box.daily_limit == 17
     smtp.assert_not_called()
+
+
+# ── A resend install ──────────────────────────────────────────────
+
+
+@pytest.fixture
+def resend_configured(configured, monkeypatch):
+    """A resend install: the transport named, the key given instead of a password."""
+    monkeypatch.setenv("OUTSEND_TRANSPORT", "resend")
+    monkeypatch.delenv(MAILBOX_ENV["password"])
+    monkeypatch.setenv(RESEND_ENV["api_key"], "re_full")
+    monkeypatch.delenv("OUTSEND_DAILY_CAP", raising=False)
+
+
+def test_a_resend_box_is_connected_by_its_key(resend_configured, smtp):
+    with patch("openoutsend.emails.resend.verify", return_value=(True, "")) as verify:
+        check_ready()
+
+    box = Mailbox.objects.get()
+    assert box.is_resend
+    assert (box.from_address, box.password, box.imap_host) == ("ada@corp.com", "re_full", "")
+    verify.assert_called_once_with("re_full", "ada@corp.com")
+    smtp.assert_not_called()
+
+
+def test_a_resend_install_without_a_key_names_it(resend_configured, monkeypatch):
+    monkeypatch.delenv(RESEND_ENV["api_key"])
+
+    with pytest.raises(OutsendError, match=RESEND_ENV["api_key"]):
+        check_ready()
+
+
+def test_a_refused_key_stores_nothing_and_says_why(resend_configured):
+    with patch("openoutsend.emails.resend.verify",
+               return_value=(False, "needs a full-access key")), \
+            pytest.raises(OutsendError, match="full-access key"):
+        check_ready()
+
+    assert not Mailbox.objects.exists()
+
+
+def test_a_store_of_one_setup_refuses_the_other(resend_configured):
+    UserFactory()
+    maillog.mailbox("ada@corp.com")
+
+    with pytest.raises(OutsendError, match="one store is one setup"):
+        check_ready()
+
+
+def test_an_unknown_transport_stops_the_run(configured, monkeypatch):
+    monkeypatch.setenv("OUTSEND_TRANSPORT", "sendgrid")
+
+    with pytest.raises(OutsendError, match="OUTSEND_TRANSPORT"):
+        check_ready()
+
+
+def test_a_malformed_cap_stops_the_run(resend_configured, monkeypatch):
+    monkeypatch.setenv("OUTSEND_DAILY_CAP", "fifty")
+
+    with pytest.raises(OutsendError, match="OUTSEND_DAILY_CAP"):
+        check_ready()
 
 
 # ── The sign-off ──────────────────────────────────────────────────

@@ -31,6 +31,8 @@ you sell (`OUTSEND_PRODUCT_DOCS`/`OUTSEND_CAMPAIGN_TARGET`), the model
 (`OUTSEND_AI_MODEL`/`OUTSEND_LLM_API_KEY`), who signs the mail
 (`OUTSEND_OPERATOR_NAME`/`OUTSEND_OPERATOR_EMAIL`), and the mailbox
 (`OUTSEND_MAILBOX_ADDRESS`/`OUTSEND_MAILBOX_PASSWORD`, an **app password**, not the login password).
+With `OUTSEND_TRANSPORT=resend` the mailbox is `OUTSEND_MAILBOX_ADDRESS`/`OUTSEND_RESEND_API_KEY`
+instead — a full-access key — and every piped line must carry an `unsubscribe_url`.
 `send` runs the same check implicitly before any mail moves, so `check` is for diagnosing *why*
 nothing sent, not a required first step.
 

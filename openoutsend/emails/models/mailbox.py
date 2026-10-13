@@ -75,6 +75,39 @@ class MailboxManager(models.Manager):
         )
         return box, ""
 
+    def create_resend(self, *, from_address: str, api_key: str) -> tuple["Mailbox | None", str]:
+        """Check a Resend key and its From domain, then store the box — the same gate.
+
+        The key is kept where a mailbox keeps its app password, and the host fields
+        name the API rather than a server nobody connects to. No IMAP side is stored,
+        because a resend box has none.
+        """
+        from openoutsend.emails import resend
+
+        ok, reason = resend.verify(api_key, from_address)
+        if not ok:
+            return None, reason
+        box, _ = self.update_or_create(
+            username=from_address,
+            defaults={
+                "transport": Transport.RESEND,
+                "password": api_key,
+                "from_address": from_address,
+                "host": resend.API_BASE.removeprefix("https://"),
+                "port": 443,
+                "imap_host": "",
+                "imap_port": 0,
+            },
+        )
+        return box, ""
+
+
+class Transport(models.TextChoices):
+    """What a box sends through — ``core/conf.py``, *Transport*."""
+
+    MAILBOX = "mailbox", "Own mailbox (SMTP + IMAP)"
+    RESEND = "resend", "Resend API (send-only)"
+
 
 class Mailbox(models.Model):
     """One SMTP inbox, connected field-by-field at onboarding.
@@ -87,6 +120,10 @@ class Mailbox(models.Model):
     other provider overrides them at entry.
     """
 
+    # Which setup this box is. Everything that reads the box over IMAP — the mail pass,
+    # the warm ramp — skips a resend box, and the send goes through the API instead.
+    transport = models.CharField(max_length=16, choices=Transport.choices,
+                                 default=Transport.MAILBOX)
     host = models.CharField(max_length=255, default="smtp.gmail.com")
     port = models.PositiveIntegerField(default=587)
     # IMAP read side, for the agentic follow-up loop's reply-reader
@@ -195,7 +232,22 @@ class Mailbox(models.Model):
         """
         if self.paused_today():
             return 0
-        return max(0, self.daily_limit - self.sent_today())
+        return max(0, self.capacity() - self.sent_today())
+
+    def capacity(self) -> int:
+        """First contacts this box may make today.
+
+        A mailbox's is measured (``daily_limit``, ``emails/warmth.py``); a resend box
+        has nothing to measure, so its cap is the declared one, read fresh each run.
+        """
+        from openoutsend.core.conf import resend_daily_cap
+
+        return resend_daily_cap() if self.is_resend else self.daily_limit
+
+    @property
+    def is_resend(self) -> bool:
+        """True when this box sends through Resend's API and has no mailbox to read."""
+        return self.transport == Transport.RESEND
 
     def free_now(self, now=None) -> bool:
         """True when this box's spacing clock has elapsed — cold volume may go.

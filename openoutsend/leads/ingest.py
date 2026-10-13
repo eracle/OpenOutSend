@@ -84,12 +84,15 @@ def ingest(stream: IO[str], sequence: str = "cold") -> IngestResult:
     record before the break — which is the property JSON Lines was chosen for, and the
     reason the rest is simply a re-run.
     """
+    from openoutsend.core.conf import TRANSPORT_RESEND, transport
+
+    needs_unsubscribe_url = transport() == TRANSPORT_RESEND
     result = IngestResult()
     for number, line in enumerate(stream, start=1):
         line = line.strip()
         if not line:
             continue
-        record = _parse(line, number)
+        record = _parse(line, number, needs_unsubscribe_url)
         if record is None:
             result.skipped += 1
             continue
@@ -97,12 +100,17 @@ def ingest(stream: IO[str], sequence: str = "cold") -> IngestResult:
     return result
 
 
-def _parse(line: str, number: int) -> dict | None:
+def _parse(line: str, number: int, needs_unsubscribe_url: bool = False) -> dict | None:
     """One line as a record, or None with the reason named on stderr.
 
     A record without a `lead_id` is malformed rather than merely odd: the key is what
     makes a re-ingest idempotent, and a row that cannot be keyed would be a duplicate
     every time the pipe ran.
+
+    A resend install (``needs_unsubscribe_url``) also refuses a line with no
+    `unsubscribe_url`, because it could never be sent: with no mailbox to read, the
+    link is the only opt-out there is (``emails/sender.py``). A line that says `stop`
+    is still taken — it ends a deal rather than mailing anyone.
 
     Unknown keys are kept, not rejected — the compatibility rule is that a receiver
     ignores what it does not know and the finder only ever adds, so a record from a
@@ -124,6 +132,10 @@ def _parse(line: str, number: int) -> dict | None:
         return None
     if record.get("stop") is not None and not isinstance(record["stop"], bool):
         logger.error("line %d skipped: stop is not true or false", number)
+        return None
+    if needs_unsubscribe_url and not record.get("unsubscribe_url") and record.get("stop") is not True:
+        logger.error("line %d skipped: no unsubscribe_url, which a resend install sends "
+                     "every email with", number)
         return None
     return record
 

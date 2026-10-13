@@ -174,6 +174,7 @@ def send_in_thread(deal, prompt: str, *, step=None, prompt_line=None) -> DealSta
         prompt=prompt,
         step=step,
         sequence=deal.sequence,
+        unsubscribe_url=unsubscribe_url(deal),
     )
     if step is not None:
         deal.step = step.number
@@ -202,6 +203,15 @@ def step_fields(deal, prompt_line) -> dict:
     }
 
 
+def unsubscribe_url(deal) -> str:
+    """The opt-out link the deal's line was piped with, or "" when it had none.
+
+    A piped field like any other, read by the sender rather than a prompt: a resend
+    box puts it in the header and the footer, and a mailbox ignores it.
+    """
+    return str(deal.fields.get("unsubscribe_url") or "")
+
+
 def _finish_send(deal, mailbox, subject: str, message: str, prompt_line, *,
                  prompt: str, step) -> DealState:
     """SMTP-send the opener and record it on *deal*. Shared by both drafting paths."""
@@ -215,6 +225,7 @@ def _finish_send(deal, mailbox, subject: str, message: str, prompt_line, *,
         prompt=prompt,
         step=step,
         sequence=deal.sequence,
+        unsubscribe_url=unsubscribe_url(deal),
     )
 
     # The send wrote itself into the mail log and opened a thread; the deal just

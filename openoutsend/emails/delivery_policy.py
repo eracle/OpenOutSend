@@ -130,7 +130,35 @@ def classify(exc: Exception) -> Verdict:
     if isinstance(exc, smtplib.SMTPResponseException):
         return _verdict(_from_code(exc.smtp_code, exc.smtp_error), exc.smtp_code, exc.smtp_error)
 
+    from openoutsend.emails.resend import ResendError
+
+    if isinstance(exc, ResendError):
+        return _verdict(_from_resend(exc), None, str(exc))
+
     return _verdict(Response.TRANSPORT, None, str(exc))
+
+
+# Resend's own ceilings — the account's plan, not a receiver's view of the domain. The
+# day's is the one pausing until tomorrow can wait out; the month's needs an operator
+# all the same, and pausing daily is what keeps it from being hammered meanwhile.
+_RESEND_QUOTAS = frozenset({"daily_quota_exceeded", "monthly_quota_exceeded"})
+
+
+def _from_resend(exc) -> str:
+    """Map a Resend API refusal onto a ``Response``.
+
+    Resend answers for itself, never for the receiver — the receiver's verdict arrives
+    later, as a bounce in the email list. So the mapping is about the account: over
+    its quota, a key or domain it refuses, a message it will not take, or its own
+    failure, which says nothing about anything and is retried like a dropped socket.
+    """
+    if exc.status == 429:
+        return Response.QUOTA_EXCEEDED if exc.name in _RESEND_QUOTAS else Response.DEFERRED
+    if exc.status in (401, 403):
+        return Response.AUTH_FAILED
+    if 400 <= exc.status < 500:
+        return Response.REFUSED
+    return Response.TRANSPORT
 
 
 def _verdict(response: str, code: int | None, error) -> Verdict:
@@ -253,12 +281,15 @@ _STATUS_FOR = {
 }
 
 
-def record_acceptance(message, smtp_code: int | None, response):
+def record_acceptance(message, smtp_code: int | None, response, *, queue_id: str = ""):
     """Record the ``250`` — the receiver taking responsibility for this message.
 
     A successful send used to be the *absence* of a row, which is why 590 of them
     left nothing to count. Recording it is what makes a rate a rate: bounces over
     accepted sends, rather than bounces over a number nobody kept.
+
+    ``queue_id`` is given when the handle did not come in an SMTP line — Resend's
+    email id, which is what ``emails/resend_events.py`` later looks the send up by.
     """
     from openoutsend.emails.models import DeliveryEvent
 
@@ -267,7 +298,7 @@ def record_acceptance(message, smtp_code: int | None, response):
         message=message,
         status=DeliveryEvent.Status.ACCEPTED,
         smtp_code=smtp_code,
-        queue_id=_queue_id(text),
+        queue_id=queue_id or _queue_id(text),
         detail=text,
     )
 

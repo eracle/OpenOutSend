@@ -164,6 +164,60 @@ def follow_ups_on() -> bool:
 
     return env_flag("OUTSEND_FOLLOW_UPS")
 
+# ----------------------------------------------------------------------
+# Transport (``OUTSEND_TRANSPORT``) — what the mail leaves through, and so which of
+# the guards above can run at all.
+#
+# **Two setups, never mixed.** ``mailbox`` is a box of your own over SMTP and IMAP:
+# replies are read and answered, bounces and opt-outs come home as mail, and the warm
+# ramp reads the Sent folder. ``resend`` is Resend's API and nothing else: no mailbox
+# is read, so each of those is replaced by what Resend does natively — bounces and
+# complaints are polled from its email list (``emails/resend_events.py``), the opt-out
+# is the line's own ``unsubscribe_url``, and replies go wherever the domain forwards
+# them, to be read by a person. Mixing the two (sending through Resend, reading a Gmail
+# box) would make every feature depend on which half it came from.
+#
+# **The cap is declared, not measured.** The warm ramp exists because a box's
+# reputation is its own; a Resend domain sends from Resend's warmed pool, and there is
+# no Sent folder to measure. 50 a day is what the sequences it was built for need
+# (openoutreach-docs ``marketing/pricing.md`` §3), and ``OUTSEND_DAILY_CAP`` moves it.
+# Spacing and the sending window still apply: a recipient reads the hour either way.
+# ----------------------------------------------------------------------
+TRANSPORT_MAILBOX = "mailbox"
+TRANSPORT_RESEND = "resend"
+TRANSPORTS = (TRANSPORT_MAILBOX, TRANSPORT_RESEND)
+RESEND_DAILY_CAP = 50
+
+
+def transport() -> str:
+    """This install's transport (``OUTSEND_TRANSPORT``, default ``mailbox``).
+
+    An unknown name raises rather than falling back: sending through the wrong one
+    is not a default anybody chose.
+    """
+    import os
+
+    from openoutsend.errors import OutsendError
+
+    value = (os.environ.get("OUTSEND_TRANSPORT") or TRANSPORT_MAILBOX).strip().lower()
+    if value not in TRANSPORTS:
+        raise OutsendError(f"OUTSEND_TRANSPORT must be one of {', '.join(TRANSPORTS)}, not {value!r}")
+    return value
+
+
+def resend_daily_cap() -> int:
+    """First contacts a Resend install may make per day (``OUTSEND_DAILY_CAP``, default 50)."""
+    import os
+
+    from openoutsend.errors import OutsendError
+
+    value = (os.environ.get("OUTSEND_DAILY_CAP") or "").strip()
+    if not value:
+        return RESEND_DAILY_CAP
+    if not value.isdigit():
+        raise OutsendError(f"OUTSEND_DAILY_CAP must be a whole number, not {value!r}")
+    return int(value)
+
 # Mean realized gap: the floor plus the expected value of U[min, max].
 MEAN_SEND_INTERVAL_SECONDS = MIN_SEND_INTERVAL_SECONDS + (
     SEND_INTERVAL_JITTER_MIN_SECONDS + SEND_INTERVAL_JITTER_MAX_SECONDS) / 2

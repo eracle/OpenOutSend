@@ -260,3 +260,39 @@ def test_an_opt_out_ends_the_conversation_it_was_in():
 
     deal.refresh_from_db()
     assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.UNSUBSCRIBED)
+
+
+# ── A resend install ──────────────────────────────────────────────
+
+
+def test_a_resend_install_refuses_a_line_it_could_never_send(monkeypatch):
+    """No mailbox is read, so the line's own link is the only opt-out there is."""
+    monkeypatch.setenv("OUTSEND_TRANSPORT", "resend")
+
+    result = ingest(stream(record()))
+
+    assert (result.stored, result.skipped) == (0, 1)
+    assert not Deal.objects.exists()
+
+
+def test_a_resend_install_keeps_the_link_as_a_field(monkeypatch):
+    monkeypatch.setenv("OUTSEND_TRANSPORT", "resend")
+
+    ingest(stream(record(unsubscribe_url="https://hub.test/unsubscribe/t/")))
+
+    assert Deal.objects.get().fields["unsubscribe_url"] == "https://hub.test/unsubscribe/t/"
+
+
+def test_a_stop_line_needs_no_link(monkeypatch):
+    monkeypatch.setenv("OUTSEND_TRANSPORT", "resend")
+
+    result = ingest(stream(record(stop=True)))
+
+    assert result.stored == 1
+    assert Deal.objects.get().stop is True
+
+
+def test_a_mailbox_install_takes_a_line_without_a_link(monkeypatch):
+    monkeypatch.delenv("OUTSEND_TRANSPORT", raising=False)
+
+    assert ingest(stream(record())).stored == 1

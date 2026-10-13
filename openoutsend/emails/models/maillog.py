@@ -218,6 +218,9 @@ class DeliveryEvent(models.Model):
         DEFERRED = "deferred", "Deferred (4xx)"
         REJECTED = "rejected", "Rejected (5xx)"
         BOUNCED = "bounced", "Bounced (non-delivery report)"
+        # A recipient marked it as spam. Only a provider's feedback loop can say so,
+        # which is why only a resend box ever records one (``emails/resend_events.py``).
+        COMPLAINED = "complained", "Marked as spam by the recipient"
         ERROR = "error", "No answer from the receiver"
 
     message = models.ForeignKey(

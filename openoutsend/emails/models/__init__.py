@@ -7,7 +7,7 @@ receiving server said about a send. The log is the record; ``kind`` and the
 conversation projected from it are the interpretation, and they are derived from
 rows that never move.
 """
-from openoutsend.emails.models.mailbox import Mailbox, MailboxManager, has_mailbox
+from openoutsend.emails.models.mailbox import Mailbox, MailboxManager, Transport, has_mailbox
 from openoutsend.emails.models.maillog import (
     DeliveryEvent,
     Direction,
@@ -26,5 +26,6 @@ __all__ = [
     "MailboxManager",
     "Message",
     "Thread",
+    "Transport",
     "has_mailbox",
 ]

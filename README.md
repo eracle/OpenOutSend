@@ -162,6 +162,35 @@ outsend send --sequence after-a-demo                    # or in this one alone
 three emails after a product demo, with a piped date, `{{ field }}` and the `stop` field, and the
 four commands that run it.
 
+### Sending through Resend
+
+`OUTSEND_TRANSPORT` picks one of two setups, and an install never mixes them:
+
+| | `mailbox` (default) | `resend` |
+| --- | --- | --- |
+| Sends through | your box's SMTP | Resend's API |
+| Connected by | `OUTSEND_MAILBOX_ADDRESS` + app password | `OUTSEND_MAILBOX_ADDRESS` + `OUTSEND_RESEND_API_KEY`, on a domain verified in Resend |
+| Replies | read over IMAP and answered | not read — they go wherever the domain forwards them |
+| Bounces, complaints | read from the inbox | polled from Resend's email list every pass |
+| Opt-out | *Reply "stop"*, and a `mailto:` header | the line's `unsubscribe_url`, in the footer and a one-click `List-Unsubscribe` |
+| Daily cap | measured from the Sent folder, ramping from 5 | declared: `OUTSEND_DAILY_CAP`, 50 by default |
+
+Spacing and the sending window apply to both.
+
+- **The key must be full-access.** A sending-only key can post an email and read nothing back, so a
+  resend install would never learn of a bounce. `outsend check` asks Resend for the domain list, which
+  only a full-access key can read, and refuses the other kind by name.
+- **Every line needs an `unsubscribe_url`.** With no mailbox to read, a link that takes a one-click
+  POST is the only opt-out there is, so ingest skips a line without one (unless it says `"stop":
+  true`). The link's owner records the opt-out, and its next export sends that line with `"stop":
+  true`.
+- **Threading rides on `References`.** Resend replaces the Message-ID it is given, so the opener names
+  its own minted id in `References`, and every later step carries the chain that starts with it.
+- **A bounce or a complaint suppresses the address**, as one read from an inbox would. A complaint ends
+  the deal as `unsubscribed`. The poll looks back a week; Resend only reports each email's latest event.
+- **One store is one setup.** A store whose box was connected the other way stops the run; point
+  `OUTSEND_HOME` at a second store to run both.
+
 **`outsend check` verifies what a run needs** — what this install sells and to whom, the name that
 signs the mail, and a mailbox to send it from — and it runs implicitly on every send, so a setup step
 is never something a timer discovers. **It comes from the environment and nothing is asked**, on a
@@ -245,7 +274,11 @@ The environment is the operator seam — the only way in a timer has:
 | `OUTSEND_MAILBOX_ADDRESS` / `OUTSEND_MAILBOX_PASSWORD` | the box to send from, and its **app password** — a Google box rejects the login password |
 | `OUTSEND_SMTP_HOST` / `OUTSEND_SMTP_PORT` / `OUTSEND_IMAP_HOST` / `OUTSEND_IMAP_PORT` | only for a box that is not on Google Workspace; those four default to Gmail's and are never prompted for |
 | `OUTSEND_SIGNATURE` | the sign-off appended to every send from that box; empty declines one for good |
-| `OUTSEND_FOLLOW_UPS` | `off` stops the two follow-ups to a lead who never answered; on by default || `OUTSEND_HOME` / `OUTSEND_DB` | where the store lives |
+| `OUTSEND_FOLLOW_UPS` | `off` stops the two follow-ups to a lead who never answered; on by default |
+| `OUTSEND_TRANSPORT` | `mailbox` (the default) or `resend` — see *Sending through Resend* |
+| `OUTSEND_RESEND_API_KEY` | a resend install's **full-access** key, in place of `OUTSEND_MAILBOX_PASSWORD` |
+| `OUTSEND_DAILY_CAP` | a resend install's first contacts per day; 50 by default |
+| `OUTSEND_HOME` / `OUTSEND_DB` | where the store lives |
 
 **These are read on every run, and none of them is remembered.** Remembering what
 somebody typed is a convenience for somebody who types; this program is an agent's, and

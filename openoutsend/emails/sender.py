@@ -1,5 +1,9 @@
 # openoutsend/emails/sender.py
-"""Send one outbound email through a Mailbox's SMTP credentials.
+"""Send one outbound email through a Mailbox's SMTP credentials, or Resend's API.
+
+A resend box differs in three places only, all in this module: the opt-out is the
+line's ``unsubscribe_url``, the opener names itself in ``References``, and the
+message is posted to the API rather than over SMTP (``core/conf.py``, *Transport*).
 
 No error handling by design: a failed send raises and the EMAIL task is marked
 FAILED by the daemon, then retried on the next cycle. The mailbox is left
@@ -13,6 +17,8 @@ from email.message import EmailMessage
 from email.utils import make_msgid
 
 from django.utils import timezone
+
+from openoutsend.errors import OutsendError
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +39,7 @@ def send_email(
     prompt: str = "",
     step=None,
     sequence: str = "",
+    unsubscribe_url: str = "",
 ):
     """Send ``body`` from ``mailbox`` to ``to_address``; return its ``Message`` row.
 
@@ -70,9 +77,13 @@ def send_email(
     next message's history replays what the model was asked, not what the file says
     today (``core/agents/history.py``). ``sequence`` is the sending deal's sequence
     key, recorded on every send a deal makes.
+
+    ``unsubscribe_url`` is the line's own opt-out link, and a resend box cannot send
+    without one: with no mailbox to read, a *Reply "stop"* would reach nobody, so the
+    link is the opt-out in both the header and the footer (``_opt_out_for``).
     """
     email_message = _build_message(
-        mailbox, to_address, subject, body, bcc, in_reply_to, references)
+        mailbox, to_address, subject, body, bcc, in_reply_to, references, unsubscribe_url)
     row = _record_send(mailbox, email_message, body, thread, prompt_line, prompt, step, sequence)
     _deliver(mailbox, email_message, row)
     logger.info("email sent from %s to %s: %s [%s]",
@@ -143,8 +154,20 @@ def _sent_block(subject: str, body: str) -> str:
 # ── Message assembly ──────────────────────────────────────────────
 
 
-def _build_message(mailbox, to_address, subject, body, bcc, in_reply_to, references) -> EmailMessage:
-    """Assemble the email with threading headers and a domain-anchored Message-ID."""
+def _build_message(mailbox, to_address, subject, body, bcc, in_reply_to, references,
+                   unsubscribe_url="") -> EmailMessage:
+    """Assemble the email with threading headers and a domain-anchored Message-ID.
+
+    **A resend opener names itself in ``References``.** Resend replaces the Message-ID
+    we mint with its own, so a later step's ``In-Reply-To`` points at an id the
+    recipient never saw. ``References`` passes through untouched, and Gmail threads two
+    messages that name the same id there — so the opener carries its own minted id,
+    and every later step carries the chain, which starts with it. Tested to Gmail: with
+    the id only on the later step, the two arrive as separate conversations.
+    """
+    if mailbox.is_resend and not unsubscribe_url:
+        raise OutsendError(f"{to_address} has no unsubscribe_url, and a resend box "
+                           "cannot send without one")
     message = EmailMessage()
     message["Message-ID"] = _mint_message_id(mailbox.from_address)
     message["From"] = mailbox.from_address
@@ -152,11 +175,20 @@ def _build_message(mailbox, to_address, subject, body, bcc, in_reply_to, referen
     if bcc:
         message["Bcc"] = bcc
     message["Subject"] = subject
-    message["List-Unsubscribe"] = _list_unsubscribe(mailbox.from_address)
+    if mailbox.is_resend:
+        # RFC 8058 one-click: the link takes a POST, so a mail client's own
+        # unsubscribe button works without the reader opening a page.
+        message["List-Unsubscribe"] = f"<{unsubscribe_url}>"
+        message["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+    else:
+        message["List-Unsubscribe"] = _list_unsubscribe(mailbox.from_address)
     if in_reply_to:
         message["In-Reply-To"] = in_reply_to
         message["References"] = references or in_reply_to
-    message.set_content(_attribute(_opt_out(_sign(body, mailbox.signature))))
+    elif mailbox.is_resend:
+        message["References"] = message["Message-ID"]
+    signed = _sign(body, mailbox.signature)
+    message.set_content(_attribute(_opt_out_for(mailbox, signed, unsubscribe_url)))
     return message
 
 
@@ -201,6 +233,21 @@ def _opt_out(body: str) -> str:
     than by inference. Reword the sentence freely; keep a word the gate can match.
     """
     return f"{body.rstrip()}\n\n{OPT_OUT_LINE}\n"
+
+
+UNSUBSCRIBE_LINE = "Not interested? Unsubscribe here and I won't write again: {url}"
+
+
+def _opt_out_for(mailbox, body: str, unsubscribe_url: str) -> str:
+    """The footer's opt-out: the reply word for a mailbox, the link for a resend box.
+
+    A resend box reads no mail, so a typed "stop" would land in a person's forwarded
+    inbox and nowhere the code could honour it. The link is the one exit that works
+    by itself.
+    """
+    if not mailbox.is_resend:
+        return _opt_out(body)
+    return f"{body.rstrip()}\n\n{UNSUBSCRIBE_LINE.format(url=unsubscribe_url)}\n"
 
 
 ATTRIBUTION = "Sent with OpenOutreach"
@@ -296,6 +343,9 @@ def _deliver(mailbox, email_message: EmailMessage, row) -> None:
     """
     from openoutsend.emails.delivery_policy import record_acceptance, record_failure
 
+    if mailbox.is_resend:
+        _deliver_through_resend(mailbox, email_message, row)
+        return
     try:
         with _SMTP(mailbox.host, mailbox.port, timeout=SMTP_TIMEOUT_SECONDS) as smtp:
             smtp.starttls()
@@ -305,6 +355,40 @@ def _deliver(mailbox, email_message: EmailMessage, row) -> None:
     except (smtplib.SMTPException, OSError) as exc:
         record_failure(row, exc)
         raise
+
+
+# The headers a resend send carries over from the assembled message. Message-ID is not
+# among them — Resend writes its own — and From/To/Subject/Bcc are fields of the call.
+_RESEND_HEADERS = ("In-Reply-To", "References", "List-Unsubscribe", "List-Unsubscribe-Post")
+
+
+def _deliver_through_resend(mailbox, email_message: EmailMessage, row) -> None:
+    """Post the assembled message to Resend's API, recording its answer like an SMTP one.
+
+    The message is built exactly as for a mailbox and only translated here, so the
+    stored headers are the ones that went out. The minted Message-ID is the
+    idempotency key: one row, one email, however many times the call is retried.
+    """
+    from openoutsend.emails import resend
+    from openoutsend.emails.delivery_policy import record_acceptance, record_failure
+
+    payload = {
+        "from": email_message["From"],
+        "to": [email_message["To"]],
+        "subject": email_message["Subject"],
+        "text": email_message.get_content(),
+        "headers": {name: email_message[name] for name in _RESEND_HEADERS
+                    if email_message[name]},
+    }
+    if email_message["Bcc"]:
+        payload["bcc"] = [email_message["Bcc"]]
+    try:
+        email_id = resend.send(mailbox.password, payload,
+                               idempotency_key=email_message["Message-ID"])
+    except (resend.ResendError, OSError) as exc:
+        record_failure(row, exc)
+        raise
+    record_acceptance(row, None, f"OK {email_id}", queue_id=email_id)
 
 
 class _SMTP(smtplib.SMTP):

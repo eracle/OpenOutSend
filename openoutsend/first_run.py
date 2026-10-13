@@ -55,6 +55,10 @@ TRANSPORT_ENV = {
     "imap_port": "OUTSEND_IMAP_PORT",
 }
 
+# A resend install (`OUTSEND_TRANSPORT=resend`, `core/conf.py`) names its From address
+# the same way and its key instead of a password. No host or port: there is one API.
+RESEND_ENV = {"address": "OUTSEND_MAILBOX_ADDRESS", "api_key": "OUTSEND_RESEND_API_KEY"}
+
 # The sign-off appended to every send from the box. Optional, and never a reason to
 # stop: a message with no sign-off still goes out.
 SIGNATURE_ENV = "OUTSEND_SIGNATURE"
@@ -147,15 +151,29 @@ def _ensure_mailbox() -> list[str]:
     """Connect a mailbox. Returns the variables still unanswered.
 
     Skipped once any box exists, because storing one costs an SMTP round trip and a
-    pass that already has somewhere to send from has nothing to check. The row is
+    pass that already has somewhere to send from has nothing to check — unless that
+    box is of the other transport from the one ``OUTSEND_TRANSPORT`` names, which
+    stops the run rather than sending through a setup nobody asked for. The row is
     seeded from the environment and then belongs to the pipeline: what it accumulates
     afterwards — the spacing clock, the capacity the provider taught it — is measured,
     and no variable can restate it.
     """
+    from openoutsend.core.conf import TRANSPORT_RESEND, resend_daily_cap, transport
     from openoutsend.emails.models import Mailbox
 
-    if Mailbox.objects.exists():
+    wanted = transport()
+    if wanted == TRANSPORT_RESEND:
+        resend_daily_cap()  # read on every send; a malformed one stops the run here instead
+    stored = Mailbox.objects.first()
+    if stored is not None:
+        if stored.transport != wanted:
+            raise OutsendError(
+                f"this store sends through {stored.transport} ({stored.from_address}), "
+                f"but OUTSEND_TRANSPORT says {wanted} — one store is one setup; "
+                "point OUTSEND_HOME at another store to run the other")
         return []
+    if wanted == TRANSPORT_RESEND:
+        return _connect_resend()
 
     given = {key: _from_environment(variable) for key, variable in MAILBOX_ENV.items()}
     if not all(given.values()):
@@ -169,6 +187,24 @@ def _ensure_mailbox() -> list[str]:
             f"Google Workspace needs {', '.join(TRANSPORT_ENV.values())}")
 
     logger.info("connected %s", box.from_address)
+    _sign_off(box)
+    return []
+
+
+def _connect_resend() -> list[str]:
+    """Connect a resend box from its address and key. Returns the variables still unanswered."""
+    from openoutsend.emails.models import Mailbox
+
+    given = {key: _from_environment(variable) for key, variable in RESEND_ENV.items()}
+    if not all(given.values()):
+        return [variable for key, variable in RESEND_ENV.items() if not given[key]]
+
+    box, reason = Mailbox.objects.create_resend(
+        from_address=given["address"], api_key=given["api_key"])
+    if box is None:
+        raise OutsendError(f"{given['address']} was not connected: {reason}")
+
+    logger.info("connected %s through Resend", box.from_address)
     _sign_off(box)
     return []
 

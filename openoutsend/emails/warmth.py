@@ -65,10 +65,14 @@ def measure_pool() -> None:
 
     A box that could not be reached is still stamped, so an unreachable mailbox
     costs one IMAP timeout a day rather than one per pass.
-    """
-    from openoutsend.emails.models import Mailbox
 
-    for mailbox in Mailbox.objects.exclude(measured_on=timezone.localdate()):
+    A resend box is never measured: it has no Sent folder, and its cap is declared
+    (``Mailbox.capacity``).
+    """
+    from openoutsend.emails.models import Mailbox, Transport
+
+    for mailbox in (Mailbox.objects.exclude(measured_on=timezone.localdate())
+                    .exclude(transport=Transport.RESEND)):
         refresh_capacity(mailbox)
 
 
