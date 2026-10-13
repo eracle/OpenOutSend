@@ -148,6 +148,10 @@ def test_subject_and_body_need_agent_draft():
         _parse_args(["send", "--subject", "Hi", "--body", "there"])
 
 
+def test_a_body_alone_answers_a_later_step():
+    assert _parse_args(["send", "--agent-draft", "--body", "More."]).body == "More."
+
+
 def test_subject_without_a_body_is_refused():
     with pytest.raises(SystemExit):
         _parse_args(["send", "--agent-draft", "--subject", "Hi"])

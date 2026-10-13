@@ -222,7 +222,10 @@ class Deal(models.Model):
 
 
 class PendingDraft(models.Model):
-    """The one deal handed to a calling agent for an opener, if any.
+    """The one deal handed to a calling agent for an opener or a later step, if any.
+
+    Which of the two is not stored: it is asked again on resume (``send_pass._owed_send``),
+    so a deal stopped or replied to meanwhile is dropped rather than written to.
 
     `send --agent-draft` stops the pass right before the call that would otherwise go
     to `AI_MODEL`, and the process exits — there is nobody left in memory to remember
@@ -235,8 +238,8 @@ class PendingDraft(models.Model):
     spacing clock, the daily ceiling, the sending window), so the answer is kept here
     rather than thrown away the instant it cannot be used immediately.
 
-    At most one row ever exists — the underlying loop asks one opener at a time, same
-    as the `AI_MODEL`-keyed path does.
+    At most one row ever exists — the underlying loop asks one draft at a time. A later
+    step's answer leaves `subject` blank: it goes under the thread's.
     """
 
     deal = models.OneToOneField(Deal, on_delete=models.CASCADE)

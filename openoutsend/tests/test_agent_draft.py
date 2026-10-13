@@ -1,17 +1,21 @@
 # openoutsend/tests/test_agent_draft.py
-"""``send --agent-draft`` — the calling agent writes the opener instead of AI_MODEL.
+"""``send --agent-draft`` — the calling agent writes the openers and later steps
+instead of AI_MODEL.
 
-Covers the pipeline layer only (``_open_with_agent_draft``); the CLI's own flag
+Covers the pipeline layer only (``_send_agent_draft``); the CLI's own flag
 parsing is covered by ``tests/test_cli.py``.
 """
 from __future__ import annotations
 
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from django.utils import timezone
 
 from openoutsend.core.agent_draft import AgentDraft
-from openoutsend.errors import DraftPending
+from openoutsend.emails.models import Direction, Message, Thread
+from openoutsend.errors import DraftPending, OutsendError
 from openoutsend.leads.models import DealState, PendingDraft
 from openoutsend.send_pass import run_send_pass
 from openoutsend.tests.emails import maillog
@@ -22,6 +26,24 @@ pytestmark = pytest.mark.django_db
 
 def _waiting(address="lead@acme.com"):
     return DealFactory(lead=LeadFactory(email=address, profile_text="cto at acme"))
+
+
+def _past_its_opener(tmp_path, box, **kwargs):
+    """An EMAILED deal in a two-step sequence whose opener went out long enough ago
+    that ``E1`` is due."""
+    (tmp_path / "E0-open.md").write_text("Open to {{ first_name }}.")
+    (tmp_path / "E1-2d-steer.md").write_text("Steer the list for {{ product }}.")
+    thread = Thread.objects.create(mailbox=box)
+    deal = DealFactory(
+        lead=LeadFactory(email="lead@acme.com", first_name="Ada"),
+        state=DealState.EMAILED, mailbox=box, thread=thread, step=0,
+        sequence=str(tmp_path), fields={"product": "portraits"},
+        email_subject="Which of the ten was wrong?", **kwargs,
+    )
+    maillog.outbound(box, thread=thread, step=0, message_id="opener@openoutreach.app",
+                     subject=deal.email_subject,
+                     sent_at=timezone.now() - timedelta(days=10))
+    return deal
 
 
 @pytest.fixture
@@ -102,6 +124,16 @@ class TestResumingWithAnAnswer:
         assert result.opened == 1
         assert PendingDraft.objects.count() == 0
 
+    def test_an_opener_answered_without_a_subject_is_refused(self, no_mail):
+        deal = _waiting()
+        PendingDraft.objects.create(deal=deal)
+
+        with pytest.raises(OutsendError) as raised:
+            run_send_pass(agent_draft=AgentDraft(active=True, body="Saw you're hiring."))
+
+        assert not isinstance(raised.value, DraftPending)
+        assert PendingDraft.objects.get(deal=deal).body == ""
+
     def test_agent_draft_off_uses_the_llm_as_before(self, no_mail):
         _waiting()
         box = maillog.mailbox()
@@ -113,3 +145,63 @@ class TestResumingWithAnAnswer:
             run_send_pass()
 
         send.assert_called_once()
+
+
+class TestALaterStep:
+    def test_a_due_step_is_handed_back_with_its_rendered_prompt(self, no_mail, tmp_path):
+        deal = _past_its_opener(tmp_path, maillog.mailbox())
+
+        with patch("openoutsend.core.agents.outreach.run_outreach_agent") as mock_llm:
+            with pytest.raises(DraftPending) as raised:
+                run_send_pass(agent_draft=AgentDraft(active=True))
+
+        mock_llm.assert_not_called()
+        payload = raised.value.payload
+        assert payload["step"] == "E1-2d-steer.md"
+        assert payload["prompt"] == "Steer the list for portraits."
+        assert payload["subject"] == "Which of the ten was wrong?"
+        assert PendingDraft.objects.filter(deal=deal).count() == 1
+
+    def test_a_body_alone_sends_it_in_the_thread_under_its_subject(self, no_mail, tmp_path):
+        UserFactory()
+        box = maillog.mailbox()
+        deal = _past_its_opener(tmp_path, box)
+        PendingDraft.objects.create(deal=deal)
+
+        with patch("openoutsend.planner.free_thread_box", return_value=box), \
+                patch("openoutsend.core.agents.outreach.run_outreach_agent") as mock_llm, \
+                patch("openoutsend.emails.sender._deliver"):
+            result = run_send_pass(agent_draft=AgentDraft(active=True, body="Tell me who pays."))
+
+        mock_llm.assert_not_called()
+        assert result.stepped == 1
+        deal.refresh_from_db()
+        assert deal.step == 1
+        sent = Message.objects.get(thread=deal.thread, direction=Direction.OUTBOUND, step=1)
+        assert sent.subject == "Which of the ten was wrong?"
+        assert sent.in_reply_to == "opener@openoutreach.app"
+        assert sent.prompt == "Steer the list for portraits."
+        assert PendingDraft.objects.count() == 0
+
+    def test_the_answer_is_kept_while_the_thread_box_is_busy(self, no_mail, tmp_path):
+        deal = _past_its_opener(tmp_path, maillog.mailbox())
+        PendingDraft.objects.create(deal=deal)
+
+        with patch("openoutsend.planner.free_thread_box", return_value=None):
+            result = run_send_pass(agent_draft=AgentDraft(active=True, body="Tell me who pays."))
+
+        assert result.stepped == 0
+        assert PendingDraft.objects.get(deal=deal).body == "Tell me who pays."
+
+    def test_a_deal_stopped_while_its_draft_waited_is_not_written_to(self, no_mail, tmp_path):
+        box = maillog.mailbox()
+        deal = _past_its_opener(tmp_path, box, stop=True)
+        PendingDraft.objects.create(deal=deal, body="Tell me who pays.")
+
+        with patch("openoutsend.planner.free_thread_box", return_value=box), \
+                patch("openoutsend.emails.sender._deliver") as deliver:
+            result = run_send_pass(agent_draft=AgentDraft(active=True))
+
+        deliver.assert_not_called()
+        assert result.stepped == 0
+        assert PendingDraft.objects.count() == 0

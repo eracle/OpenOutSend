@@ -84,23 +84,27 @@ run ends when nobody is left. It is the same run with one verdict inverted: the 
 Prefer it to typing a count you had to look up, since that number is stale by the time you type it.
 The other endings stay failures — no mailbox, and a receiver refusing twice in a row.
 
-**`outsend send --agent-draft` opts the opener step out of `AI_MODEL`**, for a caller that is itself an
-LLM (Claude Code driving the CLI) and would otherwise pay for a second, redundant model call to write
-what it could write itself. The pass stops at the first deal needing an opener and exits non-zero with
-`error: draft_pending: <message>` (`{"error": {"type": "draft_pending", ...}}` under `--json`), carrying
-the deal's own `profile_text`/`company`/`title` — the same fields `AI_MODEL`'s prompt is built from.
-Judge the opener the same way you would judge anything else in the conversation, then re-run with the
-answer:
+**`outsend send --agent-draft` opts the opener and every later sequence step out of `AI_MODEL`**, for a
+caller that is itself an LLM (Claude Code driving the CLI) and would otherwise pay for a second,
+redundant model call to write what it could write itself. The pass stops at the deal whose opener or
+next step has been due longest and exits non-zero with `error: draft_pending: <message>`
+(`{"error": {"type": "draft_pending", ...}}` under `--json`), carrying the deal's own
+`profile_text`/`company`/`title`, the step's file name as `step`, its rendered step file as `prompt` —
+what `AI_MODEL` would have been asked — and, for a later step, the thread's `subject`. Write what the
+prompt asks, then re-run with the answer:
 
 ```bash
 outsend send --agent-draft --subject "Quick one" --body "Saw you're hiring for platform roles..."
+outsend send --agent-draft --body "One more thought on the list..."   # a later step: the thread's subject
 ```
 
 This resumes the same deal — no id to track, since at most one is ever pending — and sends it the
 moment a mailbox is free (an answer already given is kept, not thrown away, if the spacing clock or the
 sending window is holding every box right now). No count yet — it is one pass at a time, like a bare
-`outsend send`. Don't pass `--agent-draft` unless you intend to answer every `draft_pending` it raises;
-without it, `AI_MODEL` writes every opener as before. **`--agent-draft` also drops the model out of
+`outsend send`. A deal stopped or replied to while its draft waited is dropped, not written to.
+Don't pass `--agent-draft` unless you intend to answer every `draft_pending` it raises; without it,
+`AI_MODEL` writes every opener and step as before. Follow-ups still go to `AI_MODEL`, so set
+`OUTSEND_FOLLOW_UPS=off` with it unless a model is configured. **`--agent-draft` also drops the model out of
 `outsend check`'s requirements for that run** — `OUTSEND_AI_MODEL`/`OUTSEND_LLM_API_KEY` are never
 checked or pinged, since a key that will never be spent is not a reason to stop.
 
@@ -219,8 +223,8 @@ This repo ships a **Claude Code plugin**, so you can send without leaving your a
 ```
 
 The skill (`skills/send-mail/SKILL.md`) teaches Claude when `send` is safe to run and when it isn't
-(never unasked — it puts mail in strangers' inboxes), how `--agent-draft` lets it write the opener
-itself instead of spending a second LLM key, and how to read the narration on stderr. Prefer skills to
+(never unasked — it puts mail in strangers' inboxes), how `--agent-draft` lets it write the openers
+and steps itself instead of spending a second LLM key, and how to read the narration on stderr. Prefer skills to
 plugins? Copy `skills/send-mail/` into `~/.claude/skills/` instead.
 
 ## Tests

@@ -16,11 +16,11 @@ class OutsendError(Exception):
 
 
 class DraftPending(OutsendError):
-    """`send --agent-draft` stopped one deal short of the opener call it opted out of.
+    """`send --agent-draft` stopped one deal short of the opener or step call it opted out of.
 
-    Carries the deal's own fields as ``payload`` — the same shape the outreach agent's
-    prompt is built from, so an agent answering isn't missing anything the real
-    `AI_MODEL` path would have seen. ``main()`` renders ``payload`` on its own line
+    Carries the deal's own fields and the rendered step prompt as ``payload`` — what the
+    outreach agent's prompt is built from, so an agent answering isn't missing anything
+    the real `AI_MODEL` path would have seen. ``main()`` renders ``payload`` on its own line
     under ``--json``, alongside the plain ``error: draft_pending: <message>`` either
     way — see the module docstring in ``core/agent_draft.py``.
     """

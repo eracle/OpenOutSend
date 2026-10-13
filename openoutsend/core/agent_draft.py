@@ -20,7 +20,8 @@ class AgentDraft:
 
     @property
     def answered(self) -> bool:
-        return bool(self.subject and self.body)
+        """A body is an answer; an opener also needs the subject (``send_pass._store_answer``)."""
+        return bool(self.body)
 
 
 OFF = AgentDraft()

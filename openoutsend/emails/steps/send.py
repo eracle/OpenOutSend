@@ -128,9 +128,7 @@ def send_in_thread(deal, prompt: str, *, step=None, prompt_line=None) -> DealSta
     *step* is recorded on the send and moves ``deal.step``; a follow-up has none.
     """
     from openoutsend.core.agents.outreach import run_outreach_agent
-    from openoutsend.core.operator import get_active_user
-    from openoutsend.emails.sender import operator_bcc, send_email, suppressed
-    from openoutsend.emails.steps.reply import ends_in_an_opt_out, honour_opt_out, thread_ids
+    from openoutsend.emails.steps.reply import ends_in_an_opt_out, honour_opt_out
 
     decision = run_outreach_agent(deal, prompt)
 
@@ -149,6 +147,27 @@ def send_in_thread(deal, prompt: str, *, step=None, prompt_line=None) -> DealSta
         logger.warning("agent for %s answered %s in thread — sending nothing",
                        deal.lead.public_id, decision.action)
         return None
+    return _send_written_in_thread(deal, decision.message, prompt, step=step,
+                                   prompt_line=prompt_line)
+
+
+def send_drafted_step(deal, step, message: str, prompt: str) -> DealState | None:
+    """Send a later *step* a calling agent wrote, in *deal*'s thread, not `AI_MODEL`.
+
+    The mirror of `send_next_step` with the LLM call removed. *prompt* is the rendered
+    step the agent was handed, recorded on the send as `AI_MODEL`'s would be.
+    """
+    logger.info("%s %s via %s (%s, agent-drafted)", colored("▶ step", "blue", attrs=["bold"]),
+                deal.lead.public_id, deal.mailbox.from_address, step.path.name)
+    return _send_written_in_thread(deal, message, prompt, step=step, prompt_line=None)
+
+
+def _send_written_in_thread(deal, message: str, prompt: str, *, step,
+                            prompt_line) -> DealState | None:
+    """Send *message* in *deal*'s thread under its original subject, and record it."""
+    from openoutsend.core.operator import get_active_user
+    from openoutsend.emails.sender import operator_bcc, send_email, suppressed
+    from openoutsend.emails.steps.reply import thread_ids
 
     # Last gate before the message goes, exactly as the opener has: an opt-out can
     # land in the seconds an LLM call takes, and a bounce may have suppressed the
@@ -165,7 +184,7 @@ def send_in_thread(deal, prompt: str, *, step=None, prompt_line=None) -> DealSta
         # so there is nothing to be replying to. The threading headers are what put
         # it in the same conversation; the subject only has to not lie about it.
         deal.email_subject,
-        decision.message,
+        message,
         bcc=operator_bcc(get_active_user()),
         in_reply_to=chain[-1] if chain else None,
         references=" ".join(chain) or None,

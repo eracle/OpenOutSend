@@ -43,11 +43,13 @@ outsend send [N|all] [--sequence DIR] [--prompt-line ID]
                                  --sequence names a folder of step files. The pipe
                                  enrols into it (cold without it); send sends only it
                                  (every sequence without it, cold among them)
-outsend send --agent-draft [--subject S --body B]
-                                 opt the opener step out of AI_MODEL: stop at the first
-                                 deal needing one (error type draft_pending, carrying
-                                 its profile_text/company/title) instead of calling the
-                                 LLM. Resume with --subject/--body. No count.
+outsend send --agent-draft [--subject S] [--body B]
+                                 opt the opener and later steps out of AI_MODEL: stop
+                                 at the oldest deal owed one (error type draft_pending,
+                                 carrying its profile_text/company/title, the step and
+                                 its rendered prompt) instead of calling the LLM.
+                                 Resume with --subject/--body for an opener, --body
+                                 for a later step. No count.
 outsend check                    verify this environment can send — what you sell and to
                                  whom, a model that answers, who signs the mail, and a
                                  mailbox that accepts its login"""
@@ -91,8 +93,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
                              "omit to draw one at random per send")
     parser.add_argument("--debug", action="store_true", help="log what each step decided")
     parser.add_argument("--agent-draft", action="store_true", dest="agent_draft",
-                        help="opt the opener step out of AI_MODEL for this pass — see "
-                             "USAGE. No count.")
+                        help="opt the opener and later steps out of AI_MODEL for this "
+                             "pass — see USAGE. No count.")
     parser.add_argument("--subject", default=None,
                         help="answer a prior --agent-draft pass's draft_pending.")
     parser.add_argument("--body", default=None,
@@ -109,8 +111,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--agent-draft has no count yet — `outsend send --agent-draft`")
     if (args.subject or args.body) and not args.agent_draft:
         parser.error("--subject/--body need --agent-draft")
-    if bool(args.subject) != bool(args.body):
-        parser.error("--subject and --body are answered together")
+    if args.subject and not args.body:
+        parser.error("--subject needs a --body")
     return args
 
 

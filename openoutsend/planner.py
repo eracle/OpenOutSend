@@ -436,7 +436,7 @@ def free_for_first_email():
     return max(ranked, key=lambda pair: pair[1])[0]
 
 
-def cold_sends_due(now=None, *, sequence: str | None = None, openers: bool = True,
+def cold_sends_due(now=None, *, sequence: str | None = None, agent_drafted: bool = False,
                    reached: set | None = None) -> Iterator[tuple]:
     """``(send, box)`` for each cold send that may go now — oldest due first, of any kind.
 
@@ -453,8 +453,8 @@ def cold_sends_due(now=None, *, sequence: str | None = None, openers: bool = Tru
 
     The box is asked for each send **after** the caller has sent the previous one — a
     send rewrites its box's spacing clock — which is why this is a generator. With
-    ``openers`` off the openers are left out, for a pass whose openers are drafted by a
-    calling agent instead (``send_pass._open_with_agent_draft``).
+    ``agent_drafted`` the openers and later steps are left out, for a pass whose sequence
+    steps are drafted by a calling agent instead (``send_pass._send_agent_draft``).
 
     **At most one message per address per pass.** A lead in two sequences is two deals,
     and both can fall due together; the older goes and the other waits for the next
@@ -463,14 +463,14 @@ def cold_sends_due(now=None, *, sequence: str | None = None, openers: bool = Tru
     has reached.
     """
     reached = set() if reached is None else reached
-    queue = (steps_due(now, sequence) + awaiting_follow_up(now, sequence)
-             + (openers_due(now, sequence) if openers else []))
+    queue = awaiting_follow_up(now, sequence) + (
+        [] if agent_drafted else steps_due(now, sequence) + openers_due(now, sequence))
     pool_open = True
     for send in sorted(queue, key=lambda send: send.due_at):
         if send.deal.lead_id in reached:
             continue
         if send.kind != OPENER:
-            box = _thread_box(send.deal)
+            box = free_thread_box(send.deal)
         elif pool_open:
             # A pass only ever uses up boxes, so a pool with none free stays that way.
             box = free_for_first_email()
@@ -482,7 +482,7 @@ def cold_sends_due(now=None, *, sequence: str | None = None, openers: bool = Tru
             yield send, box
 
 
-def _thread_box(deal):
+def free_thread_box(deal):
     """The box *deal*'s thread lives on, if it may send cold volume right now — else None.
 
     The same gates as ``free_for_first_email``, on the one box the thread allows. The

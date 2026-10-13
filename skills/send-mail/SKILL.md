@@ -91,37 +91,44 @@ inverted, so prefer `all` to typing a count that goes stale as you type it.
 **A lead who never answers gets two more emails, then the pursuit ends** (after three working days,
 then five); a reply at any point ends the sequence and the conversation takes over instead.
 
-## Answering the opener yourself, with no second LLM key
+## Writing the openers and steps yourself, with no second LLM key
 
 If you (the calling agent) are already reasoning about this lead in the conversation,
-`OUTSEND_LLM_API_KEY` is a second, redundant LLM bill for an opener you can write yourself. Add
-`--agent-draft` and the pass stops at the first deal needing one instead of calling `AI_MODEL` — and
-in this mode `check`/`send` never require `OUTSEND_AI_MODEL`/`OUTSEND_LLM_API_KEY` at all:
+`OUTSEND_LLM_API_KEY` is a second, redundant LLM bill for emails you can write yourself. Add
+`--agent-draft` and the pass stops at the deal whose opener or next sequence step has been due
+longest, instead of calling `AI_MODEL` — and in this mode `check`/`send` never require
+`OUTSEND_AI_MODEL`/`OUTSEND_LLM_API_KEY` at all. Follow-ups still go to the model, so pair it with
+`OUTSEND_FOLLOW_UPS=off` when none is configured:
 
 ```bash
-outsend send --agent-draft
+outsend --json send --agent-draft
 ```
 
-It exits non-zero with `draft_pending`, carrying the deal's own fields on the error object under
-`--json` (`{"error": {"type": "draft_pending", "profile_text", "company", "title", "full_name",
-"lead_id"}}`, or on the plain-text line without `--json`). Write the opener the same way you would
-write anything else in this conversation, then re-run the **same command** with your answer attached:
+It exits non-zero with `draft_pending`. Under `--json` the error object on stderr carries the deal's
+own fields and what to write: `{"error": {"type": "draft_pending", "lead_id", "full_name", "title",
+"company", "profile_text", "step", "subject", "prompt"}}` — `prompt` is the step file rendered for
+this deal, exactly what `AI_MODEL` would have been asked, and `subject` is the thread's for a later
+step. Write what the prompt asks, then re-run the **same command** with your answer attached — a
+subject and body for an opener, a body alone for a later step, which goes in the opener's thread
+under its subject:
 
 ```bash
 outsend send --agent-draft --subject "Quick one" --body "Saw you're hiring for platform roles..."
+outsend send --agent-draft --body "One more thought on the list..."
 ```
 
 This resumes exactly that deal — no id to track, since at most one is ever pending — and sends it the
 moment a mailbox is free. **An answer already given is kept, not thrown away**, if the spacing clock
 or the sending window is holding every box right now; a later bare `outsend send --agent-draft` (no
 `--subject`/`--body`) will pick it back up and send it once a box frees up, so you never have to
-re-supply the same text. No count yet — `--agent-draft` is one pass at a time, like a bare `outsend
-send`.
+re-supply the same text. A deal stopped or replied to while its draft waited is dropped, not written
+to. No count yet — `--agent-draft` is one pass at a time, like a bare `outsend send`.
 
 **Don't pass `--agent-draft` unless you intend to answer every `draft_pending` it raises** — a bare
-`outsend send` uses `AI_MODEL` and writes every opener itself, which is the right default for a run
-nobody is driving turn-by-turn. `--subject` and `--body` are answered together; passing one without
-the other, or either without `--agent-draft`, is refused before any mail moves.
+`outsend send` uses `AI_MODEL` and writes every opener and step itself, which is the right default for
+a run nobody is driving turn-by-turn. `--subject` without `--body`, or either without
+`--agent-draft`, is refused before any mail moves; an opener answered without `--subject` is refused
+before it is kept.
 
 ## Reading the output
 
