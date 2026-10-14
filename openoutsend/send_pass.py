@@ -133,7 +133,7 @@ def _answer_replies(result: PassResult) -> set:
     for deal in list(unanswered_replies()):
         reached.add(deal.lead_id)
         try:
-            _apply(deal, answer_reply(deal))
+            _send_in_one_transaction(deal, lambda: answer_reply(deal))
             result.answered += 1
         except Exception:
             logger.exception("reply to %s failed", deal.lead.public_id)
@@ -195,7 +195,8 @@ def _send_cold(result: PassResult, sequence: str | None, reached: set,
     for send, box in cold_sends_due(sequence=sequence, agent_drafted=agent_draft.active,
                                     reached=reached):
         try:
-            _apply(send.deal, _write_and_send(send, box, prompt_line_name))
+            _send_in_one_transaction(
+                send.deal, lambda: _write_and_send(send, box, prompt_line_name))
         except Exception:
             logger.exception("%s to %s failed", send.kind, send.deal.lead.public_id)
             result.failed += 1
@@ -337,11 +338,12 @@ def _send_answer(result: PassResult, pending, send, reached: set) -> bool:
 
     try:
         if opener:
-            _apply(deal, send_drafted_email(deal, box, send.step, pending.subject,
-                                            pending.body, None))
+            _send_in_one_transaction(deal, lambda: send_drafted_email(
+                deal, box, send.step, pending.subject, pending.body, None))
             result.opened += 1
         else:
-            _apply(deal, send_drafted_step(deal, send.step, pending.body, _rendered(send)))
+            _send_in_one_transaction(deal, lambda: send_drafted_step(
+                deal, send.step, pending.body, _rendered(send)))
             result.stepped += 1
     except Exception:
         logger.exception("%s to %s failed", send.kind, deal.lead.public_id)
@@ -373,6 +375,27 @@ def _rendered(send) -> str:
     from openoutsend.emails.steps.send import step_fields
 
     return send.step.render(**step_fields(send.deal, None))
+
+
+def _send_in_one_transaction(deal, write_and_send) -> None:
+    """Run *write_and_send* and save *deal*'s new state, all in one transaction.
+
+    The mail-log row, the transport call and the deal's state and step commit together,
+    after the send, so a pass killed before the commit leaves nothing half-recorded: no
+    row, the deal where it was, and the step due again on the next pass. A refusal rolls
+    the transaction back too, so its row and failure event are written again outside it,
+    because the bounce rate counts refusals.
+    """
+    from django.db import transaction
+
+    from openoutsend.emails.sender import Refused
+
+    try:
+        with transaction.atomic():
+            _apply(deal, write_and_send())
+    except Refused as refused:
+        refused.record_again()
+        raise
 
 
 def _apply(deal, next_state) -> None:

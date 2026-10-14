@@ -6,13 +6,14 @@ and the line it prints when it did nothing.
 """
 from __future__ import annotations
 
+import smtplib
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 from openoutsend.core.sequences import COLD
-from openoutsend.emails.models import Thread
+from openoutsend.emails.models import DeliveryEvent, Message, Thread
 from openoutsend.leads.models import DealState, Outcome
 from openoutsend.send_pass import PassResult, _what_is_holding, run_send_pass
 from openoutsend.tests.emails import maillog
@@ -191,6 +192,50 @@ def test_a_failed_opener_stops_the_openers_for_this_pass(steps):
 
     assert (result.opened, result.failed) == (0, 1)
     assert steps.send.call_count == 1
+
+
+def _sending(box):
+    """An opener step that really writes its row and calls the (patched) transport."""
+    from openoutsend.emails.sender import send_email
+
+    def send(deal, mailbox, step, prompt_line):
+        send_email(box, deal.lead.email, "Hi", "Body")
+        return DealState.EMAILED
+    return send
+
+
+def test_a_send_cut_off_before_its_commit_leaves_no_row_and_the_deal_waiting(steps):
+    """The row, the send and the deal's new state commit together, after the send."""
+    box = maillog.mailbox()
+    deal = _waiting()
+    steps.send.side_effect = _sending(box)
+
+    with _free(box), patch("openoutsend.emails.sender._deliver"), \
+            patch("openoutsend.send_pass._apply", side_effect=RuntimeError("killed")):
+        result = run_send_pass()
+
+    deal.refresh_from_db()
+    assert result.failed == 1
+    assert not Message.objects.exists()
+    assert deal.state == DealState.READY
+
+
+def test_a_refused_send_keeps_its_row_and_failure_through_the_rollback(steps):
+    """The bounce rate counts refusals, and an undeliverable address ends its deal: the
+    rollback must erase neither."""
+    box = maillog.mailbox()
+    deal = _waiting()
+    steps.send.side_effect = _sending(box)
+    refusal = smtplib.SMTPRecipientsRefused({"lead@acme.com": (550, b"5.1.1 no such user")})
+
+    with _free(box), patch("openoutsend.emails.sender._deliver", side_effect=refusal):
+        result = run_send_pass()
+
+    deal.refresh_from_db()
+    row = Message.objects.get()
+    assert result.failed == 1
+    assert row.delivery_events.get().status != DeliveryEvent.Status.ACCEPTED
+    assert deal.state == DealState.COMPLETED
 
 
 def test_no_free_box_means_no_openers(steps):

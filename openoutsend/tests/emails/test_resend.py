@@ -16,7 +16,7 @@ from django.utils import timezone
 from openoutsend.emails import resend, resend_events
 from openoutsend.emails.delivery_policy import Response, classify
 from openoutsend.emails.models import DeliveryEvent, Message, Transport
-from openoutsend.emails.sender import OPT_OUT_LINE, send_email
+from openoutsend.emails.sender import OPT_OUT_LINE, Refused, send_email
 from openoutsend.errors import OutsendError
 from openoutsend.leads.models import DealState, Outcome
 from openoutsend.leads.suppression import is_suppressed
@@ -159,8 +159,9 @@ class TestResendSend:
     def test_a_quota_refusal_is_recorded_and_pauses_the_box(self):
         box = _resend_box()
         refusal = resend.ResendError(429, "daily_quota_exceeded", "over")
-        with patch.object(resend, "send", side_effect=refusal), pytest.raises(resend.ResendError):
+        with patch.object(resend, "send", side_effect=refusal), pytest.raises(Refused) as raised:
             send_email(box, "lead@corp.com", "Ten leads", "Body", unsubscribe_url=UNSUBSCRIBE)
+        assert raised.value.cause is refusal
         assert box.paused_today()
 
     def test_a_mailbox_keeps_its_mailto_opt_out(self):

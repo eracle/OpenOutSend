@@ -5,9 +5,9 @@ A resend box differs in three places only, all in this module: the opt-out is th
 line's ``unsubscribe_url``, the opener names itself in ``References``, and the
 message is posted to the API rather than over SMTP (``core/conf.py``, *Transport*).
 
-No error handling by design: a failed send raises and the EMAIL task is marked
-FAILED by the daemon, then retried on the next cycle. The mailbox is left
-untouched — re-import with fixed credentials to repair a dead box.
+No error handling by design: a refused send is recorded and raised as ``Refused``,
+and the next pass tries the step again. The mailbox is left untouched — re-import
+with fixed credentials to repair a dead box.
 """
 from __future__ import annotations
 
@@ -23,6 +23,22 @@ from openoutsend.errors import OutsendError
 logger = logging.getLogger(__name__)
 
 SMTP_TIMEOUT_SECONDS = 30
+
+
+class Refused(Exception):
+    """A send the transport refused, already recorded, carrying how to record it again.
+
+    The pass sends each email inside one transaction with the deal's new state
+    (``send_pass._send_in_one_transaction``), so a refusal recorded in there rolls back
+    with everything else. ``record_again`` writes the row and its failure event a second
+    time, for the caller whose transaction just discarded the first. ``cause`` is what
+    the transport raised.
+    """
+
+    def __init__(self, cause: Exception, record_again):
+        super().__init__(str(cause))
+        self.cause = cause
+        self.record_again = record_again
 
 
 def send_email(
@@ -54,7 +70,9 @@ def send_email(
     answers is recorded against it: an ``accepted`` event carrying the SMTP queue
     id, or a ``rejected``/``deferred``/``error`` one carrying the refusal. A send
     that is never accepted therefore leaves a row saying so, which is what makes
-    "what is my bounce rate?" arithmetic rather than an opinion.
+    "what is my bounce rate?" arithmetic rather than an opinion. A refusal raises
+    ``Refused``, which can write that row again for a caller whose transaction rolled
+    it back.
 
     ``bcc`` (when set) blind-copies the operator's own address so they keep a
     private record of every send; ``send_message`` strips the Bcc header before
@@ -82,10 +100,23 @@ def send_email(
     without one: with no mailbox to read, a *Reply "stop"* would reach nobody, so the
     link is the opt-out in both the header and the footer (``_opt_out_for``).
     """
+    from openoutsend.emails import resend
+    from openoutsend.emails.delivery_policy import record_failure
+
     email_message = _build_message(
         mailbox, to_address, subject, body, bcc, in_reply_to, references, unsubscribe_url)
-    row = _record_send(mailbox, email_message, body, thread, prompt_line, prompt, step, sequence)
-    _deliver(mailbox, email_message, row)
+
+    def record():
+        return _record_send(mailbox, email_message, body, thread, prompt_line, prompt, step,
+                            sequence)
+
+    row = record()
+    try:
+        _deliver(mailbox, email_message, row)
+    except (smtplib.SMTPException, OSError, resend.ResendError) as exc:
+        record_failure(row, exc)
+        # `exc` is unbound once the except block exits, so the closure takes its own.
+        raise Refused(exc, lambda cause=exc: record_failure(record(), cause)) from exc
     logger.info("email sent from %s to %s: %s [%s]",
                 mailbox.from_address, to_address, subject, email_message["Message-ID"])
     logger.info("%s", _sent_block(subject, body))
@@ -335,26 +366,21 @@ def _headers_of(email_message: EmailMessage) -> bytes:
 def _deliver(mailbox, email_message: EmailMessage, row) -> None:
     """Log into the mailbox over SMTP+STARTTLS and send one message.
 
-    Both answers are recorded against *row*: the ``250`` on the way out — with the
-    receiver's own queue id, which is the handle a provider asks for when a
-    delivery is disputed and which used to be thrown away — and any refusal on the
-    way past, before it is re-raised unchanged. The step still fails and is still
-    retried; what changes is that the receiver's word survives the traceback.
+    The ``250`` is recorded against *row* on the way out, with the receiver's own
+    queue id, which is the handle a provider asks for when a delivery is disputed.
+    A refusal propagates for ``send_email`` to record, so the receiver's word
+    survives the traceback and the step is still retried.
     """
-    from openoutsend.emails.delivery_policy import record_acceptance, record_failure
+    from openoutsend.emails.delivery_policy import record_acceptance
 
     if mailbox.is_resend:
         _deliver_through_resend(mailbox, email_message, row)
         return
-    try:
-        with _SMTP(mailbox.host, mailbox.port, timeout=SMTP_TIMEOUT_SECONDS) as smtp:
-            smtp.starttls()
-            smtp.login(mailbox.username, mailbox.password)
-            smtp.send_message(email_message)
-            record_acceptance(row, *smtp.accepted_response)
-    except (smtplib.SMTPException, OSError) as exc:
-        record_failure(row, exc)
-        raise
+    with _SMTP(mailbox.host, mailbox.port, timeout=SMTP_TIMEOUT_SECONDS) as smtp:
+        smtp.starttls()
+        smtp.login(mailbox.username, mailbox.password)
+        smtp.send_message(email_message)
+        record_acceptance(row, *smtp.accepted_response)
 
 
 # The headers a resend send carries over from the assembled message. Message-ID is not
@@ -370,7 +396,7 @@ def _deliver_through_resend(mailbox, email_message: EmailMessage, row) -> None:
     idempotency key: one row, one email, however many times the call is retried.
     """
     from openoutsend.emails import resend
-    from openoutsend.emails.delivery_policy import record_acceptance, record_failure
+    from openoutsend.emails.delivery_policy import record_acceptance
 
     payload = {
         "from": email_message["From"],
@@ -382,12 +408,8 @@ def _deliver_through_resend(mailbox, email_message: EmailMessage, row) -> None:
     }
     if email_message["Bcc"]:
         payload["bcc"] = [email_message["Bcc"]]
-    try:
-        email_id = resend.send(mailbox.password, payload,
-                               idempotency_key=email_message["Message-ID"])
-    except (resend.ResendError, OSError) as exc:
-        record_failure(row, exc)
-        raise
+    email_id = resend.send(mailbox.password, payload,
+                           idempotency_key=email_message["Message-ID"])
     record_acceptance(row, None, f"OK {email_id}", queue_id=email_id)
 
 
