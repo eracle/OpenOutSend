@@ -5,10 +5,10 @@ asked, and a real last note. Copy the folder, rewrite the prompts for your produ
 your own git.
 
 ```
-E0-1d-thanks-and-one-question.md     the business day after the demo
-E1-3d-the-thing-they-asked-about.md  3 business days after E0
-E2-5d-last-note.md                   5 business days after E1
-leads.jsonl                          one lead, as your export would print it
+E0-1d-thanks-and-one-question.prompt.j2     the business day after the demo
+E1-3d-the-thing-they-asked-about.prompt.j2  3 business days after E0
+E2-5d-last-note.prompt.j2                   5 business days after E1
+leads.jsonl                                 one lead, as your export would print it
 ```
 
 - **`{{ field }}` is filled in from the piped line** before the prompt reaches the model:

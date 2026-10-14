@@ -31,8 +31,8 @@ def _waiting(address="lead@acme.com"):
 def _past_its_opener(tmp_path, box, **kwargs):
     """An EMAILED deal in a two-step sequence whose opener went out long enough ago
     that ``E1`` is due."""
-    (tmp_path / "E0-open.md").write_text("Open to {{ first_name }}.")
-    (tmp_path / "E1-2d-steer.md").write_text("Steer the list for {{ product }}.")
+    (tmp_path / "E0-open.prompt.j2").write_text("Open to {{ first_name }}.")
+    (tmp_path / "E1-2d-steer.prompt.j2").write_text("Steer the list for {{ product }}.")
     thread = Thread.objects.create(mailbox=box)
     deal = DealFactory(
         lead=LeadFactory(email="lead@acme.com", first_name="Ada"),
@@ -157,7 +157,7 @@ class TestALaterStep:
 
         mock_llm.assert_not_called()
         payload = raised.value.payload
-        assert payload["step"] == "E1-2d-steer.md"
+        assert payload["step"] == "E1-2d-steer.prompt.j2"
         assert payload["prompt"] == "Steer the list for portraits."
         assert payload["subject"] == "Which of the ten was wrong?"
         assert PendingDraft.objects.filter(deal=deal).count() == 1

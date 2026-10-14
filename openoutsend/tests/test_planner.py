@@ -120,7 +120,7 @@ def test_unanswered_replies_answers_the_oldest_reply_first():
 
 def _three_steps() -> Sequence:
     return Sequence(name="s", steps=tuple(
-        Step(number=n, days=days, name=f"e{n}", path=Path(f"E{n}.md"), source="")
+        Step(number=n, days=days, name=f"e{n}", path=Path(f"E{n}-e{n}.prompt.j2"), source="")
         for n, days in enumerate((2, 3, 5))
     ))
 

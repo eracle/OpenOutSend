@@ -368,7 +368,7 @@ class TestSendFirstEmail:
         send, _ = self._run(deal, box)
 
         kwargs = send.call_args.kwargs
-        assert (kwargs["step"].number, kwargs["step"].path.name) == (0, "E0-opener.md")
+        assert (kwargs["step"].number, kwargs["step"].path.name) == (0, "E0-opener.prompt.j2")
         assert "Write a first email to this lead." in kwargs["prompt"]
         deal.refresh_from_db()
         assert deal.step == 0

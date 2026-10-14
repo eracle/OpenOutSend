@@ -277,11 +277,13 @@ def _send_agent_draft(result: PassResult, agent_draft: AgentDraft, sequence: str
 
 
 def _hand_back_oldest_due(sequence: str | None) -> None:
-    """Remember the oldest-due opener or step, and raise it to the calling agent."""
+    """Remember the oldest-due opener or step written from a prompt, and raise it to the
+    calling agent. An email step is not one: it is already written, and goes with the pass."""
     from openoutsend.leads.models import PendingDraft
     from openoutsend.planner import openers_due, steps_due
 
-    due = sorted(steps_due(sequence=sequence) + openers_due(sequence=sequence),
+    due = sorted((send for send in steps_due(sequence=sequence) + openers_due(sequence=sequence)
+                  if not send.step.is_email),
                  key=lambda send: send.due_at)
     if not due:
         return

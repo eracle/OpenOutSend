@@ -7,7 +7,7 @@ message being written. What changes between an opener, a follow-up and a reply i
 that last prompt, and each lives with the step that sends it:
 
 - **a sequence step** — a step file (``core/sequences.py``); cold's opener is
-  ``sequences/cold/E0-opener.md``. ``emails/steps/send.py`` sends it.
+  ``sequences/cold/E0-opener.prompt.j2``. ``emails/steps/send.py`` sends it.
 - **a follow-up** — ``emails/steps/follow_up.FOLLOW_UP_PROMPT``: ``send_message`` in the
   same thread, or ``mark_completed`` if the record says this person is plainly the
   wrong fit.

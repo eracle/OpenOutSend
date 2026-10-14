@@ -115,7 +115,7 @@ the same either way, and nothing here is state a lost process would strand.
 
 **Every email is written from the whole history with that person.** The model reads every earlier
 prompt, every email sent, every reply and how long each silence lasted, verbatim, and then the prompt
-for the email at hand. The first email's prompt is a file, `openoutsend/sequences/cold/E0-opener.md`;
+for the email at hand. The first email's prompt is a file, `openoutsend/sequences/cold/E0-opener.prompt.j2`;
 a copy of the `cold/` folder at `~/.openoutsend/sequences/cold/` replaces it whole.
 
 **A lead who never answers gets two more emails, then the pursuit ends** — after three working days,
@@ -127,14 +127,14 @@ is not cold volume and holding the answer until Monday is worse than sending it 
 
 ### Sequences
 
-Cold outreach is one sequence, built in. Any other is a folder of prompt files, one per email, kept
+Cold outreach is one sequence, built in. Any other is a folder of step files, one per email, kept
 wherever its owner keeps it and named on the command line:
 
 ```
 after-a-demo/
-  E0-1d-thanks-and-one-question.md
-  E1-3d-the-thing-they-asked-about.md
-  E2-5d-last-note.md
+  E0-1d-thanks-and-one-question.prompt.j2
+  E1-3d-the-thing-they-asked-about.prompt.j2
+  E2-5d-last-note.prompt.j2
 ```
 
 ```bash
@@ -143,13 +143,18 @@ outsend send                                            # mail what is due, in e
 outsend send --sequence after-a-demo                    # or in this one alone
 ```
 
-- **The filename is the schedule**: `E<number>[-<days>d]-<name>.md`. `E0` goes its days after the
-  lead's `start_at` (the ingest time when the line has none); every later step goes its days after the
-  previous step, in business days, on the same thread and box. A bad name, a duplicate or missing
+- **The filename is the schedule**: `E<number>[-<days>d]-<name>.<kind>.j2`. `E0` goes its days after
+  the lead's `start_at` (the ingest time when the line has none); every later step goes its days after
+  the previous step, in business days, on the same thread and box. A bad name, a duplicate or missing
   number, a `0d` after `E0` or a Jinja syntax error fails the command that named the folder.
-- **The body is the prompt**, rendered by Jinja with every key of the piped line that is not a lead
-  column: `{{ first_name }}`, `{{ booking_url }}`, whatever the export carries. A field the line lacks
-  is an error for that lead, never a blank.
+- **The kind says whether a model writes it.** A `.prompt.j2` is instructions: the model reads it with
+  the whole history and writes the email. An `.email.j2` is the email itself, sent as written with no
+  model call — for a step with nothing about the reader to write from. An email that opens the thread
+  starts with `Subject: …` and a blank line; a later one goes under the opener's subject and has none.
+  One sequence can mix both, and `--agent-draft` never hands back an email step, because it is written.
+- **The body is rendered by Jinja** with every key of the piped line that is not a lead column:
+  `{{ first_name }}`, `{{ booking_url }}`, whatever the export carries. A field the line lacks is an
+  error for that lead, never a blank.
 - **One deal per lead per sequence.** The same `lead_id` piped into cold and into an event sequence is
   two deals. Re-piping into the same sequence is a correction, latest wins key by key, and a line with
   `"stop": true` takes the lead out of every remaining send.

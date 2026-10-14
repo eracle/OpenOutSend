@@ -27,9 +27,10 @@ LEAD = {"lead_id": "req-412", "email": "asha@example.com", "first_name": "Asha",
         "product": "payroll audits"}
 
 STEPS = {
-    "E0-2d-which-was-wrong.md": "Ask {{ first_name }} which lead was wrong. They sell {{ product }}.",
-    "E1-3d-steer-the-list.md": "Offer to steer the list for {{ product }}.",
-    "E2-5d-last-one.md": "Last note to {{ first_name }}.",
+    "E0-2d-which-was-wrong.prompt.j2":
+        "Ask {{ first_name }} which lead was wrong. They sell {{ product }}.",
+    "E1-3d-steer-the-list.prompt.j2": "Offer to steer the list for {{ product }}.",
+    "E2-5d-last-one.prompt.j2": "Last note to {{ first_name }}.",
 }
 
 pytestmark = pytest.mark.django_db
@@ -303,3 +304,49 @@ def test_the_example_stops_when_the_line_is_piped_with_stop(site_config, monkeyp
         run_send_pass(sequence=after_a_demo)
 
     assert model.call_count == 1
+
+
+# ── Email steps: sent as written ──────────────────────────────────
+
+
+EMAILS = {
+    "E0-ten-free.email.j2": "{# R1 #}\nSubject: Ten leads, free\n\nHi,\n\nTen free, {{ product }}.",
+    "E1-4d-what-it-looks-like.email.j2": "Hi again,\n\nHere is one for {{ product }}.",
+}
+
+
+@pytest.fixture
+def emails(tmp_path):
+    """A two-step folder of email steps, under the key `--sequence` gives it."""
+    folder = tmp_path / "relaunch"
+    folder.mkdir()
+    for name, body in EMAILS.items():
+        (folder / name).write_text(body, encoding="utf-8")
+    return key(str(folder))
+
+
+def test_email_steps_go_as_written_with_no_model_call(written, emails):
+    _enrol(emails)
+
+    for _ in range(2):
+        _two_weeks_pass()
+        run_send_pass(sequence=emails)
+
+    assert written == []
+    sends = _deal().thread.messages.filter(direction=Direction.OUTBOUND).order_by("sent_at")
+    assert list(sends.values_list("subject", flat=True)) == ["Ten leads, free"] * 2
+    assert sends[0].body_text == "Hi,\n\nTen free, payroll audits."
+    assert sends[1].body_text == "Hi again,\n\nHere is one for payroll audits."
+    assert set(sends.values_list("prompt", flat=True)) == {""}
+
+
+def test_an_agent_drafting_pass_sends_email_steps_instead_of_handing_them_back(written,
+                                                                               emails):
+    from openoutsend.core.agent_draft import AgentDraft
+
+    _enrol(emails)
+    _two_weeks_pass()
+    run_send_pass(sequence=emails, agent_draft=AgentDraft(active=True))
+
+    assert written == []
+    assert _deal().step == 0

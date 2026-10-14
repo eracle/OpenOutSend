@@ -453,8 +453,9 @@ def cold_sends_due(now=None, *, sequence: str | None = None, agent_drafted: bool
 
     The box is asked for each send **after** the caller has sent the previous one — a
     send rewrites its box's spacing clock — which is why this is a generator. With
-    ``agent_drafted`` the openers and later steps are left out, for a pass whose sequence
-    steps are drafted by a calling agent instead (``send_pass._send_agent_draft``).
+    ``agent_drafted`` the openers and later steps written from a prompt are left out, for
+    a pass whose sequence steps are drafted by a calling agent instead
+    (``send_pass._send_agent_draft``). An email step has nothing to draft and stays in.
 
     **At most one message per address per pass.** A lead in two sequences is two deals,
     and both can fall due together; the older goes and the other waits for the next
@@ -463,8 +464,10 @@ def cold_sends_due(now=None, *, sequence: str | None = None, agent_drafted: bool
     has reached.
     """
     reached = set() if reached is None else reached
-    queue = awaiting_follow_up(now, sequence) + (
-        [] if agent_drafted else steps_due(now, sequence) + openers_due(now, sequence))
+    sequenced = steps_due(now, sequence) + openers_due(now, sequence)
+    if agent_drafted:
+        sequenced = [send for send in sequenced if send.step.is_email]
+    queue = awaiting_follow_up(now, sequence) + sequenced
     pool_open = True
     for send in sorted(queue, key=lambda send: send.due_at):
         if send.deal.lead_id in reached:

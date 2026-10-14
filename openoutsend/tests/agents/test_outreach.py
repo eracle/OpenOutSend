@@ -127,7 +127,7 @@ class TestValidateOpener:
 
 
 class TestTheColdOpener:
-    """``sequences/cold/E0-opener.md`` is today's first-touch prompt, now a step file."""
+    """``sequences/cold/E0-opener.prompt.j2`` is today's first-touch prompt, now a step file."""
 
     def _render(self, deal, prompt_line):
         from openoutsend.core.sequences import cold

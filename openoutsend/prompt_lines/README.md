@@ -2,7 +2,7 @@
 
 A **prompt line** is a piece of prompt describing the move the first email makes. It
 drops into a step file wherever that step writes `{{ prompt_line }}` — cold's opener,
-`sequences/cold/E0-opener.md`, does; everything else about the message — who you are,
+`sequences/cold/E0-opener.prompt.j2`, does; everything else about the message — who you are,
 the product, the Mom Test discipline, the hard rules — is the same whichever line is
 chosen.
 
@@ -31,7 +31,7 @@ overridden without editing an installed package and without losing the edit on u
 
 **Out:** anything the step already says — the recipient's language, the word ceiling,
 no links, no meeting request, no signature, sourced claims only. Those live in the step
-file (`sequences/cold/E0-opener.md`, under *Rules this email cannot break*, which
+file (`sequences/cold/E0-opener.prompt.j2`, under *Rules this email cannot break*, which
 override the move) precisely so that a dozen files do not have to remember them, and so
 no line can drop one by being edited carelessly.
 

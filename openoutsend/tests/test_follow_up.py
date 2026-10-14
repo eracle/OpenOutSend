@@ -63,8 +63,8 @@ def _pursued(*, touches=1, days_ago=10, replied=False, box=None, sequence="cold"
 
 def _two_steps(tmp_path, days: int) -> str:
     """A sequence folder whose E1 is due *days* business days after E0."""
-    (tmp_path / "E0-first.md").write_text("Say hello.")
-    (tmp_path / f"E1-{days}d-second.md").write_text("Say hello again.")
+    (tmp_path / "E0-first.prompt.j2").write_text("Say hello.")
+    (tmp_path / f"E1-{days}d-second.prompt.j2").write_text("Say hello again.")
     return str(tmp_path)
 
 

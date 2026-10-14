@@ -34,11 +34,12 @@ def send_first_email(deal, mailbox, step, prompt_line) -> DealState | None:
     """Open the conversation with *deal* from *mailbox* with *step*. Returns the next state.
 
     *step* is the deal's opening step (``planner.opening_step``) — ``E0`` unless it was
-    past its grace when the lead arrived; for cold, ``E0-opener.md``. The caller has
+    past its grace when the lead arrived; for cold, ``E0-opener.prompt.j2``. The caller has
     already established that this box may send right now (``planner.free_for_first_email``).
-    Returns ``None`` without sending if the lead was suppressed while the agent was
-    writing — an unsubscribe can land in the seconds an LLM call takes, and this is the
-    last gate before the message goes.
+    A prompt step is written by the model; an email step is rendered and sent as written,
+    with no model call and no prompt recorded. Returns ``None`` without sending if the lead
+    was suppressed while the agent was writing — an unsubscribe can land in the seconds an
+    LLM call takes, and this is the last gate before the message goes.
 
     ``prompt_line`` is the move this opener makes (``core/prompt_lines.py``), and it is
     required — an opener that reaches the log unattributed is a hole nothing can fill
@@ -60,15 +61,20 @@ def send_first_email(deal, mailbox, step, prompt_line) -> DealState | None:
                 deal.lead.public_id, mailbox.from_address, step.path.name,
                 prompt_line.id if prompt_line else "no prompt line")
 
-    materialize_profile_summary_if_missing(deal.lead)
-    prompt = step.render(**step_fields(deal, prompt_line))
-    opener = run_outreach_agent(deal, prompt, opener=True)
+    if step.is_email:
+        subject, message = step.opening(**step_fields(deal, None))
+        prompt = ""
+    else:
+        materialize_profile_summary_if_missing(deal.lead)
+        prompt = step.render(**step_fields(deal, prompt_line))
+        opener = run_outreach_agent(deal, prompt, opener=True)
+        subject, message = opener.subject, opener.message
 
     if suppressed(deal.lead):
         logger.warning("%s was suppressed mid-run — not sending", deal.lead.public_id)
         return None
 
-    return _finish_send(deal, mailbox, opener.subject, opener.message, prompt_line,
+    return _finish_send(deal, mailbox, subject, message, prompt_line,
                         prompt=prompt, step=step)
 
 
@@ -102,8 +108,9 @@ def send_next_step(deal, step, prompt_line) -> DealState | None:
 
     The planner has established the step is due and the thread's box may send
     (``planner.cold_sends_due``). Same thread and no new subject: the reader sees one
-    conversation, and the step's prompt says what this email is for. ``prompt_line``
-    follows ``send_first_email``'s rule and is dropped by a step that does not name it.
+    conversation, and the step's prompt says what this email is for, or, for an email
+    step, is the email. ``prompt_line`` follows ``send_first_email``'s rule and is
+    dropped by a step that does not name it.
     """
     from openoutsend.leads.summaries import materialize_profile_summary_if_missing
 
@@ -111,6 +118,10 @@ def send_next_step(deal, step, prompt_line) -> DealState | None:
         prompt_line = None
     logger.info("%s %s via %s (%s)", colored("▶ step", "blue", attrs=["bold"]),
                 deal.lead.public_id, deal.mailbox.from_address, step.path.name)
+
+    if step.is_email:
+        _, message = step.written(**step_fields(deal, None))
+        return _send_written_in_thread(deal, message, "", step=step, prompt_line=None)
 
     materialize_profile_summary_if_missing(deal.lead)
     prompt = step.render(**step_fields(deal, prompt_line))

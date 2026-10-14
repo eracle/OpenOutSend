@@ -103,7 +103,7 @@ def test_check_takes_no_sequence():
 
 
 def test_send_passes_the_sequence_folder_as_its_key(connected, tmp_path):
-    (tmp_path / "E0-hello.md").write_text("Say hello.")
+    (tmp_path / "E0-hello.prompt.j2").write_text("Say hello.")
     with patch("openoutsend.send_pass.run_send_pass", return_value=PassResult()) as run:
         _send(_args(sequence=str(tmp_path)))
 
@@ -124,7 +124,7 @@ def test_the_pipe_enrols_into_the_named_sequence(db, tmp_path, monkeypatch):
     from openoutsend.__main__ import _ingest
     from openoutsend.leads.models import Deal
 
-    (tmp_path / "E0-hello.md").write_text("Say hello.")
+    (tmp_path / "E0-hello.prompt.j2").write_text("Say hello.")
     monkeypatch.setattr("sys.stdin", io.StringIO('{"lead_id": "a", "email": "a@b.com"}\n'))
 
     assert _ingest(_args(command=None, sequence=str(tmp_path))) == 0
