@@ -39,6 +39,49 @@ def database_path() -> Path:
     return Path(override).expanduser() if override else state_dir() / "data" / "db.sqlite3"
 
 
+def database() -> dict:
+    """The store, as Django's ``DATABASES["default"]``.
+
+    The SQLite file by default. ``OUTSEND_DATABASE_URL`` (``postgres://user:pass@host:5432/name``,
+    query parameters passed on as connection options, e.g. ``?sslmode=require``) puts it
+    in Postgres instead — for an install whose mail history must outlive the machine it
+    runs on. Postgres needs the ``postgres`` extra: ``openoutsend[postgres]``.
+    """
+    url = os.environ.get("OUTSEND_DATABASE_URL", "").strip()
+    if url:
+        return postgres_database(url)
+    path = database_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": str(path),
+        # WAL, so `outsend` can read while a send pass writes.
+        "OPTIONS": {"init_command": "PRAGMA journal_mode=WAL;"},
+    }
+
+
+def postgres_database(url: str) -> dict:
+    """``DATABASES["default"]`` for a ``postgres://`` URL. Raises ``ImproperlyConfigured``."""
+    from urllib.parse import parse_qsl, unquote, urlsplit
+
+    from django.core.exceptions import ImproperlyConfigured
+
+    parts = urlsplit(url)
+    name = unquote(parts.path.lstrip("/"))
+    if parts.scheme not in {"postgres", "postgresql"} or not parts.hostname or not name:
+        raise ImproperlyConfigured(
+            "OUTSEND_DATABASE_URL must be postgres://user:password@host[:port]/database")
+    return {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": name,
+        "USER": unquote(parts.username or ""),
+        "PASSWORD": unquote(parts.password or ""),
+        "HOST": parts.hostname,
+        "PORT": str(parts.port or ""),
+        "OPTIONS": dict(parse_qsl(parts.query)),
+    }
+
+
 def app_settings() -> dict:
     """The settings names `openoutsend`'s apps read, for a host to splat into its module."""
     return {

@@ -25,8 +25,6 @@ import os
 
 from openoutsend import defaults
 
-_DB_PATH = defaults.database_path()
-_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 # There is no web surface: no sessions, no cookies, no password resets, nothing
 # signed. The key exists because Django insists on one, and naming that in the value
@@ -40,14 +38,7 @@ INSTALLED_APPS = [
     *defaults.APPS,
 ]
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": str(_DB_PATH),
-        # WAL, so `outsend` can read while a send pass writes.
-        "OPTIONS": {"init_command": "PRAGMA journal_mode=WAL;"},
-    },
-}
+DATABASES = {"default": defaults.database()}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

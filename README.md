@@ -57,8 +57,9 @@ It reads JSON Lines on stdin, upserts on `lead_id` within the sequence (cold, un
 names another; see *Sequences* below), checks every address against the
 suppression list at the door, skips and counts a malformed line, prints the counts to **stderr**,
 and exits 0 when every line became a row. Its database is
-`~/.openoutsend/data/db.sqlite3` (`OUTSEND_HOME` / `OUTSEND_DB` override it) and it migrates itself on
-first run, so a fresh install is an ingest that works rather than a traceback.
+`~/.openoutsend/data/db.sqlite3` (`OUTSEND_HOME` / `OUTSEND_DB` override it, and
+`OUTSEND_DATABASE_URL` puts it in Postgres) and it migrates itself on first run, so a fresh install
+is an ingest that works rather than a traceback.
 
 **`outsend send` is one pass**: it reads the mail, answers every thread the lead has replied in, writes
 again to the ones who went quiet, opens as many first emails as the guards allow *right now*, and
@@ -288,6 +289,7 @@ The environment is the operator seam — the only way in a timer has:
 | `OUTSEND_RESEND_API_KEY` | a resend install's **full-access** key, in place of `OUTSEND_MAILBOX_PASSWORD` |
 | `OUTSEND_DAILY_CAP` | a resend install's first contacts per day; 50 by default |
 | `OUTSEND_HOME` / `OUTSEND_DB` | where the store lives |
+| `OUTSEND_DATABASE_URL` | `postgres://user:pass@host:5432/name` puts the store in Postgres instead of the SQLite file; install `openoutsend[postgres]` |
 
 **These are read on every run, and none of them is remembered.** Remembering what
 somebody typed is a convenience for somebody who types; this program is an agent's, and

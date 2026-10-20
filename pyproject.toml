@@ -64,6 +64,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The store in Postgres rather than the SQLite file (`OUTSEND_DATABASE_URL`). The same
+# spec the hub runs, so an install beside it resolves to one driver.
+postgres = [
+    "psycopg[binary]==3.3.3",
+]
 dev = [
     "pytest>=8",
     "pytest-django>=4.8",
