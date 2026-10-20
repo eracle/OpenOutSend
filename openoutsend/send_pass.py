@@ -331,7 +331,7 @@ def _send_answer(result: PassResult, pending, send, reached: set) -> bool:
 
     deal = pending.deal
     opener = send.kind == OPENER
-    box = free_for_first_email() if opener else free_thread_box(deal)
+    box = free_for_first_email(deal.sequence) if opener else free_thread_box(deal)
     if box is None or deal.lead_id in reached:
         # Answered, but no box is free right now, or this lead was already written
         # to this pass — the same "nothing to do this pass" every other step reports
@@ -430,7 +430,7 @@ def _what_is_holding(sequence: str | None) -> str:
 
     if not Mailbox.objects.exists():
         return f"{counts} · no mailbox connected, so nothing can be sent — run `outsend check`"
-    headroom = Mailbox.objects.remaining_today()
+    headroom = Mailbox.objects.remaining_today(sequence)
     if not headroom:
         return f"{counts} · no send headroom left today, so no first emails"
     if not within_sending_window():

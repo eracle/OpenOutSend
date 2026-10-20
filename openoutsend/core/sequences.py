@@ -34,6 +34,9 @@ alone, so a folder can carry its own notes and fixtures.
 **Cold outreach is the built-in sequence**, shipped as ``openoutsend/sequences/cold/``.
 An operator changes it the way they override a prompt line: a copy at
 ``state_dir()/sequences/cold/`` wins over the shipped folder, whole.
+
+**A deal knows its sequence by the folder's name**, not where the folder sits (``key``).
+A run finds the folder from ``--sequence``, or under ``state_dir()/sequences/``.
 """
 from __future__ import annotations
 
@@ -67,6 +70,9 @@ SUBJECT = re.compile(r"^Subject:[ \t]*(?P<subject>\S.*?)[ \t]*\n[ \t]*\n(?P<body
 LEADING_COMMENTS = re.compile(r"^\s*(?:\{#.*?#\}\s*)*", re.DOTALL)
 
 _ENV = jinja2.Environment(undefined=jinja2.StrictUndefined, autoescape=False)
+
+# The folders this process was handed with ``--sequence``, by the name a deal records.
+_FOLDERS: dict[str, Path] = {}
 
 
 class SequenceError(OutsendError):
@@ -181,22 +187,44 @@ def cold() -> Sequence:
 def key(folder: str | None) -> str:
     """The name a deal records for the sequence in *folder* — ``cold`` when none is given.
 
-    An absolute path, because ``for_deal`` loads it again on a later run from wherever
-    that run was started. The folder is loaded here, so a bad one fails the command that
+    The folder's own name, never its path: a path is where this run found the folder,
+    and the same sequence run from a moved checkout or a rebuilt image would otherwise
+    be a new sequence, enrolling every lead in it again. The folder is remembered for
+    this process (``for_deal``), and loaded here, so a bad one fails the command that
     named it, before a line is ingested or a mail sent.
     """
     if folder is None:
         return COLD
     path = Path(folder).expanduser().resolve()
-    load(path, str(path))
-    return str(path)
+    name = path.name
+    if name == COLD:
+        raise SequenceError(f"{path}: a sequence folder cannot be named {COLD!r}, "
+                            f"the built-in sequence's name — copy it to "
+                            f"{operator_dir() / COLD} to change the built-in one")
+    known = _FOLDERS.get(name)
+    if known is not None and known != path:
+        raise SequenceError(f"{path}: this run already named {known}, and a deal knows "
+                            f"its sequence by the folder's name, {name!r}")
+    load(path, name)
+    _FOLDERS[name] = path
+    return name
 
 
 def for_deal(deal) -> Sequence:
-    """The sequence *deal* is enrolled in."""
-    if deal.sequence == COLD:
+    """The sequence *deal* is enrolled in, found by its name.
+
+    The folder this run named with ``--sequence`` first, then the operator's own
+    folder of that name (``operator_dir``), so a pass over every sequence finds the
+    ones kept there without being told.
+    """
+    name = deal.sequence
+    if name == COLD:
         return cold()
-    return load(Path(deal.sequence), deal.sequence)
+    folder = _FOLDERS.get(name, operator_dir() / name)
+    if not folder.is_dir():
+        raise SequenceError(f"sequence {name!r}: no folder of that name in {operator_dir()} "
+                            f"— name it with --sequence")
+    return load(folder, name)
 
 
 def operator_dir() -> Path:

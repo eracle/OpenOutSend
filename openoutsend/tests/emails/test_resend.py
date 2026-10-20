@@ -15,7 +15,7 @@ from django.utils import timezone
 
 from openoutsend.emails import resend, resend_events
 from openoutsend.emails.delivery_policy import Response, classify
-from openoutsend.emails.models import DeliveryEvent, Message, Transport
+from openoutsend.emails.models import DeliveryEvent, Message, Thread, Transport
 from openoutsend.emails.sender import OPT_OUT_LINE, Refused, send_email
 from openoutsend.errors import OutsendError
 from openoutsend.leads.models import DealState, Outcome
@@ -206,6 +206,55 @@ class TestCapacity:
     def test_a_mailbox_keeps_its_measured_one(self, monkeypatch):
         monkeypatch.setenv("OUTSEND_DAILY_CAP", "12")
         assert maillog.mailbox("s@corp.com", daily_limit=7).capacity() == 7
+
+
+def _first_contact(box, sequence):
+    """One person first contacted today from *box*, in *sequence* — what the ledger counts."""
+    deal = DealFactory(sequence=sequence, state=DealState.EMAILED, mailbox=box,
+                       thread=Thread.objects.create(mailbox=box))
+    maillog.outbound(box, thread=deal.thread, to=deal.lead.email, sent_at=timezone.now())
+
+
+@pytest.mark.django_db
+class TestCapPerSequence:
+    """Two sequences on one resend box each spend their own declared budget."""
+
+    def test_a_sequence_counts_its_own_first_contacts(self, monkeypatch):
+        monkeypatch.setenv("OUTSEND_DAILY_CAP", "3")
+        box = _resend_box()
+        _first_contact(box, "relaunch")
+        _first_contact(box, "relaunch")
+        _first_contact(box, "sample-to-order")
+
+        assert box.headroom_today("relaunch") == 1
+        assert box.headroom_today("sample-to-order") == 2
+
+    def test_unscoped_it_counts_the_whole_box(self, monkeypatch):
+        monkeypatch.setenv("OUTSEND_DAILY_CAP", "3")
+        box = _resend_box()
+        _first_contact(box, "relaunch")
+        _first_contact(box, "sample-to-order")
+
+        assert box.headroom_today() == 1
+
+    def test_a_mailbox_spends_one_budget_whatever_the_sequence(self):
+        """A mailbox's cap is the reputation it measured, which every sequence spends."""
+        box = maillog.mailbox("s@corp.com", daily_limit=3)
+        _first_contact(box, "relaunch")
+        _first_contact(box, "relaunch")
+
+        assert box.headroom_today("sample-to-order") == 1
+
+    def test_one_sequence_out_of_budget_leaves_the_box_to_another(self, monkeypatch):
+        from openoutsend.planner import free_for_first_email
+
+        monkeypatch.setenv("OUTSEND_DAILY_CAP", "1")
+        box = _resend_box()
+        _first_contact(box, "relaunch")
+
+        with patch("openoutsend.core.sending_window.within_sending_window", return_value=True):
+            assert free_for_first_email("relaunch") is None
+            assert free_for_first_email("sample-to-order") == box
 
 
 @pytest.mark.django_db

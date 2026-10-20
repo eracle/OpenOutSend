@@ -25,7 +25,7 @@ send_first_email(deal, box,       send_next_step(deal,           send_follow_up(
   the mail log, classify reads the stored bytes, project acts on the reading.
 ```
 
-`send_pass.py` answers replies first, then sends openers, later steps and follow-ups as one queue, oldest due first (`planner.cold_sends_due`), so no kind can starve another. A reply is exempt from the daily cap, the spacing and the sending window. Every step and follow-up shares one budget.
+`send_pass.py` answers replies first, then sends openers, later steps and follow-ups as one queue, oldest due first (`planner.cold_sends_due`), so no kind can starve another. A reply is exempt from the daily cap, the spacing and the sending window. Every step and follow-up shares one budget, except that a Resend box's daily cap is spent per sequence.
 
 ## The three prompts
 

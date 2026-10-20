@@ -1,6 +1,7 @@
 """Sequences — a folder of step files, checked when it loads, rendered strictly."""
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -158,11 +159,39 @@ class TestKey:
     def test_no_folder_is_cold(self):
         assert sequences.key(None) == sequences.COLD
 
-    def test_a_folder_is_its_absolute_path(self, tmp_path, monkeypatch):
+    def test_a_folder_is_its_name_wherever_it_sits(self, tmp_path, monkeypatch):
         _folder(tmp_path, **{"E0-a.prompt.j2": "x"})
         monkeypatch.chdir(tmp_path.parent)
 
-        assert sequences.key(tmp_path.name) == str(tmp_path.resolve())
+        assert sequences.key(tmp_path.name) == tmp_path.name
+
+    def test_the_same_sequence_moved_keeps_its_name(self, tmp_path):
+        """A rebuilt image puts the folder elsewhere; its deals must still be its deals."""
+        old, new = tmp_path / "old" / "relaunch", tmp_path / "new" / "relaunch"
+        for folder in (old, new):
+            folder.mkdir(parents=True)
+            _folder(folder, **{"E0-a.prompt.j2": "x"})
+
+        before = sequences.key(str(old))
+        sequences._FOLDERS.clear()  # the next run, in a fresh process
+
+        assert sequences.key(str(new)) == before == "relaunch"
+
+    def test_two_folders_under_one_name_in_one_run_are_refused(self, tmp_path):
+        for parent in ("a", "b"):
+            (tmp_path / parent / "relaunch").mkdir(parents=True)
+            _folder(tmp_path / parent / "relaunch", **{"E0-a.prompt.j2": "x"})
+        sequences.key(str(tmp_path / "a" / "relaunch"))
+
+        with pytest.raises(SequenceError, match="already named"):
+            sequences.key(str(tmp_path / "b" / "relaunch"))
+
+    def test_a_folder_named_cold_is_refused(self, tmp_path):
+        (tmp_path / "cold").mkdir()
+        _folder(tmp_path / "cold", **{"E0-a.prompt.j2": "x"})
+
+        with pytest.raises(SequenceError, match="built-in"):
+            sequences.key(str(tmp_path / "cold"))
 
     def test_a_bad_folder_fails_when_it_is_named(self, tmp_path):
         _folder(tmp_path, **{"E0-a.prompt.j2": "x", "E2-1d-b.prompt.j2": "y"})
@@ -173,3 +202,27 @@ class TestKey:
     def test_a_missing_folder_fails_when_it_is_named(self, tmp_path):
         with pytest.raises(SequenceError, match="no such sequence folder"):
             sequences.key(str(tmp_path / "nope"))
+
+
+class TestForDeal:
+    """A deal's name back to its folder, on a later run."""
+
+    def test_the_folder_this_run_named_wins(self, tmp_path):
+        folder = _folder(tmp_path, **{"E0-a.prompt.j2": "x"})
+        name = sequences.key(str(folder))
+
+        assert sequences.for_deal(SimpleNamespace(sequence=name)).first.name == "a"
+
+    def test_an_unnamed_run_finds_it_in_the_operator_folder(self, tmp_path):
+        (tmp_path / "relaunch").mkdir()
+        _folder(tmp_path / "relaunch", **{"E0-kept.prompt.j2": "x"})
+
+        with patch.object(sequences, "operator_dir", return_value=tmp_path):
+            sequence = sequences.for_deal(SimpleNamespace(sequence="relaunch"))
+
+        assert sequence.first.name == "kept"
+
+    def test_a_name_with_no_folder_says_to_name_it(self, tmp_path):
+        with patch.object(sequences, "operator_dir", return_value=tmp_path), \
+                pytest.raises(SequenceError, match="--sequence"):
+            sequences.for_deal(SimpleNamespace(sequence="relaunch"))

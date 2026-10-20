@@ -32,6 +32,21 @@ def never_ping_a_real_provider():
 
 
 @pytest.fixture(autouse=True)
+def forget_sequence_folders():
+    """Each test is its own run, so it starts knowing no `--sequence` folder.
+
+    The folders a process was handed are kept by name (`core/sequences.key`), and two
+    tests each building a `tmp_path / "relaunch"` would otherwise be one run naming two
+    folders under one name.
+    """
+    from openoutsend.core import sequences
+
+    sequences._FOLDERS.clear()
+    yield
+    sequences._FOLDERS.clear()
+
+
+@pytest.fixture(autouse=True)
 def never_open_a_real_mailbox():
     """Every pass measures the pool's warm capacity, and measuring means an IMAP login.
 

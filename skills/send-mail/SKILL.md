@@ -80,7 +80,8 @@ A pass, in order: read the mailbox (an opt-out overnight suppresses someone befo
 written to them), answer every thread the lead replied in, then send as many openers, later steps and
 follow-ups as the guards allow *right now* — one queue, oldest due first, so a backlog of threads can
 never hold new leads at zero. Replies ignore the daily cap, the spacing clock and the sending window;
-**every step and follow-up is cold volume**, and they share one capped, spaced budget per box.
+**every step and follow-up is cold volume**, and they share one capped, spaced budget per box —
+except a Resend box's cap, which each sequence spends on its own.
 
 `outsend send 5` waits — sleeping out the spacing clock, the daily ceiling and the sending window
 between passes, including overnight or across a weekend if that is what the guards say. `outsend send

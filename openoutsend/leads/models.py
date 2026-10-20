@@ -197,8 +197,8 @@ class Deal(models.Model):
 
     # ── Where it is in its sequence ───────────────────────────────
     #
-    # The sequence by the name `core/sequences.for_deal` resolves: `cold` for the
-    # built-in one. `step` is the number of the last step sent, and null until the
+    # The sequence by its folder's name (`core/sequences.key`), never its path: `cold`
+    # for the built-in one. `step` is the number of the last step sent, and null until the
     # first one goes. Follow-ups and replies are not steps and never move it.
     sequence = models.CharField(max_length=500, default="cold")
     step = models.PositiveSmallIntegerField(null=True, blank=True)

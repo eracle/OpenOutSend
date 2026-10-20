@@ -107,7 +107,7 @@ def test_send_passes_the_sequence_folder_as_its_key(connected, tmp_path):
     with patch("openoutsend.send_pass.run_send_pass", return_value=PassResult()) as run:
         _send(_args(sequence=str(tmp_path)))
 
-    assert run.call_args.kwargs["sequence"] == str(tmp_path.resolve())
+    assert run.call_args.kwargs["sequence"] == tmp_path.name
 
 
 def test_a_bad_sequence_folder_ends_the_command_before_any_mail_moves(connected, tmp_path):
@@ -128,7 +128,7 @@ def test_the_pipe_enrols_into_the_named_sequence(db, tmp_path, monkeypatch):
     monkeypatch.setattr("sys.stdin", io.StringIO('{"lead_id": "a", "email": "a@b.com"}\n'))
 
     assert _ingest(_args(command=None, sequence=str(tmp_path))) == 0
-    assert Deal.objects.get().sequence == str(tmp_path.resolve())
+    assert Deal.objects.get().sequence == tmp_path.name
 
 
 # ── --agent-draft ─────────────────────────────────────────────────

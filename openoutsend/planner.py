@@ -26,6 +26,9 @@ context was re-read five times inside a single window.
 - **One budget per box.** Every step of every sequence and every follow-up counts
   against its box's headroom, spacing and window. Only a reply to someone who wrote in
   is exempt: it is not cold volume, and answering within minutes is more human, not less.
+  A resend box is the one exception, for headroom only: its cap is a budget the run
+  declares, so each sequence spends its own (``Mailbox.sent_today``), and an old
+  backlog in one cannot starve another. Spacing and window stay the box's.
 - **A deal's first send picks the freest box; every later one stays on the thread's.**
 - **Oldest due first, whatever the kind** (`cold_sends_due`). Openers, later steps and
   follow-ups are one queue ordered by how long each has been due, so no kind can starve
@@ -406,8 +409,8 @@ def _sequences():
 # ── From which box ────────────────────────────────────────────────
 
 
-def free_for_first_email():
-    """The box that may send a first email right now, or None.
+def free_for_first_email(sequence: str | None = None):
+    """The box that may send a first email for *sequence* right now, or None.
 
     The clock speaks first and for the whole pool: outside the operator's working
     window no box may open a conversation, however much headroom it has
@@ -429,7 +432,7 @@ def free_for_first_email():
     now = timezone.now()
     ranked = [
         (box, headroom) for box in Mailbox.objects.all()
-        if box.free_now(now) and (headroom := box.headroom_today()) > 0
+        if box.free_now(now) and (headroom := box.headroom_today(sequence)) > 0
     ]
     if not ranked:
         return None
@@ -468,16 +471,18 @@ def cold_sends_due(now=None, *, sequence: str | None = None, agent_drafted: bool
     if agent_drafted:
         sequenced = [send for send in sequenced if send.step.is_email]
     queue = awaiting_follow_up(now, sequence) + sequenced
-    pool_open = True
+    pool_closed = set()
     for send in sorted(queue, key=lambda send: send.due_at):
         if send.deal.lead_id in reached:
             continue
         if send.kind != OPENER:
             box = free_thread_box(send.deal)
-        elif pool_open:
-            # A pass only ever uses up boxes, so a pool with none free stays that way.
-            box = free_for_first_email()
-            pool_open = box is not None
+        elif send.deal.sequence not in pool_closed:
+            # A pass only ever uses up boxes, so a pool with none free for a sequence
+            # stays that way for it.
+            box = free_for_first_email(send.deal.sequence)
+            if box is None:
+                pool_closed.add(send.deal.sequence)
         else:
             continue
         if box is not None:
@@ -498,7 +503,7 @@ def free_thread_box(deal):
     if box is None or not within_sending_window():
         return None
     box.refresh_from_db(fields=["next_send_at"])
-    return box if box.free_now() and box.headroom_today() > 0 else None
+    return box if box.free_now() and box.headroom_today(deal.sequence) > 0 else None
 
 
 # ── When next ─────────────────────────────────────────────────────
@@ -534,7 +539,7 @@ def next_first_email_at(now=None, sequence: str | None = None):
     return min(
         (
             next_window_open(max(earliest, box.next_send_at or earliest))
-            if box.headroom_today() > 0 else next_window_open(max(earliest, tomorrow))
+            if box.headroom_today(sequence) > 0 else next_window_open(max(earliest, tomorrow))
             for box in Mailbox.objects.all()
         ),
         default=None,

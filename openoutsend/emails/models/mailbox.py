@@ -25,12 +25,13 @@ class MailboxManager(models.Manager):
     """Pool-level send pacing — the daily-cap accounting. Which box sends is the
     planner's question (``openoutsend/planner.py``)."""
 
-    def remaining_today(self) -> int:
-        """Total sends left across the pool today (Σ per-box headroom).
+    def remaining_today(self, sequence: str | None = None) -> int:
+        """Total sends left across the pool today (Σ per-box headroom), for *sequence*
+        where a box keeps one budget per sequence.
 
         0 when no boxes exist or every box is at its cap.
         """
-        return sum(box.headroom_today() for box in self.all())
+        return sum(box.headroom_today(sequence) for box in self.all())
 
     def create_verified(
         self,
@@ -193,8 +194,13 @@ class Mailbox(models.Model):
             response__in=PAUSING_RESPONSES,
         ).exists()
 
-    def sent_today(self) -> int:
+    def sent_today(self, sequence: str | None = None) -> int:
         """People this box has *first contacted* since local midnight — the cap ledger.
+
+        With *sequence*, a resend box counts that sequence's first contacts alone: its
+        cap is a budget each run declares (``OUTSEND_DAILY_CAP``), not a reputation the
+        box earned, so two sequences sharing the box each spend their own. A mailbox's
+        cap is measured off its own Sent folder, so it counts everything it sent.
 
         Counts each of the box's threads by its **first** outgoing message and keeps
         the ones that begin today. So a reply inside a thread opened yesterday is free.
@@ -223,16 +229,20 @@ class Mailbox(models.Model):
             .filter(first_sent__gte=_local_midnight())
             .values_list("thread_id", flat=True)
         )
-        return Deal.objects.filter(thread_id__in=list(opened_today)).count()
+        deals = Deal.objects.filter(thread_id__in=list(opened_today))
+        if sequence is not None and self.is_resend:
+            deals = deals.filter(sequence=sequence)
+        return deals.count()
 
-    def headroom_today(self) -> int:
-        """Sends this box has left today before hitting its measured capacity.
+    def headroom_today(self, sequence: str | None = None) -> int:
+        """Sends this box has left today before hitting its capacity — for *sequence*
+        alone on a resend box (``sent_today``).
 
         Zero once the receiver has paused the box, whatever the measurement says.
         """
         if self.paused_today():
             return 0
-        return max(0, self.capacity() - self.sent_today())
+        return max(0, self.capacity() - self.sent_today(sequence))
 
     def capacity(self) -> int:
         """First contacts this box may make today.
