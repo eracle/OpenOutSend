@@ -7,7 +7,9 @@
 The **sending half** of OpenOutreach. [OpenOutFind](https://github.com/eracle/OpenOutFind) finds and
 qualifies B2B leads and prints them; this is what sends them. Want both in one install, with one
 wizard and one command? That is [OpenOutreach](https://github.com/eracle/OpenOutreach), which requires
-both packages and hosts them in one process — this repo stays a program of its own underneath it.
+both packages and hosts them in one process — this repo stays a program of its own underneath it. Want the leads without running anything? Ask for
+ten at [openoutreach.app](https://openoutreach.app/?utm_source=github&utm_medium=readme&utm_campaign=openoutsend),
+free.
 
 The boundary between the two halves is a pipe, and nothing else crosses it:
 
