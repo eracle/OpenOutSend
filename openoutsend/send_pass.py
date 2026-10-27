@@ -96,9 +96,10 @@ def run_send_pass(prompt_line_name: str | None = None, narrate: bool = True,
     pass, because the answer does not change while it waits; it reads ``result.holding``
     and says it when it moves.
 
-    ``agent_draft`` opts the openers and later steps out of `AI_MODEL` — see ``_send_cold``.
-    Unlike a failed send, this **does** raise (``DraftPending``), because there is
-    nobody to report a holding line to: the process is about to exit.
+    ``agent_draft`` opts the replies, openers and later steps out of `AI_MODEL` — see
+    ``_answer_replies`` and ``_send_cold``. Unlike a failed send, this **does** raise
+    (``DraftPending``), because there is nobody to report a holding line to: the process
+    is about to exit.
     """
     from openoutsend.emails.mail_pass import run_mail_pass
     from openoutsend.emails.warmth import measure_pool
@@ -106,7 +107,7 @@ def run_send_pass(prompt_line_name: str | None = None, narrate: bool = True,
     result = PassResult()
     result.mirrored, result.classified, result.projected = run_mail_pass()
     measure_pool()
-    reached = _answer_replies(result)
+    reached = _answer_replies(result, agent_draft)
     _close_ended(result, sequence)
     _send_cold(result, sequence, reached, prompt_line_name, agent_draft)
     result.holding = _what_is_holding(sequence)
@@ -115,7 +116,7 @@ def run_send_pass(prompt_line_name: str | None = None, narrate: bool = True,
     return result
 
 
-def _answer_replies(result: PassResult) -> set:
+def _answer_replies(result: PassResult, agent_draft: AgentDraft = OFF) -> set:
     """Answer every thread whose newest turn is theirs. Returns the lead ids it handled.
 
     The pool is materialised before the loop rather than re-queried: a deal whose
@@ -125,9 +126,19 @@ def _answer_replies(result: PassResult) -> set:
 
     The ids are every lead whose reply was taken up, answered or not: whoever just
     wrote in is sent no step of another sequence in the same pass (``_send_cold``).
+
+    A calling agent answers instead of `AI_MODEL` under ``--agent-draft``, and nobody
+    does under ``OUTSEND_REPLIES=hold`` (``core/conf.py``): the replies wait, and their
+    leads still count as reached.
     """
+    from openoutsend.core.conf import REPLIES_HOLD, replies
     from openoutsend.emails.steps.reply import answer_reply
     from openoutsend.planner import unanswered_replies
+
+    if agent_draft.active:
+        return _answer_drafted_reply(result, agent_draft)
+    if replies() == REPLIES_HOLD:
+        return set(unanswered_replies().values_list("lead_id", flat=True))
 
     reached = set()
     for deal in list(unanswered_replies()):
@@ -139,6 +150,75 @@ def _answer_replies(result: PassResult) -> set:
             logger.exception("reply to %s failed", deal.lead.public_id)
             result.failed += 1
     return reached
+
+
+def _answer_drafted_reply(result: PassResult, agent_draft: AgentDraft) -> set:
+    """Send the reply already handed to the calling agent, or hand the oldest one over.
+
+    The same one-draft-at-a-time contract as ``_send_agent_draft``, which it runs
+    ahead of: somebody waiting on an answer comes before a step nobody asked for. A
+    draft held for a step is left to that path, and the replies wait behind it.
+
+    A reply is exempt from every send guard, so an answer is sent the pass it arrives.
+    A refused send is recorded like the model path's: its row is our turn, so the
+    deal is no longer owed a reply and the draft is dropped. Returns every lead owed a
+    reply, as reached.
+    """
+    from openoutsend.emails.steps.reply import send_drafted_reply
+    from openoutsend.leads.models import PendingDraft
+    from openoutsend.planner import unanswered_replies
+
+    owed = list(unanswered_replies())
+    reached = {deal.lead_id for deal in owed}
+    pending = PendingDraft.objects.first()
+    if pending is None:
+        if owed:
+            PendingDraft.objects.create(deal=owed[0])
+            raise DraftPending(f"{owed[0].lead.public_id} wrote back",
+                               payload=_reply_payload(owed[0]))
+        return reached
+
+    deal = next((deal for deal in owed if deal.pk == pending.deal_id), None)
+    if deal is None:
+        return reached
+    if agent_draft.answered and not pending.answered:
+        pending.body = agent_draft.body
+        pending.save(update_fields=["body"])
+    if not pending.answered:
+        raise DraftPending(f"{deal.lead.public_id} is still waiting on a reply",
+                           payload=_reply_payload(deal))
+
+    try:
+        _send_in_one_transaction(deal, lambda: send_drafted_reply(deal, pending.body))
+    except Exception:
+        logger.exception("reply to %s failed", deal.lead.public_id)
+        result.failed += 1
+        return reached
+    result.answered += 1
+    pending.delete()
+    return reached
+
+
+def _reply_payload(deal) -> dict:
+    """What an agent needs to answer *deal*'s lead: their fields, the line they were
+    piped with, and the whole conversation followed by the reply prompt — what
+    `AI_MODEL` would have read."""
+    from openoutsend.core.agents.outreach import conversation
+    from openoutsend.emails.steps.reply import REPLY_PROMPT
+
+    lead = deal.lead
+    return {
+        "lead_id": lead.public_id,
+        "email": lead.email,
+        "profile_text": lead.profile_text,
+        "full_name": f"{lead.first_name} {lead.last_name}".strip(),
+        "title": lead.title,
+        "company": lead.company,
+        "step": "reply",
+        "subject": deal.email_subject or "",
+        "fields": deal.fields,
+        "prompt": conversation(deal, REPLY_PROMPT),
+    }
 
 
 def _close_ended(result: PassResult, sequence: str | None) -> None:
@@ -420,13 +500,15 @@ def _what_is_holding(sequence: str | None) -> str:
     nothing. A boolean, or a silent zero, tells them nothing at all — and a pass that
     does nothing looks exactly like a pass with nothing to do.
     """
+    from openoutsend.core.conf import REPLIES_HOLD, replies
     from openoutsend.core.sending_window import within_sending_window
     from openoutsend.emails.models import Mailbox
     from openoutsend.planner import emailable_deals, unanswered_replies
 
     waiting = emailable_deals(sequence).count()
     to_answer = unanswered_replies().count()
-    counts = f"{waiting} waiting to be emailed · {to_answer} reply(ies) to answer"
+    held = " (held for an agent)" if to_answer and replies() == REPLIES_HOLD else ""
+    counts = f"{waiting} waiting to be emailed · {to_answer} reply(ies) to answer{held}"
 
     if not Mailbox.objects.exists():
         return f"{counts} · no mailbox connected, so nothing can be sent — run `outsend check`"

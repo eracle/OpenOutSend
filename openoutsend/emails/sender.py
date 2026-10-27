@@ -1,9 +1,10 @@
 # openoutsend/emails/sender.py
 """Send one outbound email through a Mailbox's SMTP credentials, or Resend's API.
 
-A resend box differs in three places only, all in this module: the opt-out is the
-line's ``unsubscribe_url``, the opener names itself in ``References``, and the
-message is posted to the API rather than over SMTP (``core/conf.py``, *Transport*).
+A resend box differs in four places only, all in this module: the opt-out is the
+line's ``unsubscribe_url``, the opener names itself in ``References``, a
+``Reply-To`` names ``OUTSEND_REPLY_TO`` when one is set, and the message is posted to
+the API rather than over SMTP (``core/conf.py``, *Transport*).
 
 No error handling by design: a refused send is recorded and raised as ``Refused``,
 and the next pass tries the step again. The mailbox is left untouched — re-import
@@ -18,6 +19,7 @@ from email.utils import make_msgid
 
 from django.utils import timezone
 
+from openoutsend.core.conf import reply_to
 from openoutsend.errors import OutsendError
 
 logger = logging.getLogger(__name__)
@@ -211,6 +213,8 @@ def _build_message(mailbox, to_address, subject, body, bcc, in_reply_to, referen
         # unsubscribe button works without the reader opening a page.
         message["List-Unsubscribe"] = f"<{unsubscribe_url}>"
         message["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+        if reply_to():
+            message["Reply-To"] = reply_to()
     else:
         message["List-Unsubscribe"] = _list_unsubscribe(mailbox.from_address)
     if in_reply_to:
@@ -272,9 +276,9 @@ UNSUBSCRIBE_LINE = "Not interested? Unsubscribe here and I won't write again: {u
 def _opt_out_for(mailbox, body: str, unsubscribe_url: str) -> str:
     """The footer's opt-out: the reply word for a mailbox, the link for a resend box.
 
-    A resend box reads no mail, so a typed "stop" would land in a person's forwarded
-    inbox and nowhere the code could honour it. The link is the one exit that works
-    by itself.
+    A resend box reads mail only when ``OUTSEND_REPLY_TO`` is set; without it a typed
+    "stop" would land in a person's forwarded inbox and nowhere the code could honour
+    it. The link is the one exit that works by itself either way.
     """
     if not mailbox.is_resend:
         return _opt_out(body)
@@ -384,7 +388,8 @@ def _deliver(mailbox, email_message: EmailMessage, row) -> None:
 
 
 # The headers a resend send carries over from the assembled message. Message-ID is not
-# among them — Resend writes its own — and From/To/Subject/Bcc are fields of the call.
+# among them — Resend writes its own — and From/To/Subject/Bcc/Reply-To are fields of
+# the call.
 _RESEND_HEADERS = ("In-Reply-To", "References", "List-Unsubscribe", "List-Unsubscribe-Post")
 
 
@@ -408,6 +413,8 @@ def _deliver_through_resend(mailbox, email_message: EmailMessage, row) -> None:
     }
     if email_message["Bcc"]:
         payload["bcc"] = [email_message["Bcc"]]
+    if email_message["Reply-To"]:
+        payload["reply_to"] = [email_message["Reply-To"]]
     email_id = resend.send(mailbox.password, payload,
                            idempotency_key=email_message["Message-ID"])
     record_acceptance(row, None, f"OK {email_id}", queue_id=email_id)

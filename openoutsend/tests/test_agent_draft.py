@@ -1,9 +1,10 @@
 # openoutsend/tests/test_agent_draft.py
-"""``send --agent-draft`` — the calling agent writes the openers and later steps
-instead of AI_MODEL.
+"""``send --agent-draft`` — the calling agent writes the replies, openers and later
+steps instead of AI_MODEL, and ``OUTSEND_REPLIES=hold`` keeps an unattended pass off
+the replies.
 
-Covers the pipeline layer only (``_send_agent_draft``); the CLI's own flag
-parsing is covered by ``tests/test_cli.py``.
+Covers the pipeline layer only (``_send_agent_draft``, ``_answer_drafted_reply``); the
+CLI's own flag parsing is covered by ``tests/test_cli.py``.
 """
 from __future__ import annotations
 
@@ -205,3 +206,100 @@ class TestALaterStep:
         deliver.assert_not_called()
         assert result.stepped == 0
         assert PendingDraft.objects.count() == 0
+
+
+def _wrote_back(box, address="lead@acme.com"):
+    """An EMAILED deal whose lead answered the opener — owed a reply."""
+    thread = Thread.objects.create(mailbox=box)
+    deal = DealFactory(lead=LeadFactory(email=address), state=DealState.EMAILED,
+                       mailbox=box, thread=thread, step=0, email_subject="Ten leads",
+                       fields={"price": "$20"})
+    maillog.outbound(box, thread=thread, to=address, step=0,
+                     message_id=f"opener-{address}@openoutreach.app", subject="Ten leads",
+                     sent_at=timezone.now() - timedelta(days=2))
+    maillog.inbound(box, thread=thread, sender=address, body="Most are our clients already.",
+                    sent_at=timezone.now() - timedelta(hours=1))
+    return deal
+
+
+class TestAReply:
+    def test_is_handed_back_with_the_conversation(self, no_mail):
+        deal = _wrote_back(maillog.mailbox())
+
+        with patch("openoutsend.core.agents.outreach.run_outreach_agent") as mock_llm:
+            with pytest.raises(DraftPending) as raised:
+                run_send_pass(agent_draft=AgentDraft(active=True))
+
+        mock_llm.assert_not_called()
+        payload = raised.value.payload
+        assert payload["step"] == "reply"
+        assert payload["fields"] == {"price": "$20"}
+        assert "Most are our clients already." in payload["prompt"]
+        assert PendingDraft.objects.filter(deal=deal).count() == 1
+
+    def test_comes_before_a_due_step(self, no_mail, tmp_path):
+        box = maillog.mailbox()
+        _past_its_opener(tmp_path, box)
+        replied = _wrote_back(box, "other@acme.com")
+
+        with pytest.raises(DraftPending) as raised:
+            run_send_pass(agent_draft=AgentDraft(active=True))
+
+        assert raised.value.payload["lead_id"] == replied.lead.public_id
+
+    def test_a_body_sends_it_in_the_thread_whatever_the_guards_say(self, no_mail):
+        UserFactory()
+        box = maillog.mailbox()
+        deal = _wrote_back(box)
+        PendingDraft.objects.create(deal=deal)
+
+        with patch("openoutsend.core.agents.outreach.run_outreach_agent") as mock_llm, \
+                patch("openoutsend.emails.sender._deliver"):
+            result = run_send_pass(agent_draft=AgentDraft(active=True, body="Which ones?"))
+
+        mock_llm.assert_not_called()
+        assert result.answered == 1
+        sent = Message.objects.filter(thread=deal.thread, direction=Direction.OUTBOUND) \
+            .latest("pk")
+        assert (sent.subject, sent.body_text) == ("Re: Ten leads", "Which ones?")
+        assert sent.in_reply_to.startswith("in-")
+        assert PendingDraft.objects.count() == 0
+
+    def test_a_refused_send_is_counted_and_does_not_raise(self, no_mail):
+        UserFactory()
+        deal = _wrote_back(maillog.mailbox())
+        PendingDraft.objects.create(deal=deal)
+
+        with patch("openoutsend.emails.sender._deliver", side_effect=OSError("down")):
+            result = run_send_pass(agent_draft=AgentDraft(active=True, body="Which ones?"))
+
+        assert (result.answered, result.failed) == (0, 1)
+
+
+class TestHeldReplies:
+    def test_an_unattended_pass_leaves_the_reply_and_sends_the_steps(
+            self, no_mail, tmp_path, monkeypatch):
+        monkeypatch.setenv("OUTSEND_REPLIES", "hold")
+        box = maillog.mailbox()
+        stepping = _past_its_opener(tmp_path, box)
+        replied = _wrote_back(box, "other@acme.com")
+
+        with patch("openoutsend.core.agents.outreach.run_outreach_agent") as mock_llm, \
+                patch("openoutsend.emails.steps.send.send_next_step",
+                      return_value=DealState.EMAILED) as step, \
+                patch("openoutsend.planner.free_thread_box", return_value=box):
+            result = run_send_pass()
+
+        mock_llm.assert_not_called()
+        assert step.call_args.args[0] == stepping
+        assert result.answered == 0
+        assert "held for an agent" in result.holding
+        assert not Message.objects.filter(thread=replied.thread, direction=Direction.OUTBOUND,
+                                          sent_at__gt=timezone.now() - timedelta(hours=1))
+
+    def test_an_unknown_setting_stops_the_pass(self, no_mail, monkeypatch):
+        monkeypatch.setenv("OUTSEND_REPLIES", "later")
+        _wrote_back(maillog.mailbox())
+
+        with pytest.raises(OutsendError, match="OUTSEND_REPLIES"):
+            run_send_pass()

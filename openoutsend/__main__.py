@@ -44,12 +44,14 @@ outsend send [N|all] [--sequence DIR] [--prompt-line ID]
                                  enrols into it (cold without it); send sends only it
                                  (every sequence without it, cold among them)
 outsend send --agent-draft [--subject S] [--body B]
-                                 opt the opener and later steps out of AI_MODEL: stop
-                                 at the oldest deal owed one (error type draft_pending,
-                                 carrying its profile_text/company/title, the step and
-                                 its rendered prompt) instead of calling the LLM.
-                                 Resume with --subject/--body for an opener, --body
-                                 for a later step. No count.
+                                 opt replies, the opener and later steps out of
+                                 AI_MODEL: stop at the oldest reply owed, else the
+                                 oldest deal owed a send (error type draft_pending,
+                                 carrying its profile_text/company/title, the step —
+                                 "reply" for a reply — and its rendered prompt)
+                                 instead of calling the LLM. Resume with
+                                 --subject/--body for an opener, --body for a reply
+                                 or a later step. No count.
 outsend check                    verify this environment can send — what you sell and to
                                  whom, a model that answers, who signs the mail, and a
                                  mailbox that accepts its login"""

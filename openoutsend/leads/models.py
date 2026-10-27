@@ -222,10 +222,12 @@ class Deal(models.Model):
 
 
 class PendingDraft(models.Model):
-    """The one deal handed to a calling agent for an opener or a later step, if any.
+    """The one deal handed to a calling agent for a reply, an opener or a later step, if any.
 
-    Which of the two is not stored: it is asked again on resume (``send_pass._owed_send``),
-    so a deal stopped or replied to meanwhile is dropped rather than written to.
+    Which of the three is not stored: it is asked again on resume — a deal owed a reply
+    is answered (``send_pass._answer_drafted_reply``), any other is asked what it is owed
+    (``send_pass._owed_send``) — so a deal stopped or replied to meanwhile is dropped
+    rather than written to.
 
     `send --agent-draft` stops the pass right before the call that would otherwise go
     to `AI_MODEL`, and the process exits — there is nobody left in memory to remember

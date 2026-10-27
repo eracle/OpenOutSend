@@ -125,6 +125,13 @@ or the sending window is holding every box right now; a later bare `outsend send
 re-supply the same text. A deal stopped or replied to while its draft waited is dropped, not written
 to. No count yet — `--agent-draft` is one pass at a time, like a bare `outsend send`.
 
+**A reply comes before any step.** When a lead has written back, the `draft_pending` is theirs, with
+`"step": "reply"`, their line's own fields as `fields`, and the whole conversation followed by the
+reply prompt as `prompt`. Answer with `--body` alone; it goes in their thread at once, exempt from
+the send clocks. Ending the thread or honouring a worded "stop" is not an answer this takes — tell
+the operator. An install with `OUTSEND_REPLIES=hold` answers no reply on its own, so the replies
+wait for exactly this.
+
 **Don't pass `--agent-draft` unless you intend to answer every `draft_pending` it raises** — a bare
 `outsend send` uses `AI_MODEL` and writes every opener and step itself, which is the right default for
 a run nobody is driving turn-by-turn. `--subject` without `--body`, or either without

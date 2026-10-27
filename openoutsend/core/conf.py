@@ -165,6 +165,40 @@ def follow_ups_on() -> bool:
     return env_flag("OUTSEND_FOLLOW_UPS")
 
 # ----------------------------------------------------------------------
+# Replies (``OUTSEND_REPLIES``) — who writes the answer to someone who wrote back.
+#
+# ``model`` (the default) answers every reply in the pass that reads it, with
+# `AI_MODEL`. ``hold`` leaves them to a calling agent: an unattended pass reads the
+# reply, stops the sequence for that deal, and sends nothing to the person; a
+# `send --agent-draft` pass hands the reply over (``send_pass._answer_drafted_reply``).
+#
+# **Steps and replies are trusted separately.** A step is a prompt somebody wrote
+# and read the drafts of before turning the timer on; a reply answers whatever the
+# person said, and can be about money, a mistake in what they were sent, or a deal.
+# An install holds them until the drafts have earned the model the job, while its
+# steps keep going out on their own.
+# ----------------------------------------------------------------------
+REPLIES_MODEL = "model"
+REPLIES_HOLD = "hold"
+REPLIES = (REPLIES_MODEL, REPLIES_HOLD)
+
+
+def replies() -> str:
+    """How this install answers replies (``OUTSEND_REPLIES``, default ``model``).
+
+    An unknown value raises rather than falling back: answering with the model when
+    somebody asked to hold is the one direction this must not err in.
+    """
+    import os
+
+    from openoutsend.errors import OutsendError
+
+    value = (os.environ.get("OUTSEND_REPLIES") or REPLIES_MODEL).strip().lower()
+    if value not in REPLIES:
+        raise OutsendError(f"OUTSEND_REPLIES must be one of {', '.join(REPLIES)}, not {value!r}")
+    return value
+
+# ----------------------------------------------------------------------
 # Transport (``OUTSEND_TRANSPORT``) — what the mail leaves through, and so which of
 # the guards above can run at all.
 #
@@ -173,9 +207,11 @@ def follow_ups_on() -> bool:
 # ramp reads the Sent folder. ``resend`` is Resend's API and nothing else: no mailbox
 # is read, so each of those is replaced by what Resend does natively — bounces and
 # complaints are polled from its email list (``emails/resend_events.py``), the opt-out
-# is the line's own ``unsubscribe_url``, and replies go wherever the domain forwards
-# them, to be read by a person. Mixing the two (sending through Resend, reading a Gmail
-# box) would make every feature depend on which half it came from.
+# is the line's own ``unsubscribe_url``, and replies are polled from what Resend
+# received at ``OUTSEND_REPLY_TO`` (``emails/resend_inbound.py``) — or, with none set,
+# go wherever the domain forwards them, to be read by a person. Mixing the two (sending
+# through Resend, reading a Gmail box) would make every feature depend on which half it
+# came from.
 #
 # **The cap is declared, not measured.** The warm ramp exists because a box's
 # reputation is its own; a Resend domain sends from Resend's warmed pool, and there is
@@ -217,6 +253,23 @@ def resend_daily_cap() -> int:
     if not value.isdigit():
         raise OutsendError(f"OUTSEND_DAILY_CAP must be a whole number, not {value!r}")
     return int(value)
+
+
+def reply_to() -> str:
+    """Where a resend install's mail is answered (``OUTSEND_REPLY_TO``), or "" for none.
+
+    An address on a domain whose MX is Resend's Inbound. Set, every send carries it as
+    ``Reply-To`` and each mail pass reads what Resend received on its domain; unset,
+    replies go to the From address and nothing reads them.
+    """
+    import os
+
+    from openoutsend.errors import OutsendError
+
+    value = (os.environ.get("OUTSEND_REPLY_TO") or "").strip().lower()
+    if value and "@" not in value:
+        raise OutsendError(f"OUTSEND_REPLY_TO must be an email address, not {value!r}")
+    return value
 
 # Mean realized gap: the floor plus the expected value of U[min, max].
 MEAN_SEND_INTERVAL_SECONDS = MIN_SEND_INTERVAL_SECONDS + (

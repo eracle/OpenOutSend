@@ -106,7 +106,15 @@ moment a mailbox is free (an answer already given is kept, not thrown away, if t
 sending window is holding every box right now). No count yet — it is one pass at a time, like a bare
 `outsend send`. A deal stopped or replied to while its draft waited is dropped, not written to.
 Don't pass `--agent-draft` unless you intend to answer every `draft_pending` it raises; without it,
-`AI_MODEL` writes every opener and step as before. Follow-ups still go to `AI_MODEL`, so set
+`AI_MODEL` writes every opener and step as before.
+
+**Replies come first.** A lead who wrote back is handed over before any step, with `step: "reply"`,
+the line they were piped with as `fields`, and the whole conversation followed by the reply prompt as
+`prompt`. Answer with `--body` alone: it goes in their thread at once, whatever the send clocks say.
+Ending the thread or honouring a worded "stop" is not an answer `--agent-draft` takes. That stays with
+the model or the operator. `OUTSEND_REPLIES=hold` keeps an unattended pass from answering at all: it
+reads the reply, stops that deal's steps, sends everyone else's, and leaves the reply for an
+`--agent-draft` session. Follow-ups still go to `AI_MODEL`, so set
 `OUTSEND_FOLLOW_UPS=off` with it unless a model is configured. **`--agent-draft` also drops the model out of
 `outsend check`'s requirements for that run** — `OUTSEND_AI_MODEL`/`OUTSEND_LLM_API_KEY` are never
 checked or pinged, since a key that will never be spent is not a reason to stop.
@@ -182,7 +190,7 @@ four commands that run it.
 | --- | --- | --- |
 | Sends through | your box's SMTP | Resend's API |
 | Connected by | `OUTSEND_MAILBOX_ADDRESS` + app password | `OUTSEND_MAILBOX_ADDRESS` + `OUTSEND_RESEND_API_KEY`, on a domain verified in Resend |
-| Replies | read over IMAP and answered | not read — they go wherever the domain forwards them |
+| Replies | read over IMAP and answered | with `OUTSEND_REPLY_TO`, polled from Resend Inbound and answered; without it, not read — they go wherever the domain forwards them |
 | Bounces, complaints | read from the inbox | polled from Resend's email list every pass |
 | Opt-out | *Reply "stop"*, and a `mailto:` header | the line's `unsubscribe_url`, in the footer and a one-click `List-Unsubscribe` |
 | Daily cap | measured from the Sent folder, ramping from 5 | declared: `OUTSEND_DAILY_CAP`, 50 by default |
@@ -196,6 +204,10 @@ Spacing and the sending window apply to both.
   POST is the only opt-out there is, so ingest skips a line without one (unless it says `"stop":
   true`). The link's owner records the opt-out, and its next export sends that line with `"stop":
   true`.
+- **Replies need a domain Resend receives on.** Point a subdomain's MX at Resend Inbound and set
+  `OUTSEND_REPLY_TO` to an address on it: every send carries it as `Reply-To`, and every pass stores
+  what Resend received on that domain, whole, before classifying it like mail read over IMAP. Nobody
+  reads that domain but the install, so everything that lands there is kept.
 - **Threading rides on `References`.** Resend replaces the Message-ID it is given, so the opener names
   its own minted id in `References`, and every later step carries the chain that starts with it.
 - **A bounce or a complaint suppresses the address**, as one read from an inbox would. A complaint ends
@@ -287,9 +299,11 @@ The environment is the operator seam — the only way in a timer has:
 | `OUTSEND_SMTP_HOST` / `OUTSEND_SMTP_PORT` / `OUTSEND_IMAP_HOST` / `OUTSEND_IMAP_PORT` | only for a box that is not on Google Workspace; those four default to Gmail's and are never prompted for |
 | `OUTSEND_SIGNATURE` | the sign-off appended to every send from that box; empty declines one for good |
 | `OUTSEND_FOLLOW_UPS` | `off` stops the two follow-ups to a lead who never answered; on by default |
+| `OUTSEND_REPLIES` | `model` (the default) answers replies with `AI_MODEL`; `hold` leaves them for a `send --agent-draft` session |
 | `OUTSEND_TRANSPORT` | `mailbox` (the default) or `resend` — see *Sending through Resend* |
 | `OUTSEND_RESEND_API_KEY` | a resend install's **full-access** key, in place of `OUTSEND_MAILBOX_PASSWORD` |
 | `OUTSEND_DAILY_CAP` | a resend install's first contacts per day; 50 by default |
+| `OUTSEND_REPLY_TO` | a resend install's reply address, on a domain whose MX is Resend Inbound; unset, replies are not read |
 | `OUTSEND_HOME` / `OUTSEND_DB` | where the store lives |
 | `OUTSEND_DATABASE_URL` | `postgres://user:pass@host:5432/name` puts the store in Postgres instead of the SQLite file; install `openoutsend[postgres]` |
 

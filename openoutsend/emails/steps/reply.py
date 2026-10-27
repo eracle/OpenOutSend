@@ -111,7 +111,7 @@ def answer_reply(deal) -> DealState | None:
     if ends_in_an_opt_out(decision):
         return honour_opt_out(deal)
     if decision.action == "send_message":
-        return _send_reply(deal, decision)
+        return _send_reply(deal, decision.message)
     if decision.action == "mark_completed":
         logger.info("thread completed for %s: outcome=%s",
                     deal.lead.public_id, decision.outcome)
@@ -132,10 +132,21 @@ def ends_in_an_opt_out(decision) -> bool:
     return decision.action == "suppress" or decision.outcome == Outcome.UNSUBSCRIBED
 
 
+def send_drafted_reply(deal, body: str) -> DealState | None:
+    """Send a reply a calling agent wrote (``send --agent-draft``). Returns next state.
+
+    The agent writes the answer only: ending the thread or honouring a worded
+    unsubscribe stays a choice the model path makes, or the operator.
+    """
+    logger.info("%s %s", colored("▶ reply (drafted)", "green", attrs=["bold"]),
+                deal.lead.public_id)
+    return _send_reply(deal, body)
+
+
 # ── Decision execution ────────────────────────────────────────────
 
 
-def _send_reply(deal, decision) -> DealState | None:
+def _send_reply(deal, message: str) -> DealState | None:
     """Send a threaded reply and record it. The deal stays EMAILED.
 
     No state change and no timer: writing the outgoing message is itself what makes
@@ -148,13 +159,13 @@ def _send_reply(deal, decision) -> DealState | None:
         logger.warning("%s was suppressed mid-run — not replying", deal.lead.public_id)
         return None
 
-    logger.info("reply to %s: %s", deal.lead.public_id, decision.message)
+    logger.info("reply to %s: %s", deal.lead.public_id, message)
     chain = thread_ids(deal)
     send_email(
         deal.mailbox,
         deal.lead.email,
         _reply_subject(deal.email_subject),
-        decision.message,
+        message,
         bcc=operator_bcc(get_active_user()),
         in_reply_to=chain[-1] if chain else None,
         references=" ".join(chain) or None,

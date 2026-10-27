@@ -135,7 +135,17 @@ def _store(client, mailbox, folder: str, uid: int, uidvalidity: int, headers: by
         return False
 
     raw = _fetch(client, uid, "BODY.PEEK[]", "BODY[]") or headers
+    record(mailbox, msg, message_id, raw, folder=folder, uid=uid, uidvalidity=uidvalidity)
+    return True
 
+
+def record(mailbox, msg, message_id: str, raw: bytes, *, folder: str,
+           uid: int | None = None, uidvalidity: int | None = None) -> Message:
+    """Write one inbound message as a pending row, and thread it.
+
+    Shared with ``resend_inbound``, the other way mail arrives: whatever fetched the
+    bytes, the row is the same and ``classify`` reads it the same way.
+    """
     message = Message.objects.create(
         mailbox=mailbox,
         direction=Direction.INBOUND,
@@ -153,7 +163,7 @@ def _store(client, mailbox, folder: str, uid: int, uidvalidity: int, headers: by
         uidvalidity=uidvalidity,
     )
     threads.assign(message)
-    return True
+    return message
 
 
 def _is_our_conversation(mailbox, msg) -> bool:

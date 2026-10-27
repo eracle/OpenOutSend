@@ -1,18 +1,21 @@
 # openoutsend/emails/resend.py
 """The Resend API — the whole of what a ``resend`` install says to its provider.
 
-Three calls, one per thing the transport replaces (``core/conf.py``, *Transport*):
+One call or two per thing the transport replaces (``core/conf.py``, *Transport*):
 
-    verify          GET  /domains   the key works, and the From domain is verified
-    send            POST /emails    one message; Resend's id is its handle
-    recent_emails   GET  /emails    what became of the messages sent lately
+    verify          GET  /domains                 the key works, and the From domain is verified
+    send            POST /emails                  one message; Resend's id is its handle
+    recent_emails   GET  /emails                  what became of the messages sent lately
+    received_emails GET  /emails/receiving        what Resend Inbound took in lately
+    received_raw    GET  /emails/receiving/{id}   one of those, as the bytes that arrived
 
 **A full-access key, not a sending one.** A sending-only key can post an email and
-read nothing back, so the bounces this install learns about would be none. ``verify``
-asks for the domain list, which only a full-access key may read, so the wrong key is
-caught when the box is connected rather than as a silent absence of bounces.
+read nothing back, so the bounces this install learns about would be none, and the
+replies too. ``verify`` asks for the domain list, which only a full-access key may
+read, so the wrong key is caught when the box is connected rather than as a silent
+absence of bounces.
 
-Standard library only: three JSON calls do not earn an HTTP client dependency.
+Standard library only: a handful of JSON calls do not earn an HTTP client dependency.
 """
 from __future__ import annotations
 
@@ -83,9 +86,42 @@ def send(api_key: str, payload: dict, *, idempotency_key: str) -> str:
 def recent_emails(api_key: str, *, since: datetime) -> list[dict]:
     """Every email on the account created at or after *since*, newest first.
 
-    Pages back until a page reaches past *since*, runs out, or ``MAX_PAGES`` is hit.
     Each item carries ``id``, ``to`` and ``last_event`` — the latest thing that
     happened to it, which is all the list says.
+    """
+    return _listed("/emails", api_key, since=since)
+
+
+def received_emails(api_key: str, *, since: datetime | None) -> list[dict]:
+    """Every email Resend received for the account at or after *since*, newest first.
+
+    ``None`` reads back as far as ``MAX_PAGES`` goes. Each item carries ``id``,
+    ``to``, ``cc``, ``created_at`` and ``message_id`` — enough to know whether it is
+    already held, not its body.
+    """
+    return _listed("/emails/receiving", api_key, since=since)
+
+
+def received_raw(api_key: str, email_id: str) -> bytes | None:
+    """The bytes of one received email as they arrived, or None if Resend kept none.
+
+    Two requests: the email's record names a signed download URL for its original
+    file, and the file is fetched from it without the key — it is CloudFront's, not
+    the API's.
+    """
+    answer = _request("GET", f"/emails/receiving/{email_id}", api_key)
+    url = (answer.get("raw") or {}).get("download_url")
+    if not url:
+        return None
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+        return response.read()
+
+
+def _listed(path: str, api_key: str, *, since: datetime | None) -> list[dict]:
+    """One list endpoint's items created at or after *since*, newest first.
+
+    Pages back until a page reaches past *since*, runs out, or ``MAX_PAGES`` is hit.
     """
     emails: list[dict] = []
     after = None
@@ -93,11 +129,11 @@ def recent_emails(api_key: str, *, since: datetime) -> list[dict]:
         if page_number:
             time.sleep(PAGE_PAUSE_SECONDS)
         query = {"limit": PAGE_SIZE, **({"after": after} if after else {})}
-        page = _request("GET", f"/emails?{urlencode(query)}", api_key)
+        page = _request("GET", f"{path}?{urlencode(query)}", api_key)
         items = page.get("data") or []
         for item in items:
             created = parse_datetime(item.get("created_at") or "")
-            if created is not None and created < since:
+            if since is not None and created is not None and created < since:
                 return emails
             emails.append(item)
         if not page.get("has_more") or not items:
