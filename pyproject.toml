@@ -48,9 +48,9 @@ classifiers = [
 # either the resolver refuses the install the extra exists to simplify, or one half
 # silently runs on a version it was never tested against.
 dependencies = [
-    # 5.2 for the SQLite `init_command` / `transaction_mode` options the store uses —
-    # WAL is what lets `outsend` ingest while a send pass holds a write lock.
-    "Django>=5.2,<7.0",
+    # The hub's minor version, so the store can share its Postgres database: a newer
+    # `auth` or `contenttypes` migration run from here would alter the hub's tables.
+    "Django>=6.1,<6.2",
     "pydantic>=2.9,<3",
     "pydantic-ai-slim[openai,anthropic,google,groq,mistral,cohere,bedrock]>=2,<3",
     # pydantic-ai's extra leaves `anthropic` unbounded, so the next major arrives
