@@ -132,6 +132,17 @@ the send clocks. Ending the thread or honouring a worded "stop" is not an answer
 the operator. An install with `OUTSEND_REPLIES=hold` answers no reply on its own, so the replies
 wait for exactly this.
 
+**To answer replies and send nothing else, use `outsend reply`**, the same handover without the
+cold sends — the loop for a session answering customers while a timer keeps sending:
+
+```bash
+outsend --json reply                     # draft_pending for the oldest reply owed, or none
+outsend reply --body "Which ones?"       # sends it in their thread; run bare again for the next
+```
+
+It ends with exit 0 and `0 reply(ies) to answer` when nobody is waiting. A draft held for an opener
+or a step stops it with an error; answer that with `send --agent-draft` first.
+
 **Don't pass `--agent-draft` unless you intend to answer every `draft_pending` it raises** — a bare
 `outsend send` uses `AI_MODEL` and writes every opener and step itself, which is the right default for
 a run nobody is driving turn-by-turn. `--subject` without `--body`, or either without

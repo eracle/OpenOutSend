@@ -114,7 +114,11 @@ the line they were piped with as `fields`, and the whole conversation followed b
 Ending the thread or honouring a worded "stop" is not an answer `--agent-draft` takes. That stays with
 the model or the operator. `OUTSEND_REPLIES=hold` keeps an unattended pass from answering at all: it
 reads the reply, stops that deal's steps, sends everyone else's, and leaves the reply for an
-`--agent-draft` session. Follow-ups still go to `AI_MODEL`, so set
+`--agent-draft` session. **`outsend reply` answers replies and does nothing else**: it reads the mail
+and hands over the oldest reply owed the same way, `outsend reply --body "…"` sends the answer in its
+thread, and no opener, step or follow-up goes out, so a session can run it beside a timer's passes on
+the same store. A draft held for an opener or a step stops it until `send --agent-draft` answers that.
+Follow-ups still go to `AI_MODEL`, so set
 `OUTSEND_FOLLOW_UPS=off` with it unless a model is configured. **`--agent-draft` also drops the model out of
 `outsend check`'s requirements for that run** — `OUTSEND_AI_MODEL`/`OUTSEND_LLM_API_KEY` are never
 checked or pinged, since a key that will never be spent is not a reason to stop.
@@ -299,7 +303,7 @@ The environment is the operator seam — the only way in a timer has:
 | `OUTSEND_SMTP_HOST` / `OUTSEND_SMTP_PORT` / `OUTSEND_IMAP_HOST` / `OUTSEND_IMAP_PORT` | only for a box that is not on Google Workspace; those four default to Gmail's and are never prompted for |
 | `OUTSEND_SIGNATURE` | the sign-off appended to every send from that box; empty declines one for good |
 | `OUTSEND_FOLLOW_UPS` | `off` stops the two follow-ups to a lead who never answered; on by default |
-| `OUTSEND_REPLIES` | `model` (the default) answers replies with `AI_MODEL`; `hold` leaves them for a `send --agent-draft` session |
+| `OUTSEND_REPLIES` | `model` (the default) answers replies with `AI_MODEL`; `hold` leaves them for an `outsend reply` or `send --agent-draft` session |
 | `OUTSEND_TRANSPORT` | `mailbox` (the default) or `resend` — see *Sending through Resend* |
 | `OUTSEND_RESEND_API_KEY` | a resend install's **full-access** key, in place of `OUTSEND_MAILBOX_PASSWORD` |
 | `OUTSEND_DAILY_CAP` | a resend install's first contacts per day; 50 by default |

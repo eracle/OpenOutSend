@@ -18,7 +18,7 @@ from openoutsend.core.agent_draft import AgentDraft
 from openoutsend.emails.models import Direction, Message, Thread
 from openoutsend.errors import DraftPending, OutsendError
 from openoutsend.leads.models import DealState, PendingDraft
-from openoutsend.send_pass import run_send_pass
+from openoutsend.send_pass import run_reply_pass, run_send_pass
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.factories import DealFactory, LeadFactory, UserFactory
 
@@ -274,6 +274,69 @@ class TestAReply:
             result = run_send_pass(agent_draft=AgentDraft(active=True, body="Which ones?"))
 
         assert (result.answered, result.failed) == (0, 1)
+
+
+class TestTheReplyPass:
+    def test_hands_over_the_reply_and_sends_no_due_step(self, no_mail, tmp_path):
+        box = maillog.mailbox()
+        _past_its_opener(tmp_path, box)
+        replied = _wrote_back(box, "other@acme.com")
+
+        with patch("openoutsend.emails.steps.send.send_next_step") as step, \
+                pytest.raises(DraftPending) as raised:
+            run_reply_pass(AgentDraft(active=True))
+
+        step.assert_not_called()
+        assert raised.value.payload["lead_id"] == replied.lead.public_id
+
+    def test_a_body_sends_the_answer_and_nothing_else(self, no_mail, tmp_path):
+        UserFactory()
+        box = maillog.mailbox()
+        _past_its_opener(tmp_path, box)
+        replied = _wrote_back(box, "other@acme.com")
+        PendingDraft.objects.create(deal=replied)
+
+        with patch("openoutsend.emails.sender._deliver"), \
+                patch("openoutsend.emails.steps.send.send_next_step") as step:
+            result = run_reply_pass(AgentDraft(active=True, body="Which ones?"))
+
+        step.assert_not_called()
+        assert (result.answered, result.stepped) == (1, 0)
+        assert result.holding == "0 reply(ies) to answer"
+        assert PendingDraft.objects.count() == 0
+
+    def test_with_no_reply_owed_it_does_nothing(self, no_mail, tmp_path):
+        _past_its_opener(tmp_path, maillog.mailbox())
+
+        with patch("openoutsend.emails.steps.send.send_next_step") as step:
+            result = run_reply_pass(AgentDraft(active=True))
+
+        step.assert_not_called()
+        assert (result.answered, result.stepped) == (0, 0)
+        assert PendingDraft.objects.count() == 0
+
+    def test_a_draft_held_for_a_step_stops_it(self, no_mail, tmp_path):
+        box = maillog.mailbox()
+        stepping = _past_its_opener(tmp_path, box)
+        _wrote_back(box, "other@acme.com")
+        PendingDraft.objects.create(deal=stepping)
+
+        with pytest.raises(OutsendError, match="send --agent-draft"):
+            run_reply_pass(AgentDraft(active=True))
+
+    def test_a_draft_owed_nothing_any_more_is_dropped(self, no_mail):
+        box = maillog.mailbox()
+        stale = _wrote_back(box)
+        maillog.outbound(box, thread=stale.thread, message_id="answer@openoutreach.app",
+                         subject="Re: Ten leads")
+        PendingDraft.objects.create(deal=stale)
+        replied = _wrote_back(box, "other@acme.com")
+
+        with pytest.raises(DraftPending) as raised:
+            run_reply_pass(AgentDraft(active=True))
+
+        assert raised.value.payload["lead_id"] == replied.lead.public_id
+        assert PendingDraft.objects.get().deal == replied
 
 
 class TestHeldReplies:

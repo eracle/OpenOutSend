@@ -157,6 +157,48 @@ def test_subject_without_a_body_is_refused():
         _parse_args(["send", "--agent-draft", "--subject", "Hi"])
 
 
+# ── reply ─────────────────────────────────────────────────────────
+
+
+def test_reply_takes_a_body():
+    args = _parse_args(["reply", "--body", "Which ones?"])
+    assert (args.command, args.body) == ("reply", "Which ones?")
+
+
+@pytest.mark.parametrize("argv", [["reply", "--subject", "Hi", "--body", "B"],
+                                  ["reply", "--agent-draft"],
+                                  ["reply", "--sequence", "warm"],
+                                  ["reply", "5"]])
+def test_reply_refuses_what_belongs_to_send(argv):
+    with pytest.raises(SystemExit):
+        _parse_args(argv)
+
+
+def test_reply_runs_the_reply_pass_without_an_llm_key(site_config, capsys):
+    from openoutsend.__main__ import _reply
+
+    maillog.mailbox()
+    with patch("openoutsend.send_pass.run_reply_pass",
+               return_value=PassResult(mirrored=1, answered=1,
+                                       holding="0 reply(ies) to answer")) as run, \
+            patch("openoutsend.send_pass.run_send_pass") as whole_pass:
+        assert _reply(_args(command="reply", body="Which ones?")) == 0
+
+    whole_pass.assert_not_called()
+    assert run.call_args.args[0].body == "Which ones?"
+    assert "read 1 new message(s) · answered 1 · 0 reply(ies) to answer" in \
+        capsys.readouterr().err
+
+
+def test_a_failed_answer_is_carried_into_the_exit_code(connected, capsys):
+    from openoutsend.__main__ import _reply
+
+    with patch("openoutsend.send_pass.run_reply_pass", return_value=PassResult(failed=1)):
+        assert _reply(_args(command="reply", body="Which ones?")) == 1
+
+    assert "the answer failed to send" in capsys.readouterr().err
+
+
 def test_draft_pending_renders_as_one_typed_line(connected, capsys):
     from openoutsend.errors import DraftPending
     from openoutsend.__main__ import main

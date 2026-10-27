@@ -116,6 +116,52 @@ def run_send_pass(prompt_line_name: str | None = None, narrate: bool = True,
     return result
 
 
+def run_reply_pass(agent_draft: AgentDraft) -> PassResult:
+    """Read the mail and answer the replies through the calling agent, and nothing else.
+
+    `outsend reply`'s pass: no opener, no step, no follow-up, no closing, so a session
+    answering customers can run it beside the timer's passes on the same store without
+    sending anything but answers. The handover is ``--agent-draft``'s
+    (``_answer_drafted_reply``), one reply at a time; ``agent_draft.body`` answers the
+    one already handed over.
+
+    A draft held for an opener or a step would leave the replies waiting behind it
+    with nothing said, so it stops the pass instead: ``send --agent-draft`` answers it.
+    """
+    from openoutsend.emails.mail_pass import run_mail_pass
+    from openoutsend.planner import unanswered_replies
+
+    result = PassResult()
+    result.mirrored, result.classified, result.projected = run_mail_pass()
+    _clear_the_way_for_replies()
+    _answer_drafted_reply(result, agent_draft)
+    result.holding = f"{unanswered_replies().count()} reply(ies) to answer"
+    return result
+
+
+def _clear_the_way_for_replies() -> None:
+    """Drop a held draft whose deal is owed nothing now; refuse one owed an opener or a step.
+
+    A draft is owed nothing once its deal was stopped, closed or written to since —
+    a refused answer among them, whose row is our turn — and would otherwise sit in
+    front of every reply.
+    """
+    from openoutsend.errors import OutsendError
+    from openoutsend.leads.models import PendingDraft
+    from openoutsend.planner import unanswered_replies
+
+    held = PendingDraft.objects.exclude(deal__in=unanswered_replies().values("pk")) \
+        .select_related("deal__lead").first()
+    if held is None:
+        return
+    if _owed_send(held.deal) is None:
+        logger.info("%s is no longer owed a send — dropping its draft", held.deal.lead.public_id)
+        held.delete()
+        return
+    raise OutsendError(f"{held.deal.lead.public_id} holds a draft for an opener or a step — "
+                       "`outsend send --agent-draft` answers it")
+
+
 def _answer_replies(result: PassResult, agent_draft: AgentDraft = OFF) -> set:
     """Answer every thread whose newest turn is theirs. Returns the lead ids it handled.
 
