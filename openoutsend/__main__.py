@@ -288,6 +288,9 @@ def _report(result) -> None:
     if result.missed:
         print(f"{result.missed} lead(s) arrived with every step past its grace and were closed",
               file=sys.stderr)
+    if result.undeliverable:
+        print(f"{result.undeliverable} address(es) refused as undeliverable and suppressed",
+              file=sys.stderr)
     if result.failed:
         print(f"{result.failed} send(s) failed — see above; the next pass tries them again",
               file=sys.stderr)

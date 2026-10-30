@@ -233,9 +233,30 @@ def test_a_refused_send_keeps_its_row_and_failure_through_the_rollback(steps):
 
     deal.refresh_from_db()
     row = Message.objects.get()
-    assert result.failed == 1
+    assert (result.undeliverable, result.failed) == (1, 0)
     assert row.delivery_events.get().status != DeliveryEvent.Status.ACCEPTED
     assert deal.state == DealState.COMPLETED
+
+
+def test_an_undeliverable_address_does_not_stop_the_openers_behind_it(steps):
+    """A dead address is about the recipient, not the box: its deal is closed and the
+    next one is sent, so it cannot sit at the head of every pass."""
+    box = maillog.mailbox()
+    dead = _waiting("gone@acme.com")
+    alive = _waiting("second@acme.com")
+    steps.send.side_effect = _sending(box)
+    refusal = smtplib.SMTPRecipientsRefused({"gone@acme.com": (550, b"5.1.1 no such user")})
+
+    with patch("openoutsend.planner.free_for_first_email", side_effect=[box, box, None]), \
+            patch("openoutsend.emails.sender._deliver", side_effect=[refusal, None]):
+        result = run_send_pass()
+
+    dead.refresh_from_db()
+    alive.refresh_from_db()
+    assert (result.opened, result.undeliverable, result.failed) == (1, 1, 0)
+    assert result.ok
+    assert (dead.state, dead.outcome) == (DealState.COMPLETED, Outcome.UNDELIVERABLE)
+    assert alive.state == DealState.EMAILED
 
 
 def test_no_free_box_means_no_openers(steps):

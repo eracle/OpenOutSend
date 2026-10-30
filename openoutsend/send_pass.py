@@ -63,6 +63,7 @@ class PassResult:
     followed_up: int = 0
     gave_up: int = 0
     missed: int = 0
+    undeliverable: int = 0
     failed: int = 0
 
     holding: str = ""
@@ -301,7 +302,10 @@ def _send_cold(result: PassResult, sequence: str | None, reached: set,
     A failed send **stops the cold sends for this pass** rather than moving to the next.
     The spacing clock is written after a successful send, so a box that just refused
     one is still "free" — retrying inside the same pass would hammer a box that has
-    already said no, and would not terminate.
+    already said no, and would not terminate. **Except when the refusal ended the
+    address** (`delivery_policy.address_is_dead`): that one is about the recipient, not
+    the box, its deal is closed and cannot come round again, and stopping on it would
+    put the same dead address at the head of every later pass.
 
     **The draw happens per send, not per pass.** Drawing once outside the loop would
     make a pass a block of one move, and the log would then carry the pass's shape
@@ -323,7 +327,12 @@ def _send_cold(result: PassResult, sequence: str | None, reached: set,
         try:
             _send_in_one_transaction(
                 send.deal, lambda: _write_and_send(send, box, prompt_line_name))
-        except Exception:
+        except Exception as exc:
+            if _address_ended(exc, send.deal):
+                logger.warning("%s to %s refused: the address is undeliverable, suppressed",
+                               send.kind, send.deal.lead.public_id)
+                result.undeliverable += 1
+                continue
             logger.exception("%s to %s failed", send.kind, send.deal.lead.public_id)
             result.failed += 1
             return
@@ -331,6 +340,14 @@ def _send_cold(result: PassResult, sequence: str | None, reached: set,
 
     if agent_draft.active:
         _send_agent_draft(result, agent_draft, sequence, reached)
+
+
+def _address_ended(exc: Exception, deal) -> bool:
+    """True when *exc* is a refusal that suppressed *deal*'s address."""
+    from openoutsend.emails.sender import Refused
+    from openoutsend.leads.suppression import is_suppressed
+
+    return isinstance(exc, Refused) and is_suppressed(deal.lead.email)
 
 
 def _write_and_send(send, box, prompt_line_name: str | None):

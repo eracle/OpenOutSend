@@ -133,7 +133,7 @@ def classify(exc: Exception) -> Verdict:
     from openoutsend.emails.resend import ResendError
 
     if isinstance(exc, ResendError):
-        return _verdict(_from_resend(exc), None, str(exc))
+        return _verdict(_from_resend(exc), None, str(exc), status=_resend_status(exc))
 
     return _verdict(Response.TRANSPORT, None, str(exc))
 
@@ -161,8 +161,23 @@ def _from_resend(exc) -> str:
     return Response.TRANSPORT
 
 
-def _verdict(response: str, code: int | None, error) -> Verdict:
-    status = _enhanced_status(error)
+def _resend_status(exc) -> tuple[int, int, int] | None:
+    """The enhanced status a Resend refusal stands for, when it is about the recipient.
+
+    Resend answers before any receiver is asked, so it carries no SMTP status of its own.
+    The one refusal that says something about the address is a ``validation_error`` on
+    the ``to`` field — a placeholder like ``you@example.com``, or an address that does
+    not parse. That is 5.1.3, *malformed and never could have worked*, and reading it as
+    one is what suppresses it instead of offering it again at the head of every pass.
+    """
+    if exc.status == 422 and exc.name == "validation_error" and "`to`" in exc.message:
+        return (5, 1, 3)
+    return None
+
+
+def _verdict(response: str, code: int | None, error,
+             status: tuple[int, int, int] | None = None) -> Verdict:
+    status = status or _enhanced_status(error)
     return Verdict(
         response=response,
         smtp_code=code,

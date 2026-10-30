@@ -111,6 +111,20 @@ def test_resend_refusals_are_read_like_smtp_ones(status, name, expected):
     assert classify(resend.ResendError(status, name, "")).response == expected
 
 
+TO_REFUSED = ("Invalid `to` field. Please use our testing email address instead of domains "
+              "like `example.com`.")
+
+
+def test_a_refused_to_field_reads_as_an_address_that_never_could_work():
+    verdict = classify(resend.ResendError(422, "validation_error", TO_REFUSED))
+    assert (verdict.response, verdict.enhanced_status) == (Response.REFUSED, "5.1.3")
+
+
+def test_a_validation_error_on_another_field_says_nothing_about_the_address():
+    refusal = resend.ResendError(422, "validation_error", "Invalid `from` field.")
+    assert classify(refusal).enhanced_status == ""
+
+
 # ── The send ──────────────────────────────────────────────────────
 
 
@@ -163,6 +177,14 @@ class TestResendSend:
             send_email(box, "lead@corp.com", "Ten leads", "Body", unsubscribe_url=UNSUBSCRIBE)
         assert raised.value.cause is refusal
         assert box.paused_today()
+
+    def test_a_refused_to_field_suppresses_the_address(self):
+        box = _resend_box()
+        refusal = resend.ResendError(422, "validation_error", TO_REFUSED)
+        with patch.object(resend, "send", side_effect=refusal), pytest.raises(Refused):
+            send_email(box, "you@example.com", "Ten leads", "Body", unsubscribe_url=UNSUBSCRIBE)
+        assert is_suppressed("you@example.com")
+        assert not box.paused_today()
 
     def test_a_mailbox_keeps_its_mailto_opt_out(self):
         box = maillog.mailbox("s@corp.com")
