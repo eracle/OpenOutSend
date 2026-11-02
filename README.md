@@ -118,6 +118,10 @@ reads the reply, stops that deal's steps, sends everyone else's, and leaves the 
 and hands over the oldest reply owed the same way, `outsend reply --body "…"` sends the answer in its
 thread, and no opener, step or follow-up goes out, so a session can run it beside a timer's passes on
 the same store. A draft held for an opener or a step stops it until `send --agent-draft` answers that.
+**`outsend file --message ID --lead ID` places a reply the headers could not**: an answer to mail this
+install did not send names nothing the store holds and is read as `unrelated`. Whoever sent that mail
+knows whose answer it is, and filing puts it, with its own thread, into that lead's newest conversation,
+where `reply` hands it over. Only `unrelated` mail is filed, and only into a lead that has a thread.
 Follow-ups still go to `AI_MODEL`, so set
 `OUTSEND_FOLLOW_UPS=off` with it unless a model is configured. **`--agent-draft` also drops the model out of
 `outsend check`'s requirements for that run** — `OUTSEND_AI_MODEL`/`OUTSEND_LLM_API_KEY` are never

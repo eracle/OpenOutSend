@@ -56,7 +56,11 @@ outsend reply [--body B]         read the mail and hand the oldest reply owed to
                                  calling agent (draft_pending, step "reply", the whole
                                  conversation in its prompt); --body sends the answer in
                                  its thread. Sends nothing else: no opener, no step
-outsend check                   verify this environment can send — what you sell and to
+outsend file --message ID --lead ID
+                                 put an unrelated received message, which names nothing
+                                 the store holds, into that lead's newest conversation,
+                                 where `reply` hands it over. Sends nothing
+outsend check                  verify this environment can send — what you sell and to
                                  whom, a model that answers, who signs the mail, and a
                                  mailbox that accepts its login"""
 
@@ -70,7 +74,8 @@ def main(argv: list[str] | None = None) -> int:
     from openoutsend.errors import DraftPending, OutsendError
 
     try:
-        return {"check": _check, "send": _send, "reply": _reply}.get(args.command, _ingest)(args)
+        return {"check": _check, "send": _send, "reply": _reply,
+                "file": _file}.get(args.command, _ingest)(args)
     except DraftPending as exc:
         if args.json_output:
             print(json.dumps({"error": {"type": "draft_pending", "message": str(exc),
@@ -85,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="outsend", usage=USAGE)
-    parser.add_argument("command", nargs="?", choices=["check", "send", "reply"])
+    parser.add_argument("command", nargs="?", choices=["check", "send", "reply", "file"])
     # `send 5` is a goal, `send` is a pass — see `_send`. Positional and optional
     # because the count *is* the verb's object, the way `find 5`'s is.
     parser.add_argument("count", nargs="?", type=_goal, default=None,
@@ -108,9 +113,21 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--json", action="store_true", dest="json_output",
                         help="render a failure as {\"error\": {...}} on stderr instead "
                              "of one plain line.")
+    parser.add_argument("--message", default=None, metavar="ID",
+                        help="`file`: the Message-ID of the received message to file.")
+    parser.add_argument("--lead", default=None, metavar="ID",
+                        help="`file`: the lead_id whose conversation it joins.")
     args = parser.parse_args(argv)
     if args.count is not None and args.command != "send":
         parser.error("a count belongs to `send` — `outsend send 5`")
+    if args.command == "file":
+        if not (args.message and args.lead):
+            parser.error("`file` needs --message and --lead")
+        if args.sequence or args.agent_draft or args.subject or args.body:
+            parser.error("`file` takes --message and --lead alone")
+        return args
+    if args.message or args.lead:
+        parser.error("--message/--lead belong to `file`")
     if args.sequence is not None and args.command in ("check", "reply"):
         parser.error("--sequence belongs to the pipe and to `send`")
     if args.command == "reply":
@@ -276,6 +293,16 @@ def _reply(args: argparse.Namespace) -> int:
     if result.failed:
         print("the answer failed to send — see above", file=sys.stderr)
     return 0 if result.ok else 1
+
+
+def _file(args: argparse.Namespace) -> int:
+    """File one unrelated message into a lead's conversation (``emails/filing.py``)."""
+    from openoutsend.emails.filing import file_message
+
+    message = file_message(args.message, args.lead)
+    print(f"filed {message.message_id} into lead {args.lead}'s conversation "
+          f"as {message.kind}", file=sys.stderr)
+    return 0
 
 
 def _report(result) -> None:

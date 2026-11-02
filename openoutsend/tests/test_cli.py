@@ -190,6 +190,30 @@ def test_reply_runs_the_reply_pass_without_an_llm_key(site_config, capsys):
         capsys.readouterr().err
 
 
+def test_file_takes_a_message_and_a_lead():
+    args = _parse_args(["file", "--message", "m7@corp.com", "--lead", "sample-7"])
+    assert (args.command, args.message, args.lead) == ("file", "m7@corp.com", "sample-7")
+
+
+@pytest.mark.parametrize("argv", [["file", "--message", "m7@corp.com"],
+                                  ["file", "--lead", "sample-7"],
+                                  ["file", "--message", "m", "--lead", "l", "--body", "B"],
+                                  ["file", "--message", "m", "--lead", "l", "--sequence", "s"],
+                                  ["reply", "--message", "m"]])
+def test_file_refuses_what_is_not_its_own(argv):
+    with pytest.raises(SystemExit):
+        _parse_args(argv)
+
+
+def test_a_refused_filing_is_one_error_line(db, capsys):
+    from openoutsend.__main__ import main
+
+    with patch("openoutsend.__main__._boot"):
+        assert main(["file", "--message", "ghost@corp.com", "--lead", "sample-7"]) == 1
+
+    assert "error: no received message ghost@corp.com" in capsys.readouterr().err
+
+
 def test_a_failed_answer_is_carried_into_the_exit_code(connected, capsys):
     from openoutsend.__main__ import _reply
 

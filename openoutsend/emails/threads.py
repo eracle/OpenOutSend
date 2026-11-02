@@ -51,6 +51,22 @@ def assign(message: Message) -> Thread:
     return thread
 
 
+@transaction.atomic
+def join(message: Message, thread: Thread) -> None:
+    """Put *message*, and whatever its own thread holds, into *thread*.
+
+    For a message placed by who it is from rather than what it names
+    (``emails/filing.py``): the thread its headers gave it is the same
+    conversation seen from a client that named nothing we hold, so it moves whole.
+    """
+    if message.thread_id == thread.pk:
+        return
+    if message.thread_id:
+        _merge(message.thread_id, thread)
+    message.thread = thread
+    message.save(update_fields=["thread"])
+
+
 def _relatives(message: Message):
     """Messages in the same box that this one answers, or that answer it.
 
