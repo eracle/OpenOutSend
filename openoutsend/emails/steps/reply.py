@@ -154,6 +154,7 @@ def _send_reply(deal, message: str) -> DealState | None:
     """
     from openoutsend.core.operator import get_active_user
     from openoutsend.emails.sender import operator_bcc, send_email, suppressed
+    from openoutsend.emails.steps.send import unsubscribe_url
 
     if suppressed(deal.lead):
         logger.warning("%s was suppressed mid-run — not replying", deal.lead.public_id)
@@ -176,6 +177,7 @@ def _send_reply(deal, message: str) -> DealState | None:
         prompt_line=None,
         prompt=REPLY_PROMPT,
         sequence=deal.sequence,
+        unsubscribe_url=unsubscribe_url(deal),
     )
     return None
 

@@ -212,6 +212,21 @@ def test_the_step_sends_the_link_its_line_was_piped_with(operator):
     assert post.call_args.args[1]["headers"]["List-Unsubscribe"] == f"<{UNSUBSCRIBE}>"
 
 
+@pytest.mark.django_db
+def test_a_reply_sends_the_link_its_line_was_piped_with(operator):
+    from openoutsend.emails.steps.reply import send_drafted_reply
+
+    box = _resend_box()
+    deal = DealFactory(lead=LeadFactory(email="lead@corp.com"), state=DealState.EMAILED,
+                       mailbox=box, email_subject="Ten leads",
+                       fields={"unsubscribe_url": UNSUBSCRIBE})
+    with patch.object(resend, "send", return_value="em_1") as post:
+        send_drafted_reply(deal, "Thanks, here's the link.")
+    payload = post.call_args.args[1]
+    assert payload["headers"]["List-Unsubscribe"] == f"<{UNSUBSCRIBE}>"
+    assert payload["subject"] == "Re: Ten leads"
+
+
 # ── The capacity ──────────────────────────────────────────────────
 
 
