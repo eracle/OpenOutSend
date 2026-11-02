@@ -437,13 +437,21 @@ def _hand_back_oldest_due(sequence: str | None) -> None:
 
 
 def _owed_send(deal):
-    """The opener or step *deal* is owed now, asked again rather than remembered."""
+    """The opener or step *deal* is owed now, asked again rather than remembered.
+
+    A reply stops the remaining steps (``planner.steps_due``), so a deal written back
+    to is owed none, and is told so before any sequence is loaded: `outsend reply`
+    names no sequence folder, and could not load the others' to ask.
+    """
     from openoutsend.core.sequences import for_deal
+    from openoutsend.emails.models import Direction
     from openoutsend.planner import OPENER, DueSend, opening_step, steps_due
 
     if deal.step is None:
         opening = opening_step(deal, for_deal(deal))
         return DueSend(OPENER, deal, *opening) if opening else None
+    if deal.thread_id and deal.thread.turns().filter(direction=Direction.INBOUND).exists():
+        return None
     return next((send for send in steps_due(sequence=deal.sequence) if send.deal.pk == deal.pk),
                 None)
 

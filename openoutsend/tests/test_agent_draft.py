@@ -17,7 +17,7 @@ from django.utils import timezone
 from openoutsend.core.agent_draft import AgentDraft
 from openoutsend.emails.models import Direction, Message, Thread
 from openoutsend.errors import DraftPending, OutsendError
-from openoutsend.leads.models import DealState, PendingDraft
+from openoutsend.leads.models import Deal, DealState, PendingDraft
 from openoutsend.send_pass import run_reply_pass, run_send_pass
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.factories import DealFactory, LeadFactory, UserFactory
@@ -337,6 +337,27 @@ class TestTheReplyPass:
 
         assert raised.value.payload["lead_id"] == replied.lead.public_id
         assert PendingDraft.objects.get().deal == replied
+
+    def test_a_stale_reply_draft_is_dropped_without_loading_its_sequence(self, no_mail):
+        """`reply` names no sequence folder, so a stale draft in a folder sequence must
+        not need one to be found owed nothing — answered outside the store, say."""
+        box = maillog.mailbox()
+        stale = _wrote_back(box)
+        maillog.outbound(box, thread=stale.thread, message_id="answer@openoutreach.app",
+                         subject="Re: Ten leads")
+        Deal.objects.filter(pk=stale.pk).update(sequence="sample-to-order")
+        PendingDraft.objects.create(deal=stale)
+        waiting = Thread.objects.create(mailbox=box)
+        DealFactory(lead=LeadFactory(email="quiet@acme.com"), state=DealState.EMAILED,
+                    mailbox=box, thread=waiting, step=0, sequence="sample-to-order")
+        maillog.outbound(box, thread=waiting, to="quiet@acme.com", step=0,
+                         message_id="opener-quiet@openoutreach.app", subject="Ten leads",
+                         sent_at=timezone.now() - timedelta(days=10))
+
+        result = run_reply_pass(AgentDraft(active=True))
+
+        assert result.holding == "0 reply(ies) to answer"
+        assert PendingDraft.objects.count() == 0
 
 
 class TestHeldReplies:
