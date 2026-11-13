@@ -30,10 +30,10 @@ send_first_email(deal, box,       send_next_step(deal,           send_follow_up(
 ## The three prompts
 
 - **A sequence step**: a step file (`core/sequences.py`). An `.email.j2` step never reaches the agent: it is sent as written. Cold's only step is `sequences/cold/E0-opener.prompt.j2`, which carries the cold rules (75 words, no link, no meeting request, sourced claims only) and draws the move from the prompt-line pool with `{{ prompt_line }}`.
-- **A follow-up**: `FOLLOW_UP_PROMPT` in `emails/steps/follow_up.py`. It is sent only when `OUTSEND_FOLLOW_UPS` is on (the default), after `FOLLOW_UP_GAPS_BUSINESS_DAYS = (3, 5)` of silence, and only if it lands before the deal's next step is due. It sees the opener's prompt in the history, so it keeps the opener's move without the prompt line being read back to it.
+- **A follow-up**: `core/templates/prompts/follow_up.j2`, loaded as `FOLLOW_UP_PROMPT` in `emails/steps/follow_up.py`. It is sent only when `OUTSEND_FOLLOW_UPS` is on (the default), after `FOLLOW_UP_GAPS_BUSINESS_DAYS = (3, 5)` of silence, and only if it lands before the deal's next step is due. It sees the opener's prompt in the history, so it keeps the opener's move without the prompt line being read back to it.
 - **A reply**: `REPLY_PROMPT` in `emails/steps/reply.py`, carrying the two modes, Discovery (the default, and where the agent stays) and Pitching (only on an explicit pull).
 
-**The rules live in the prompts.** The frame carries none, so a step that needs a link says so, and cold's word ceiling sits in cold's own prompts. There is no validation of content after the fact and no retry; a draft is sent as written.
+**The rules live in the prompts.** The frame carries only the one every message shares (one genuine thing from the past with this person, or nothing), so a step that needs a link says so, and cold's word ceiling sits in cold's own prompts. There is no validation of content after the fact and no retry; a draft is sent as written.
 
 ## The history
 

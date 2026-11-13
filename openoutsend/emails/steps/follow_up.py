@@ -1,8 +1,8 @@
 # openoutsend/emails/steps/follow_up.py
 """Writing again to somebody who never answered — a nudge on the same thread.
 
-**A follow-up is a feature, not a step.** Its prompt is hardcoded here rather than in
-a sequence folder, and an install turns it on or off (``OUTSEND_FOLLOW_UPS``,
+**A follow-up is a feature, not a step.** Its prompt is the shared template
+``core/templates/prompts/follow_up.j2`` rather than a file in a sequence folder, and an install turns it on or off (``OUTSEND_FOLLOW_UPS``,
 ``core/conf.follow_ups_on``). Cold has it on; an event sequence whose steps already say
 everything has it off. The planner decides *when* (``planner.awaiting_follow_up``:
 business days measured backwards from the mail log, and only if it lands before the
@@ -35,33 +35,14 @@ import logging
 
 from termcolor import colored
 
+from openoutsend.core.agents.prompt import render
 from openoutsend.leads.models import DealState
 
 logger = logging.getLogger(__name__)
 
-FOLLOW_UP_PROMPT = """\
-They have not answered your last email. They have said nothing at all — not "no", not "later", nothing. Assume it was simply missed.
-
-Write one more short email in the same thread: a `message` and no `subject`, since it keeps the original. Or, if the facts about them say this person is plainly the wrong fit, choose `mark_completed` with `wrong_fit` instead of writing.
-
-**Say something new.** A follow-up whose whole content is that a previous email exists is the thing everyone deletes. No "just bumping this", no "did you see my last email", no "following up on the below", no apology for writing again. If you have nothing to add, ask a different and smaller question than last time.
-
-**Never imply obligation.** They did not owe you an answer and still do not. No "I did not hear back", no "I will assume you are not interested", no counting of how many times you have written.
-
-**Shorter than the last one.** Each touch has less claim on their attention than the one before it.
-
-**Stay in the voice of the email it follows.** Its prompt is above: keep the move it made. This is one person writing twice, not two campaigns.
-
-### Rules this email cannot break
-
-These override anything above.
-
-- **At most 75 words.** Write a short message; do not write a long one and squeeze it.
-- **No link of any kind**, and **no meeting request**: one question they can answer in a sentence from their phone.
-- **Only claims the facts about them can source.** If it is not in the record, you do not know it.
-- **No machine tells.** No em dash, no three-item lists, no two perfectly balanced clauses in a row.
-- Write in the same language as your last email, whatever the facts about them suggest. Switching languages mid-thread reads as a different sender.
-- No placeholders like [Your Name], and no signature."""
+# What every follow-up is written from, rules and all. It takes no variables: what it
+# needs about the person comes from the frame and the history.
+FOLLOW_UP_PROMPT = render("follow_up.j2")
 
 
 def send_follow_up(deal) -> DealState | None:

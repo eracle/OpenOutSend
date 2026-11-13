@@ -8,14 +8,14 @@ that last prompt, and each lives with the step that sends it:
 
 - **a sequence step** — a step file (``core/sequences.py``); cold's opener is
   ``sequences/cold/E0-opener.prompt.j2``. ``emails/steps/send.py`` sends it.
-- **a follow-up** — ``emails/steps/follow_up.FOLLOW_UP_PROMPT``: ``send_message`` in the
+- **a follow-up** — ``core/templates/prompts/follow_up.j2``: ``send_message`` in the
   same thread, or ``mark_completed`` if the record says this person is plainly the
   wrong fit.
 - **a reply** — ``emails/steps/reply.REPLY_PROMPT``: ``send_message`` / ``mark_completed``
   / ``suppress``.
 
 **The rules live in the prompts, not in a check after the fact.** The frame carries
-none, so a step that needs a link just says so, and cold's word ceiling and no-link
+only the one every message shares (something genuine from the past), so a step that needs a link just says so, and cold's word ceiling and no-link
 rule sit in cold's own prompts. There is no generator-side validation of content and
 no retry; a draft is sent as written.
 

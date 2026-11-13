@@ -2,9 +2,10 @@
 """Jinja plumbing + the frame every message is written inside.
 
 The frame (``frame.j2``) is the system prompt around every message: who is writing,
-the product, what we know about the lead. It carries no rules of its own — those come
-with each prompt (a step file, the follow-up, the reply) — so one frame serves every
-kind of message. ``core.agents.outreach`` puts the history and the prompt after it.
+the product, what we know about the lead. Its one rule is the one every message shares:
+carry something genuine from the past with this person. Every other rule comes with
+each prompt (a step file, the follow-up, the reply), so one frame serves every kind of
+message. ``core.agents.outreach`` puts the history and the prompt after it.
 """
 from __future__ import annotations
 

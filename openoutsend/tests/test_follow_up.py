@@ -216,6 +216,17 @@ class TestTheFollowUpItself:
         assert send.call_args.kwargs["step"] is None
         assert send.call_args.kwargs["prompt_line"] is None
 
+    def test_the_prompt_is_the_shared_template_rules_and_all(self):
+        """``follow_up.j2`` is what the model reads; the module holds no copy of its own."""
+        from openoutsend.core.conf import PROMPTS_DIR
+        from openoutsend.emails.steps.follow_up import FOLLOW_UP_PROMPT
+
+        template = (PROMPTS_DIR / "follow_up.j2").read_text().rstrip("\n")
+
+        assert FOLLOW_UP_PROMPT == template
+        assert "**No link of any kind**" in FOLLOW_UP_PROMPT
+        assert "{{" not in FOLLOW_UP_PROMPT
+
     def test_a_lead_suppressed_mid_run_is_not_chased(self, operator):
         """The same last gate the opener has — a bounce or an opt-out may have landed."""
         from openoutsend.leads.suppression import suppress_email

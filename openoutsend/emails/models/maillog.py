@@ -142,7 +142,7 @@ class Message(models.Model):
     # was sent, so the history the next message is written from replays what the model
     # was actually asked even after the step file has been edited
     # (`core/agents/history.py`). `step` and `prompt_path` say which step file it was;
-    # both are empty on a follow-up and a reply, whose prompts are hardcoded.
+    # both are empty on a follow-up and a reply, whose prompts are not step files.
     # `sequence` is the deal's sequence name (`core/sequences.key`) on every send of
     # ours, follow-ups and replies included, so which sequence sent what is read off
     # the log alone, whatever later happens to the thread or the deal.

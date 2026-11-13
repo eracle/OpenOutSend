@@ -11,7 +11,7 @@ There is **no Voyager profile dict**: the browser/scraping channel was removed. 
 - **Lead facts**: `profile_summary`, the fact list extracted once from the lead's **stored `profile_text`** (headline, company description, title, seniority, industry, location), or that text itself if the extraction has not run.
 - **`today`**, the date the email is written.
 
-The frame carries no rules. Those come with each prompt.
+The frame carries one rule, the one every message shares: name one genuine thing from the past with this person (what they wrote or did, their product, their market), sourced from the lead facts or the history, or nothing at all. Every other rule comes with each prompt.
 
 ## What a step file receives
 

@@ -43,7 +43,7 @@ class TestTheFrame:
         assert "Senior engineer at Acme Corp." in frame
         assert f"Today is {timezone.now():%Y-%m-%d}" in frame
 
-    def test_it_carries_no_rules_of_its_own(self, deal):
+    def test_it_carries_no_step_rules_of_its_own(self, deal):
         """The rules come with each prompt, so a step that needs a link can just say so."""
         from openoutsend.core.agents.outreach import render_frame
 
@@ -51,6 +51,15 @@ class TestTheFrame:
 
         assert "No link of any kind" not in frame
         assert "Mom Test" not in frame
+
+    def test_it_asks_every_message_for_something_genuine_and_sourced(self, deal):
+        """The one rule every message shares: a real thing from the past, never an invented one."""
+        from openoutsend.core.agents.outreach import render_frame
+
+        frame = render_frame(deal)
+
+        assert "## Write Like Someone Who Knows Them" in frame
+        assert "rather than fake familiarity" in frame
 
     def test_an_unextracted_lead_falls_back_to_the_raw_profile_text(self, site_config):
         """The facts are a cache over ``profile_text``; until it is built, the text itself goes in."""
