@@ -127,7 +127,8 @@ SEND_INTERVAL_JITTER_MAX_SECONDS = 90
 #
 # **Business days, not calendar days.** A Friday opener followed up on Monday has
 # waited one working day, and chasing across a weekend reads as a machine counting
-# hours (`core/business_time.py`).
+# hours (`core/business_time.py`). An operator who sends at weekends
+# (``OUTSEND_ENFORCE_WEEKEND_PAUSE`` off) works them too, so for them every day counts.
 #
 # **The number of follow-ups is the length of the gaps.** Two after a sequence's last
 # step, then the deal ends `unresponsive`; after an earlier step, only those that land

@@ -249,3 +249,23 @@ def test_add_business_days_of_zero_is_the_start_itself():
     friday = datetime.fromisoformat("2026-10-09T15:00:00+00:00")
 
     assert add_business_days(friday, 0) == friday
+
+
+def test_with_the_weekend_pause_off_every_day_counts(settings):
+    """An operator who sends at weekends waits in calendar days: Friday + 1 is Saturday."""
+    settings.OUTSEND_ENFORCE_WEEKEND_PAUSE = False
+    friday = datetime.fromisoformat("2026-10-09T15:00:00+00:00")
+    monday = datetime.fromisoformat("2026-10-12T09:00:00+00:00")
+
+    assert add_business_days(friday, 1) == datetime.fromisoformat("2026-10-10T00:00:00+00:00")
+    assert add_business_days(friday, 3) == datetime.fromisoformat("2026-10-12T00:00:00+00:00")
+    assert business_days_between(friday, monday) == 3
+    assert business_days_between(friday, friday + timedelta(days=15)) == 15
+
+
+def test_with_the_weekend_pause_on_friday_to_monday_is_one_day(settings):
+    settings.OUTSEND_ENFORCE_WEEKEND_PAUSE = True
+    friday = datetime.fromisoformat("2026-10-09T15:00:00+00:00")
+
+    assert business_days_between(friday, datetime.fromisoformat("2026-10-12T09:00:00+00:00")) == 1
+    assert business_days_between(friday, friday + timedelta(days=15)) == 10

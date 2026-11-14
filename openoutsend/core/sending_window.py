@@ -8,7 +8,9 @@ wait for the answer; replies never come through here at all.
 The two are independent flags (``OUTSEND_ENFORCE_WORK_HOURS``,
 ``OUTSEND_ENFORCE_WEEKEND_PAUSE``), both on by default. An operator who wants
 Saturday/Sunday sends but still wants the 08:00–20:00 line held turns off only
-the second — a single combined switch could not express that.
+the second — a single combined switch could not express that. The weekend flag is
+read in ``business_time.is_business_day``, so turning it off also makes the waits
+between steps and follow-ups count Saturday and Sunday.
 
 The timezone is *derived*, never configured. The operator answered one question
 at onboarding — their country — and ``pytz.country_timezones`` turns it into a
@@ -47,7 +49,7 @@ def within_sending_window(now: datetime | None = None) -> bool:
     """
     local = timezone.localtime(now or timezone.now(), operator_timezone())
     return (
-        (not _weekend_pause_enforced() or is_business_day(local.date()))
+        is_business_day(local.date())  # every day is one with the weekend pause off
         and (not _work_hours_enforced()
              or SEND_WINDOW_START_HOUR <= local.hour < SEND_WINDOW_END_HOUR)
     )
@@ -78,20 +80,14 @@ def next_window_open(now: datetime | None = None) -> datetime:
     else:
         opening = local
 
-    if _weekend_pause_enforced():
-        while not is_business_day(opening.date()):
-            opening += timedelta(days=1)
+    while not is_business_day(opening.date()):
+        opening += timedelta(days=1)
     return opening
 
 
 def _work_hours_enforced() -> bool:
     """Whether the 08:00–20:00 half of the window is checked (``OUTSEND_ENFORCE_WORK_HOURS``)."""
     return getattr(settings, "OUTSEND_ENFORCE_WORK_HOURS", True)
-
-
-def _weekend_pause_enforced() -> bool:
-    """Whether Sat/Sun are shut (``OUTSEND_ENFORCE_WEEKEND_PAUSE``)."""
-    return getattr(settings, "OUTSEND_ENFORCE_WEEKEND_PAUSE", True)
 
 
 def operator_timezone() -> ZoneInfo:

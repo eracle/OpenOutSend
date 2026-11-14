@@ -5,6 +5,13 @@ A thread that sat untouched over a weekend has not really gone quiet, and the
 outreach agent is told the gap in working days so it reads a Friday reply answered
 on Monday as one day old rather than three.
 
+**Which days are working days is the operator's, through one flag.** With
+``OUTSEND_ENFORCE_WEEKEND_PAUSE`` on (the default) they are Monday–Friday. An
+operator who turns it off sends on Saturday and Sunday, so those are working days
+too: every wait, step gap and silence is then counted in calendar days. One answer
+for both questions, so the clock that lets a Saturday email leave and the clock that
+says how long a Saturday silence lasted never disagree.
+
 Measuring is all this does. Public holidays are deliberately not modelled: they are
 per-country, per-year data we do not carry, and this figure is coarse enough that a
 missed holiday costs one slightly-off number in a prompt.
@@ -13,19 +20,27 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 
+from django.conf import settings
+
 SATURDAY = 5
 
 
+def weekend_pause_enforced() -> bool:
+    """Whether Sat/Sun are shut (``OUTSEND_ENFORCE_WEEKEND_PAUSE``, default on)."""
+    return getattr(settings, "OUTSEND_ENFORCE_WEEKEND_PAUSE", True)
+
+
 def is_business_day(day: date) -> bool:
-    """True for Monday–Friday."""
-    return day.weekday() < SATURDAY
+    """True for Monday–Friday, and for every day once the weekend pause is off."""
+    return day.weekday() < SATURDAY or not weekend_pause_enforced()
 
 
 def business_days_between(start: datetime, end: datetime) -> int:
-    """Whole working days elapsed from ``start`` to ``end`` (weekends excluded).
+    """Whole working days elapsed from ``start`` to ``end``.
 
     Counts the business days in the half-open range ``(start.date(), end.date()]``,
-    so Friday → Monday is 1 and Friday → Sunday is 0. Never negative.
+    so Friday → Monday is 1 and Friday → Sunday is 0 under the weekend pause (3 and 2
+    without it). Never negative.
     """
     return _business_days_in_range(start.date() + timedelta(days=1),
                                    end.date() + timedelta(days=1))
@@ -35,7 +50,7 @@ def add_business_days(start: datetime, days: int) -> datetime:
     """The first moment ``days`` working days after ``start``, by ``business_days_between``.
 
     ``start`` itself for ``0``; otherwise midnight, in ``start``'s zone, of the
-    ``days``-th weekday after ``start.date()`` — the moment the count reaches ``days``.
+    ``days``-th working day after ``start.date()`` — the moment the count reaches ``days``.
     """
     if days <= 0:
         return start
@@ -51,10 +66,12 @@ def add_business_days(start: datetime, days: int) -> datetime:
 
 
 def _business_days_in_range(start: date, end: date) -> int:
-    """Number of Monday–Friday days in the half-open range ``[start, end)``."""
+    """Number of working days in the half-open range ``[start, end)``."""
     days = (end - start).days
     if days <= 0:
         return 0
+    if not weekend_pause_enforced():
+        return days
     full_weeks, remainder = divmod(days, 7)
     count = full_weeks * 5
     for offset in range(remainder):
