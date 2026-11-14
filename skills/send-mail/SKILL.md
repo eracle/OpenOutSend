@@ -90,7 +90,7 @@ would report `send 5` as falling short at three of five — it is the same endin
 inverted, so prefer `all` to typing a count that goes stale as you type it.
 
 **A lead who never answers gets two more emails, then the pursuit ends** (after three working days,
-then five); a reply at any point ends the sequence and the conversation takes over instead.
+then five; Monday–Friday, or every day with `OUTSEND_ENFORCE_WEEKEND_PAUSE=off`); a reply at any point ends the sequence and the conversation takes over instead.
 
 ## Writing the openers and steps yourself, with no second LLM key
 

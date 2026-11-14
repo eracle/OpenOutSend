@@ -138,7 +138,10 @@ for the email at hand. The first email's prompt is a file, `openoutsend/sequence
 a copy of the `cold/` folder at `~/.openoutsend/sequences/cold/` replaces it whole.
 
 **A lead who never answers gets two more emails, then the pursuit ends** — after three working days,
-then five, and the deal closes as `unresponsive`. `OUTSEND_FOLLOW_UPS=off` turns those two off for the
+then five, and the deal closes as `unresponsive`. Working days are Monday–Friday, and first emails
+wait for them too; `OUTSEND_ENFORCE_WEEKEND_PAUSE=off` makes every day one, so the install sends at
+weekends and counts every wait in calendar days (`OUTSEND_ENFORCE_WORK_HOURS=off` drops the
+08:00–20:00 line on its own). `OUTSEND_FOLLOW_UPS=off` turns those two off for the
 install. A reply at any point ends the follow-ups and the conversation takes over. **Follow-ups are cold volume and are treated as such**: they share one daily
 cap, one spacing clock and one sending window with the openers, rather than claiming ahead of them out
 of a budget of their own. A reply obeys none of the three, because answering someone who wrote to you
@@ -164,7 +167,7 @@ outsend send --sequence after-a-demo                    # or in this one alone
 
 - **The filename is the schedule**: `E<number>[-<days>d]-<name>.<kind>.j2`. `E0` goes its days after
   the lead's `start_at` (the ingest time when the line has none); every later step goes its days after
-  the previous step, in business days, on the same thread and box. A bad name, a duplicate or missing
+  the previous step, in working days (every day with the weekend pause off), on the same thread and box. A bad name, a duplicate or missing
   number, a `0d` after `E0` or a Jinja syntax error fails the command that named the folder.
 - **The kind says whether a model writes it.** A `.prompt.j2` is instructions: the model reads it with
   the whole history and writes the email. An `.email.j2` is the email itself, sent as written with no
