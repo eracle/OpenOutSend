@@ -91,6 +91,9 @@ def app_settings() -> dict:
         # instead of stopping a run. The model and its key are the opposite on all three
         # counts, which is why `first_run.check_ready()` refuses to start without them.
         "OUTSEND_OPERATOR_COUNTRY": os.environ.get("OUTSEND_OPERATOR_COUNTRY", ""),
+        # An IANA zone name that overrides the country's first zone, for an operator in
+        # a country with several (the Canary Islands are not Madrid). Blank: the country.
+        "OUTSEND_OPERATOR_TIMEZONE": os.environ.get("OUTSEND_OPERATOR_TIMEZONE", ""),
         # Two independent gates on a first email leaving, both on by default. Split
         # rather than one "sending window" toggle because an operator can want either
         # without the other — hold the 08:00–20:00 line but let Saturday/Sunday sends

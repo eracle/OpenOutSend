@@ -5,6 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
+import pytest
+
+from openoutsend.errors import OutsendError
 from openoutsend.core.sending_window import (
     UTC,
     _zone_for_country,
@@ -197,3 +200,14 @@ class TestResolvingTheZone:
         """The country is a setting on this side — there is no config table to load."""
         settings.OUTSEND_OPERATOR_COUNTRY = "de"
         assert operator_timezone() == ZoneInfo("Europe/Berlin")
+
+    def test_a_named_zone_wins_over_the_countrys_first(self, settings):
+        """Spain's first zone is Madrid; an operator in the Canaries names theirs."""
+        settings.OUTSEND_OPERATOR_COUNTRY = "es"
+        settings.OUTSEND_OPERATOR_TIMEZONE = "Atlantic/Canary"
+        assert operator_timezone() == ZoneInfo("Atlantic/Canary")
+
+    def test_an_unknown_zone_name_stops_the_run(self, settings):
+        settings.OUTSEND_OPERATOR_TIMEZONE = "Atlantic/Canaries"
+        with pytest.raises(OutsendError, match="OUTSEND_OPERATOR_TIMEZONE"):
+            operator_timezone()

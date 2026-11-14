@@ -305,6 +305,7 @@ The environment is the operator seam — the only way in a timer has:
 | | |
 | --- | --- |
 | `OUTSEND_OPERATOR_COUNTRY` | ISO 3166 alpha-2; resolves the operator's clock — the sending window for a lead with no `timezone`, and the midnight the daily cap rolls at |
+| `OUTSEND_OPERATOR_TIMEZONE` | an IANA zone (`Atlantic/Canary`) that overrides the country's first zone; a name the tz database doesn't know stops the run |
 | `OUTSEND_AI_MODEL` | a pydantic-ai `provider:model` id, e.g. `anthropic:claude-sonnet-4-5-20250929` |
 | `OUTSEND_LLM_API_KEY` / `OUTSEND_LLM_API_BASE` | credentials for it; pinged once per run before any mail moves |
 | `OUTSEND_PRODUCT_DOCS` / `OUTSEND_CAMPAIGN_TARGET` / `OUTSEND_BOOKING_LINK` | what a message is written from; the first two are required |

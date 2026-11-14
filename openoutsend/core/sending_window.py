@@ -18,11 +18,12 @@ the second — a single combined switch could not express that. The weekend flag
 read in ``business_time.is_business_day``, so turning it off also makes the waits
 between steps and follow-ups count Saturday and Sunday.
 
-The operator's zone is *derived*, never configured. The operator answered one
-question at onboarding — their country — and ``pytz.country_timezones`` turns it
-into a zone. Countries spanning several zones (US, BR, AU) get the first one the
-table lists, which is a deliberate approximation: the operator's zone is the
-fallback for a lead with none, and it also draws the midnight every daily cap
+The operator's zone is derived from their country: ``pytz.country_timezones`` turns
+the one onboarding answer into a zone, and countries spanning several zones (US, BR,
+AU, ES) get the first one the table lists. An operator for whom that first zone is
+wrong — the Canary Islands are an hour behind Madrid — names theirs in
+``OUTSEND_OPERATOR_TIMEZONE``, which wins over the country. The operator's zone is
+the fallback for a lead with none, and it also draws the midnight every daily cap
 counts from (``emails/models/mailbox._local_midnight``).
 """
 from __future__ import annotations
@@ -114,10 +115,22 @@ def load_zone(name: str) -> ZoneInfo | None:
 
 
 def operator_timezone() -> ZoneInfo:
-    """The operator's timezone, from their configured country code; UTC if unset."""
-    from openoutsend.core.operator import operator_country
+    """The operator's timezone: ``OUTSEND_OPERATOR_TIMEZONE`` when set, else their country's; UTC if neither.
 
-    return _zone_for_country(operator_country())
+    Raises ``OutsendError`` for a zone name the tz database does not know: a typo read
+    as UTC would move every send by hours without a word.
+    """
+    from openoutsend.core.operator import operator_country
+    from openoutsend.errors import OutsendError
+
+    name = (getattr(settings, "OUTSEND_OPERATOR_TIMEZONE", "") or "").strip()
+    if not name:
+        return _zone_for_country(operator_country())
+    zone = load_zone(name)
+    if zone is None:
+        raise OutsendError(
+            f"OUTSEND_OPERATOR_TIMEZONE must be an IANA zone name like Atlantic/Canary, not {name!r}")
+    return zone
 
 
 def _zone_for_country(country_code: str | None) -> ZoneInfo:
