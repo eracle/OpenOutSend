@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone as dt_timezone
+from types import SimpleNamespace
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from openoutsend.core.sending_window import (
     UTC,
     _zone_for_country,
+    lead_timezone,
     next_window_open,
     operator_timezone,
     within_sending_window,
@@ -128,6 +130,49 @@ class TestWhenItOpensAgain:
         settings.OUTSEND_ENFORCE_WORK_HOURS = False
         opens = self._rome(_utc(SAT, 3))               # 04:00 Rome, Saturday
         assert (opens.day, opens.hour, opens.weekday()) == (SAT + 2, 4, 0)
+
+
+class TestTheLeadsOwnClock:
+    """The window is read where the lead is; the operator sits in Rome (UTC+1 here)."""
+
+    def _open_for(self, now: datetime, zone: str) -> bool:
+        with patch("openoutsend.core.sending_window.operator_timezone",
+                   return_value=ZoneInfo("Europe/Rome")):
+            return within_sending_window(now, ZoneInfo(zone))
+
+    def test_a_lead_west_of_the_operator_waits_for_their_morning(self):
+        """12:00 Rome is 04:00 in Los Angeles (UTC-7 after the US switch)."""
+        assert self._open_for(_utc(WED, 11), "America/Los_Angeles") is False
+        assert self._open_for(_utc(WED, 17), "America/Los_Angeles") is True   # 10:00 LA
+
+    def test_a_lead_east_of_the_operator_is_shut_by_their_evening(self):
+        """19:00 Rome is 23:30 in Mumbai; 05:00 Rome is 09:30 there."""
+        assert self._open_for(_utc(WED, 18), "Asia/Kolkata") is False
+        assert self._open_for(_utc(WED, 4), "Asia/Kolkata") is True
+
+    def test_a_lead_past_the_date_line_reads_their_own_weekday(self):
+        """Sunday 20:00 UTC is already Monday 09:00 in Auckland (UTC+13), and Friday
+        10:00 UTC is Friday 23:00 there."""
+        assert self._open_for(_utc(SUN, 20), "Pacific/Auckland") is True
+        assert self._open_for(_utc(SAT - 1, 10), "Pacific/Auckland") is False
+
+    def test_the_wait_is_for_the_leads_morning(self):
+        with patch("openoutsend.core.sending_window.operator_timezone",
+                   return_value=ZoneInfo("Europe/Rome")):
+            opens = next_window_open(_utc(WED, 11), ZoneInfo("America/Los_Angeles"))
+        assert opens == _utc(WED, 15)   # 08:00 Los Angeles
+
+    def test_a_lead_with_no_zone_reads_the_operators(self, settings):
+        settings.OUTSEND_OPERATOR_COUNTRY = "it"
+        assert lead_timezone(SimpleNamespace(timezone="")) == ZoneInfo("Europe/Rome")
+
+    def test_a_lead_with_a_zone_reads_it(self, settings):
+        settings.OUTSEND_OPERATOR_COUNTRY = "it"
+        assert lead_timezone(SimpleNamespace(timezone="Asia/Kolkata")) == ZoneInfo("Asia/Kolkata")
+
+    def test_a_zone_the_database_lost_falls_back_to_the_operators(self, settings):
+        settings.OUTSEND_OPERATOR_COUNTRY = "it"
+        assert lead_timezone(SimpleNamespace(timezone="Mars/Olympus")) == ZoneInfo("Europe/Rome")
 
 
 class TestResolvingTheZone:

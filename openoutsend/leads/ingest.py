@@ -20,6 +20,8 @@ running it again, so nothing may depend on a line arriving exactly once.
   merged the same way: latest wins key by key, a missing or null key changes nothing.
   `start_at` and `stop` are the two the engine reads itself, so a line carrying one it
   cannot read is malformed rather than half-stored.
+- **`timezone` is the lead's, and only a name `zoneinfo` can load is taken.** A line
+  with any other value is malformed. Nothing here turns a country into a zone.
 - **An address that *changed* is re-checked**, because ingest is lead-keyed while
   suppression is address-keyed: a corrected address is an unsuppressed one until
   something looks again.
@@ -56,6 +58,7 @@ LEAD_FIELDS = (
     "website",
     "linkedin_url",
     "profile_text",
+    "timezone",
 )
 
 # The keys that are not prompt fields: the lead's columns, the deal's own columns, and
@@ -133,11 +136,28 @@ def _parse(line: str, number: int, needs_unsubscribe_url: bool = False) -> dict 
     if record.get("stop") is not None and not isinstance(record["stop"], bool):
         logger.error("line %d skipped: stop is not true or false", number)
         return None
+    if not _readable_timezone(record.get("timezone")):
+        logger.error("line %d skipped: timezone %r is not an IANA zone name", number,
+                     record["timezone"])
+        return None
     if needs_unsubscribe_url and not record.get("unsubscribe_url") and record.get("stop") is not True:
         logger.error("line %d skipped: no unsubscribe_url, which a resend install sends "
                      "every email with", number)
         return None
     return record
+
+
+def _readable_timezone(value) -> bool:
+    """Whether *value* is absent, blank, or an IANA name the tz database can load.
+
+    Only the name is checked, never translated: a country or an offset is not a zone,
+    and turning one into a zone is the producer's call (``core/sending_window.py``).
+    """
+    from openoutsend.core.sending_window import load_zone
+
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return True
+    return isinstance(value, str) and load_zone(value.strip()) is not None
 
 
 def _start_at(record: dict) -> datetime | None:

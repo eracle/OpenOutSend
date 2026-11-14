@@ -34,6 +34,9 @@ def history(lead, now) -> str:
 
     ``""`` when nothing has: a first email is written from its prompt alone.
     """
+    from openoutsend.core.sending_window import lead_timezone
+
+    zone = lead_timezone(lead)
     turns = _turns_with(lead)
     blocks: list[str] = []
     for index, turn in enumerate(turns):
@@ -41,7 +44,7 @@ def history(lead, now) -> str:
         if turn.is_outbound:
             following = turns[index + 1] if index + 1 < len(turns) else None
             if following is None or following.is_outbound:
-                blocks.append(_silence(turn.sent_at, following.sent_at if following else now))
+                blocks.append(_silence(turn.sent_at, following.sent_at if following else now, zone))
     return "\n\n".join(blocks)
 
 
@@ -72,10 +75,10 @@ def _blocks_of(turn) -> list[str]:
     return blocks
 
 
-def _silence(since, until) -> str:
-    """The gap after one of our sends that nobody answered, in working days.
+def _silence(since, until, zone) -> str:
+    """The gap after one of our sends that nobody answered, in the lead's working days.
 
     Our sends always carry ``sent_at``, and *until* is either the next of ours or now.
     """
-    days = business_days_between(since, until)
+    days = business_days_between(since, until, zone)
     return f"[NO REPLY for {days} business day{'' if days == 1 else 's'}]"

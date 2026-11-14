@@ -478,11 +478,13 @@ def _send_answer(result: PassResult, pending, send, reached: set) -> bool:
     """Send the kept answer if its box is free. True once it is sent; a failed send keeps
     it for the next pass, as a failed `AI_MODEL` send is retried."""
     from openoutsend.emails.steps.send import send_drafted_email, send_drafted_step
+    from openoutsend.core.sending_window import lead_timezone
     from openoutsend.planner import OPENER, free_for_first_email, free_thread_box
 
     deal = pending.deal
     opener = send.kind == OPENER
-    box = free_for_first_email(deal.sequence) if opener else free_thread_box(deal)
+    box = (free_for_first_email(deal.sequence, lead_timezone(deal.lead)) if opener
+           else free_thread_box(deal))
     if box is None or deal.lead_id in reached:
         # Answered, but no box is free right now, or this lead was already written
         # to this pass — the same "nothing to do this pass" every other step reports
@@ -572,11 +574,12 @@ def _what_is_holding(sequence: str | None) -> str:
     does nothing looks exactly like a pass with nothing to do.
     """
     from openoutsend.core.conf import REPLIES_HOLD, replies
-    from openoutsend.core.sending_window import within_sending_window
+    from openoutsend.core.sending_window import lead_timezone, within_sending_window
     from openoutsend.emails.models import Mailbox
     from openoutsend.planner import emailable_deals, unanswered_replies
 
-    waiting = emailable_deals(sequence).count()
+    pool = emailable_deals(sequence)
+    waiting = pool.count()
     to_answer = unanswered_replies().count()
     held = " (held for an agent)" if to_answer and replies() == REPLIES_HOLD else ""
     counts = f"{waiting} waiting to be emailed · {to_answer} reply(ies) to answer{held}"
@@ -586,6 +589,7 @@ def _what_is_holding(sequence: str | None) -> str:
     headroom = Mailbox.objects.remaining_today(sequence)
     if not headroom:
         return f"{counts} · no send headroom left today, so no first emails"
-    if not within_sending_window():
-        return f"{counts} · outside sending hours, so no first emails"
+    zones = {lead_timezone(deal.lead) for deal in pool} or {None}
+    if not any(within_sending_window(zone=zone) for zone in zones):
+        return f"{counts} · outside sending hours for every waiting lead, so no first emails"
     return f"{counts} · {headroom} first email(s) left today"

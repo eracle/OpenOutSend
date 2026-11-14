@@ -125,9 +125,10 @@ def _three_steps() -> Sequence:
     ))
 
 
-def _enrolled(start: str, arrived: str = "2026-10-05T09:00:00+00:00"):
+def _enrolled(start: str, arrived: str = "2026-10-05T09:00:00+00:00", zone: str = ""):
     return SimpleNamespace(start_at=datetime.fromisoformat(start),
-                           created_at=datetime.fromisoformat(arrived))
+                           created_at=datetime.fromisoformat(arrived),
+                           lead=SimpleNamespace(timezone=zone))
 
 
 def test_e0_is_due_its_days_after_start_at():
@@ -224,6 +225,64 @@ def test_an_opener_not_yet_due_is_not_in_the_queue(site_config):
     assert _queue(FRIDAY_NOON) == ["follow_up"]
 
 
+def _window_at(moment):
+    """The real window, asked at *moment* — each lead's zone still decides."""
+    from unittest.mock import patch
+
+    from openoutsend.core import sending_window
+
+    real = sending_window.within_sending_window
+    return patch("openoutsend.core.sending_window.within_sending_window",
+                 side_effect=lambda now=None, zone=None: real(moment, zone))
+
+
+def test_a_pass_sends_to_the_leads_whose_day_it_is(site_config):
+    """Friday 12:00 UTC is 14:00 in Rome and 21:00 in Tokyo: only Rome's lead is written to."""
+    from openoutsend.planner import cold_sends_due
+
+    maillog.mailbox(daily_limit=50)
+    for email, zone in (("rome@acme.com", "Europe/Rome"), ("tokyo@acme.com", "Asia/Tokyo")):
+        DealFactory(lead=LeadFactory(email=email, timezone=zone),
+                    start_at=FRIDAY_NOON, created_at=FRIDAY_NOON)
+
+    with _window_at(FRIDAY_NOON):
+        sent = [send.deal.lead.email for send, _ in cold_sends_due(FRIDAY_NOON)]
+
+    assert sent == ["rome@acme.com"]
+
+
+def test_a_closed_window_for_one_zone_does_not_close_the_pool_for_another(site_config):
+    """The older opener is Tokyo's and is skipped; the newer Rome one still finds a box."""
+    from openoutsend.planner import cold_sends_due
+
+    maillog.mailbox(daily_limit=50)
+    DealFactory(lead=LeadFactory(email="tokyo@acme.com", timezone="Asia/Tokyo"),
+                start_at=FRIDAY_NOON - timedelta(hours=2), created_at=FRIDAY_NOON - timedelta(hours=2))
+    DealFactory(lead=LeadFactory(email="rome@acme.com", timezone="Europe/Rome"),
+                start_at=FRIDAY_NOON, created_at=FRIDAY_NOON)
+
+    with _window_at(FRIDAY_NOON):
+        sent = [send.deal.lead.email for send, _ in cold_sends_due(FRIDAY_NOON)]
+
+    assert sent == ["rome@acme.com"]
+
+
+def test_the_wait_is_for_the_earliest_morning_among_the_waiting_leads(site_config):
+    """Only a Tokyo lead waits on Friday 21:00 there: the next opening is Monday 08:00 Tokyo."""
+    from openoutsend.planner import next_first_email_at
+
+    maillog.mailbox(daily_limit=50)
+    DealFactory(lead=LeadFactory(email="tokyo@acme.com", timezone="Asia/Tokyo"),
+                start_at=FRIDAY_NOON, created_at=FRIDAY_NOON)
+
+    assert next_first_email_at(FRIDAY_NOON) == datetime.fromisoformat("2026-10-11T23:00:00+00:00")
+
+    DealFactory(lead=LeadFactory(email="rome@acme.com", timezone="Europe/Rome"),
+                start_at=FRIDAY_NOON, created_at=FRIDAY_NOON)
+
+    assert next_first_email_at(FRIDAY_NOON) == FRIDAY_NOON
+
+
 def test_a_lead_already_written_to_this_pass_is_left_for_the_next(site_config):
     """A reply answered earlier in the pass counts: one message per address per pass."""
     box = maillog.mailbox(daily_limit=50)
@@ -261,6 +320,37 @@ def test_with_the_weekend_pause_off_every_day_counts(settings):
     assert add_business_days(friday, 3) == datetime.fromisoformat("2026-10-12T00:00:00+00:00")
     assert business_days_between(friday, monday) == 3
     assert business_days_between(friday, friday + timedelta(days=15)) == 15
+
+
+def test_working_days_are_counted_on_the_leads_calendar(settings):
+    """Friday 22:00 UTC is already Saturday 09:00 in Sydney, so the next working day
+    there is Monday in Sydney — Sunday 13:00 UTC — and Thursday evening UTC to Friday
+    morning UTC is no working day at all in Sydney, where both are Friday."""
+    from zoneinfo import ZoneInfo
+
+    settings.OUTSEND_ENFORCE_WEEKEND_PAUSE = True
+    sydney = ZoneInfo("Australia/Sydney")
+    friday_night = datetime.fromisoformat("2026-10-09T22:00:00+00:00")
+
+    assert add_business_days(friday_night, 1, sydney) == datetime.fromisoformat("2026-10-11T13:00:00+00:00")
+    assert add_business_days(friday_night, 1) == datetime.fromisoformat("2026-10-12T00:00:00+00:00")
+
+    thursday_evening = datetime.fromisoformat("2026-10-08T20:00:00+00:00")
+    friday_morning = datetime.fromisoformat("2026-10-09T10:00:00+00:00")
+    assert business_days_between(thursday_evening, friday_morning, sydney) == 0
+    assert business_days_between(thursday_evening, friday_morning) == 1
+
+
+def test_a_sydney_leads_opener_skips_the_sydney_weekend(settings):
+    """Enrolled Friday 22:00 UTC (Saturday in Sydney) with E0 two working days out:
+    Tuesday 00:00 in Sydney, not Tuesday 00:00 UTC."""
+    settings.OUTSEND_ENFORCE_WEEKEND_PAUSE = True
+    deal = _enrolled("2026-10-09T22:00:00+00:00", arrived="2026-10-09T22:00:00+00:00",
+                     zone="Australia/Sydney")
+
+    _, due = opening_step(deal, _three_steps())
+
+    assert due == datetime.fromisoformat("2026-10-12T13:00:00+00:00")
 
 
 def test_with_the_weekend_pause_on_friday_to_monday_is_one_day(settings):

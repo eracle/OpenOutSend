@@ -207,6 +207,39 @@ def test_an_engine_field_it_cannot_read_makes_the_line_malformed(bad, caplog):
     assert "line 1 skipped" in caplog.text
 
 
+# ── The lead's timezone ───────────────────────────────────────────
+
+
+def test_a_zone_name_is_stored_on_the_lead_and_is_not_a_prompt_field():
+    ingest(stream(record(timezone="America/Chicago")))
+
+    assert Lead.objects.get().timezone == "America/Chicago"
+    assert "timezone" not in Deal.objects.get().fields
+
+
+def test_a_line_with_no_zone_leaves_it_blank():
+    ingest(stream(record()))
+
+    assert Lead.objects.get().timezone == ""
+
+
+def test_a_re_ingest_carrying_a_zone_corrects_it_and_a_blank_one_keeps_it():
+    ingest(stream(record(timezone="America/Chicago")))
+    ingest(stream(record(timezone="America/New_York")))
+    ingest(stream(record(timezone="")))
+
+    assert Lead.objects.get().timezone == "America/New_York"
+
+
+@pytest.mark.parametrize("bad", ["US", "Mars/Olympus", "+05:30", 5])
+def test_a_zone_the_tz_database_cannot_load_makes_the_line_malformed(bad, caplog):
+    """A country is not a zone: nothing on this side turns one into the other."""
+    result = ingest(stream(record(timezone=bad)))
+
+    assert (result.stored, result.skipped) == (0, 1)
+    assert "is not an IANA zone name" in caplog.text
+
+
 # ── The door ──────────────────────────────────────────────────────
 
 

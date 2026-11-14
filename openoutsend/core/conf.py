@@ -296,9 +296,10 @@ MEAN_SEND_INTERVAL_SECONDS = MIN_SEND_INTERVAL_SECONDS + (
 # on its own — ``OUTSEND_ENFORCE_WEEKEND_PAUSE`` and ``OUTSEND_ENFORCE_WORK_HOURS``
 # are independent flags, both on by default (``core/sending_window.py``).
 #
-# The window is the operator's, not the recipient's: we know where the operator
-# is (one configured answer) and never where the lead is (the discovery row
-# carries a country at best, and the campaign may target several).
+# The window is the recipient's: a line that carries `timezone` (an IANA name the
+# producer chose) is sent inside 08:00–20:00 there, and one without it inside the
+# operator's (``sending_window.lead_timezone``). The daily cap still rolls at the
+# operator's midnight.
 # ----------------------------------------------------------------------
 SEND_WINDOW_START_HOUR = 8   # inclusive — no first email before 08:00 local
 SEND_WINDOW_END_HOUR = 20    # exclusive — none from 20:00 on

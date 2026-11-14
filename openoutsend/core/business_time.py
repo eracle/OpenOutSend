@@ -12,13 +12,18 @@ too: every wait, step gap and silence is then counted in calendar days. One answ
 for both questions, so the clock that lets a Saturday email leave and the clock that
 says how long a Saturday silence lasted never disagree.
 
+**The days are the lead's.** Both functions take the lead's zone
+(``sending_window.lead_timezone``) and read the dates there, so a gap of N working
+days skips the recipient's weekend: Friday evening in Sydney is still Friday morning
+in Rome. Without a zone, a datetime's dates are read in its own offset.
+
 Measuring is all this does. Public holidays are deliberately not modelled: they are
 per-country, per-year data we do not carry, and this figure is coarse enough that a
 missed holiday costs one slightly-off number in a prompt.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, tzinfo
 
 from django.conf import settings
 
@@ -35,25 +40,28 @@ def is_business_day(day: date) -> bool:
     return day.weekday() < SATURDAY or not weekend_pause_enforced()
 
 
-def business_days_between(start: datetime, end: datetime) -> int:
-    """Whole working days elapsed from ``start`` to ``end``.
+def business_days_between(start: datetime, end: datetime, zone: tzinfo | None = None) -> int:
+    """Whole working days elapsed from ``start`` to ``end``, with dates read in *zone*.
 
     Counts the business days in the half-open range ``(start.date(), end.date()]``,
     so Friday → Monday is 1 and Friday → Sunday is 0 under the weekend pause (3 and 2
     without it). Never negative.
     """
+    start, end = _in_zone(start, zone), _in_zone(end, zone)
     return _business_days_in_range(start.date() + timedelta(days=1),
                                    end.date() + timedelta(days=1))
 
 
-def add_business_days(start: datetime, days: int) -> datetime:
+def add_business_days(start: datetime, days: int, zone: tzinfo | None = None) -> datetime:
     """The first moment ``days`` working days after ``start``, by ``business_days_between``.
 
-    ``start`` itself for ``0``; otherwise midnight, in ``start``'s zone, of the
-    ``days``-th working day after ``start.date()`` — the moment the count reaches ``days``.
+    ``start`` itself for ``0``; otherwise midnight, in *zone* (``start``'s own when left
+    out), of the ``days``-th working day after ``start``'s date there — the moment the
+    count reaches ``days``.
     """
     if days <= 0:
         return start
+    start = _in_zone(start, zone)
     day = start.date()
     counted = 0
     while counted < days:
@@ -63,6 +71,11 @@ def add_business_days(start: datetime, days: int) -> datetime:
 
 
 # ── Internals ─────────────────────────────────────────────────────
+
+
+def _in_zone(moment: datetime, zone: tzinfo | None) -> datetime:
+    """*moment* as the clock in *zone* reads it — unchanged without one."""
+    return moment.astimezone(zone) if zone is not None else moment
 
 
 def _business_days_in_range(start: date, end: date) -> int:

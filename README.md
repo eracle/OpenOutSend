@@ -57,7 +57,8 @@ on the mailbox's clock. So the cron line is two entries, not one command doing b
 
 It reads JSON Lines on stdin, upserts on `lead_id` within the sequence (cold, unless `--sequence`
 names another; see *Sequences* below), checks every address against the
-suppression list at the door, skips and counts a malformed line, prints the counts to **stderr**,
+suppression list at the door, skips and counts a malformed line (a `timezone` that is not an IANA name
+`zoneinfo` can load is one), prints the counts to **stderr**,
 and exits 0 when every line became a row. Its database is
 `~/.openoutsend/data/db.sqlite3` (`OUTSEND_HOME` / `OUTSEND_DB` override it, and
 `OUTSEND_DATABASE_URL` puts it in Postgres) and it migrates itself on first run, so a fresh install
@@ -144,7 +145,9 @@ weekends and counts every wait in calendar days (`OUTSEND_ENFORCE_WORK_HOURS=off
 08:00–20:00 line on its own). `OUTSEND_FOLLOW_UPS=off` turns those two off for the
 install. A reply at any point ends the follow-ups and the conversation takes over. **Follow-ups are cold volume and are treated as such**: they share one daily
 cap, one spacing clock and one sending window with the openers, rather than claiming ahead of them out
-of a budget of their own. A reply obeys none of the three, because answering someone who wrote to you
+of a budget of their own. **The window and the working days are the lead's**: a line carrying
+`timezone` (`America/Chicago`) is sent 08:00–20:00 there and its waits skip that lead's weekend; a
+line without one reads the operator's clock. Turning a country into a zone is the producer's job. A reply obeys none of the three, because answering someone who wrote to you
 is not cold volume and holding the answer until Monday is worse than sending it at 21:00.
 
 ### Sequences
@@ -301,7 +304,7 @@ The environment is the operator seam — the only way in a timer has:
 
 | | |
 | --- | --- |
-| `OUTSEND_OPERATOR_COUNTRY` | ISO 3166 alpha-2; resolves the local clock the sending window is measured in |
+| `OUTSEND_OPERATOR_COUNTRY` | ISO 3166 alpha-2; resolves the operator's clock — the sending window for a lead with no `timezone`, and the midnight the daily cap rolls at |
 | `OUTSEND_AI_MODEL` | a pydantic-ai `provider:model` id, e.g. `anthropic:claude-sonnet-4-5-20250929` |
 | `OUTSEND_LLM_API_KEY` / `OUTSEND_LLM_API_BASE` | credentials for it; pinged once per run before any mail moves |
 | `OUTSEND_PRODUCT_DOCS` / `OUTSEND_CAMPAIGN_TARGET` / `OUTSEND_BOOKING_LINK` | what a message is written from; the first two are required |

@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from django.utils import timezone
 
+from openoutsend.core.sending_window import operator_timezone
 from openoutsend.emails.models import Mailbox
 from openoutsend.planner import next_first_email_at
 
@@ -74,7 +75,7 @@ def _box(address="joe@acme.com", **kwargs):
 def _open_window():
     """Ask the clock with the window held open, so one gate is tested at a time."""
     return patch("openoutsend.core.sending_window.next_window_open",
-                 side_effect=lambda moment: moment)
+                 side_effect=lambda moment, zone=None: moment)
 
 
 @pytest.mark.django_db
@@ -159,4 +160,4 @@ def test_the_window_is_applied_on_top_of_the_spacing_clock():
     with patch("openoutsend.core.sending_window.next_window_open") as window:
         next_first_email_at(now)
 
-    window.assert_called_once_with(now + timedelta(minutes=4))
+    window.assert_called_once_with(now + timedelta(minutes=4), operator_timezone())

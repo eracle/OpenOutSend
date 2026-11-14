@@ -138,15 +138,17 @@ def opening_step(deal, sequence) -> tuple | None:
     one before. A step already more than ``GRACE_DAYS`` overdue when the deal was
     enrolled is skipped (``core/conf.py`` says why), and the next counts from when the
     skipped one was due, so skipping never pushes the rest of the sequence later.
-    ``None`` when every step was past its grace on arrival.
+    ``None`` when every step was past its grace on arrival. Days are the lead's
+    (``core/business_time.py``).
     """
     from openoutsend.core.business_time import add_business_days, business_days_between
     from openoutsend.core.conf import GRACE_DAYS
 
+    zone = _zone_of(deal)
     due = deal.start_at
     for step in sequence.steps:
-        due = add_business_days(due, step.days)
-        if business_days_between(due, deal.created_at) <= GRACE_DAYS:
+        due = add_business_days(due, step.days, zone)
+        if business_days_between(due, deal.created_at, zone) <= GRACE_DAYS:
             return step, due
     return None
 
@@ -177,7 +179,7 @@ def steps_due(now=None, sequence: str | None = None) -> list[DueSend]:
         if following is None:
             continue
         step_sent_at, _ = _since_last_step(deal)
-        due_at = add_business_days(step_sent_at, following.days)
+        due_at = add_business_days(step_sent_at, following.days, _zone_of(deal))
         if due_at <= now:
             sends.append(DueSend(STEP, deal, following, due_at))
     return sorted(sends, key=lambda send: send.due_at)
@@ -347,13 +349,14 @@ def _follow_up_due_at(deal, sequence, now):
         return None
     # The gap that applies is the one before the follow-up we are about to send,
     # counted from our last send, so the first waits the first gap after the step.
-    due_at = add_business_days(deal.last_out, FOLLOW_UP_GAPS_BUSINESS_DAYS[follow_ups])
-    if due_at > now or not _fits_before_next_step(sequence.after(deal.step), step_sent_at, now):
+    zone = _zone_of(deal)
+    due_at = add_business_days(deal.last_out, FOLLOW_UP_GAPS_BUSINESS_DAYS[follow_ups], zone)
+    if due_at > now or not _fits_before_next_step(sequence.after(deal.step), step_sent_at, now, zone):
         return None
     return due_at
 
 
-def _fits_before_next_step(next_step, step_sent_at, now) -> bool:
+def _fits_before_next_step(next_step, step_sent_at, now, zone) -> bool:
     """Whether a follow-up sent now lands before the next step is due.
 
     The next step counts from the previous *step*, never from a follow-up, so fitting
@@ -364,7 +367,7 @@ def _fits_before_next_step(next_step, step_sent_at, now) -> bool:
 
     if next_step is None:
         return True
-    return business_days_between(step_sent_at, now) < next_step.days
+    return business_days_between(step_sent_at, now, zone) < next_step.days
 
 
 def _since_last_step(deal) -> tuple:
@@ -392,6 +395,13 @@ def _follow_ups_allowed() -> int:
     return len(FOLLOW_UP_GAPS_BUSINESS_DAYS) if follow_ups_on() else 0
 
 
+def _zone_of(deal):
+    """The zone *deal*'s lead reads the clock in — theirs, or the operator's when blank."""
+    from openoutsend.core.sending_window import lead_timezone
+
+    return lead_timezone(deal.lead)
+
+
 def _sequences():
     """A lookup from deal to its sequence that reads each folder once per call."""
     from openoutsend.core.sequences import for_deal
@@ -409,12 +419,13 @@ def _sequences():
 # ── From which box ────────────────────────────────────────────────
 
 
-def free_for_first_email(sequence: str | None = None):
-    """The box that may send a first email for *sequence* right now, or None.
+def free_for_first_email(sequence: str | None = None, zone=None):
+    """The box that may send a first email for *sequence* to a lead in *zone* right now, or None.
 
-    The clock speaks first and for the whole pool: outside the operator's working
-    window no box may open a conversation, however much headroom it has
-    (``core/sending_window.py``). Then three conditions, all per box: headroom left
+    The clock speaks first and for the whole pool: outside the lead's working window
+    (*zone*, the operator's when left out) no box may open a conversation with them,
+    however much headroom it has (``core/sending_window.py``). Then three conditions,
+    all per box: headroom left
     today, not paused by the receiver (both inside ``headroom_today``), and its spacing
     clock elapsed. Among the free boxes the most idle one wins, so volume spreads rather
     than piling on whichever row sorts first.
@@ -427,7 +438,7 @@ def free_for_first_email(sequence: str | None = None):
     from openoutsend.core.sending_window import within_sending_window
     from openoutsend.emails.models import Mailbox
 
-    if not within_sending_window():
+    if not within_sending_window(zone=zone):
         return None
     now = timezone.now()
     ranked = [
@@ -452,7 +463,8 @@ def cold_sends_due(now=None, *, sequence: str | None = None, agent_drafted: bool
     every later send stays on its thread's box, because answering from another would
     break the conversation. **A send whose box is not free is skipped, not waited for**,
     so one busy box holds its own threads to the next pass while the rest continue.
-    Outside the sending window no box is free, so nothing goes.
+    **The window is each lead's own**: a send whose lead is outside 08:00–20:00 where
+    they are is skipped, and the leads whose day it is go meanwhile.
 
     The box is asked for each send **after** the caller has sent the previous one — a
     send rewrites its box's spacing clock — which is why this is a generator. With
@@ -477,12 +489,12 @@ def cold_sends_due(now=None, *, sequence: str | None = None, agent_drafted: bool
             continue
         if send.kind != OPENER:
             box = free_thread_box(send.deal)
-        elif send.deal.sequence not in pool_closed:
-            # A pass only ever uses up boxes, so a pool with none free for a sequence
-            # stays that way for it.
-            box = free_for_first_email(send.deal.sequence)
+        elif (pool := (send.deal.sequence, _zone_of(send.deal))) not in pool_closed:
+            # A pass only ever uses up boxes, and a window does not open mid-pass, so a
+            # pool with none free for a sequence and a zone stays that way for both.
+            box = free_for_first_email(*pool)
             if box is None:
-                pool_closed.add(send.deal.sequence)
+                pool_closed.add(pool)
         else:
             continue
         if box is not None:
@@ -500,7 +512,7 @@ def free_thread_box(deal):
     from openoutsend.core.sending_window import within_sending_window
 
     box = deal.mailbox
-    if box is None or not within_sending_window():
+    if box is None or not within_sending_window(zone=_zone_of(deal)):
         return None
     box.refresh_from_db(fields=["next_send_at"])
     return box if box.free_now() and box.headroom_today(deal.sequence) > 0 else None
@@ -517,30 +529,46 @@ def next_first_email_at(now=None, sequence: str | None = None):
     (``send_job.py``). The same three gates, read as a clock instead of a boolean:
 
         spacing   the box's own ``next_send_at``
-        window    the next 08:00 at or after that
+        window    the next 08:00 at or after that, in the lead's zone
         cap       a box out of headroom is out until the ledger rolls, so it is
                   asked about tomorrow morning rather than about today
 
     And one more, from the leads' side: **no opener before the earliest is due**. A
     deal enrolled for ``E0-2d`` is not worth waking for today, however free the boxes.
+    Leads in different zones open at different hours, so the earliest due opener of
+    each zone is asked, and the soonest of them wins.
 
     The soonest box wins, because one free box is all a send needs. ``None`` means no
     mailbox is connected — the one state no amount of waiting resolves. A drained *lead*
-    pool is not this function's business: with nobody waiting it answers for the boxes.
+    pool is not this function's business: with nobody waiting it answers for the boxes,
+    on the operator's clock.
     """
     from openoutsend.core.sending_window import next_window_open
     from openoutsend.emails.models import Mailbox
     from openoutsend.emails.models.mailbox import _local_midnight
 
     now = now or timezone.now()
-    waiting = _openers(sequence)
-    earliest = max(now, waiting[0].due_at) if waiting else now
     tomorrow = _local_midnight() + timedelta(days=1)
+    boxes = [(box.next_send_at, box.headroom_today(sequence) > 0) for box in Mailbox.objects.all()]
     return min(
         (
-            next_window_open(max(earliest, box.next_send_at or earliest))
-            if box.headroom_today(sequence) > 0 else next_window_open(max(earliest, tomorrow))
-            for box in Mailbox.objects.all()
+            next_window_open(max(earliest, next_send_at or earliest) if has_headroom
+                             else max(earliest, tomorrow), zone)
+            for zone, earliest in _earliest_opener_by_zone(now, sequence).items()
+            for next_send_at, has_headroom in boxes
         ),
         default=None,
     )
+
+
+def _earliest_opener_by_zone(now, sequence: str | None) -> dict:
+    """``{zone: when its earliest opener is due}``, never before *now*.
+
+    The operator's zone at *now* when nobody is waiting, so the boxes are still asked.
+    """
+    from openoutsend.core.sending_window import operator_timezone
+
+    earliest: dict = {}
+    for send in _openers(sequence):  # oldest-due first, so the first per zone is its earliest
+        earliest.setdefault(_zone_of(send.deal), max(now, send.due_at))
+    return earliest or {operator_timezone(): now}

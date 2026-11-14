@@ -64,6 +64,13 @@ class Lead(models.Model):
     profile_summary = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
+    # Where this person reads the clock — an IANA name (`America/Chicago`), which
+    # ingest only stores once `zoneinfo` can load it. The sending window and the
+    # working days are read in it (`core/sending_window.lead_timezone`); blank means
+    # the operator's. Nothing here maps a country to a zone: the producer chose this
+    # one. Declared after `created_at`, whose default reads the `timezone` module
+    # this name would shadow inside the class body.
+    timezone = models.CharField(max_length=64, blank=True, default="")
 
     def __str__(self):
         return self.public_id
