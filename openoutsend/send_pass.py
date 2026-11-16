@@ -527,27 +527,24 @@ def _rendered(send) -> str:
 
 
 def _fire(deal, step, plan) -> None:
-    """Fire the deal machine's *step* on *deal* with *plan*, all in one transaction.
+    """Fire the deal machine's *step* on *deal* with *plan*, in the machine's one transaction.
 
-    The step saves the deal and the machine writes the move, so the mail-log row, the
-    transport call, the deal's fields and its new state commit together, after the
-    send: a pass killed before the commit leaves nothing half-recorded — no row, the
-    deal where it was, and the step due again on the next pass. A step returning
+    The machine locks the deal's state, runs the step and writes the move in one
+    transaction, so the mail-log row, the transport call, the deal's fields and its new
+    state commit together, after the send: a pass killed before the commit leaves nothing
+    half-recorded — no row, the deal where it was, and the step due again on the next
+    pass. A second process firing the same deal waits for this one. A step returning
     ``None`` stayed put (a reply sent, a lead suppressed while the agent was writing),
     and its writes are saved just the same. A refusal rolls the transaction back too,
     so its row and failure event are written again outside it, because the bounce rate
-    counts refusals. The machine locks the deal's state from its read to the move, so a
-    second process firing the same deal waits for this one.
+    counts refusals.
     """
-    from django.db import transaction
-
     from openoutsend.emails.sender import Refused
     from openoutsend.leads.lifecycle import deals
 
     deal.plan = plan
     try:
-        with transaction.atomic():
-            deals.fire(deal.pk, step, entity=deal)
+        deals.fire(deal.pk, step, entity=deal)
     except Refused as refused:
         refused.record_again()
         raise
