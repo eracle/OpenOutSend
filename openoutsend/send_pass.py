@@ -536,10 +536,8 @@ def _fire(deal, step, plan) -> None:
     ``None`` stayed put (a reply sent, a lead suppressed while the agent was writing),
     and its writes are saved just the same. A refusal rolls the transaction back too,
     so its row and failure event are written again outside it, because the bounce rate
-    counts refusals.
-
-    A move the machine refuses (another process moved the deal since this pass read
-    it) is logged by the machine, and said here.
+    counts refusals. The machine locks the deal's state from its read to the move, so a
+    second process firing the same deal waits for this one.
     """
     from django.db import transaction
 
@@ -549,12 +547,10 @@ def _fire(deal, step, plan) -> None:
     deal.plan = plan
     try:
         with transaction.atomic():
-            move = deals.fire(deal.pk, step, entity=deal)
+            deals.fire(deal.pk, step, entity=deal)
     except Refused as refused:
         refused.record_again()
         raise
-    if move is not None and not move.applied:
-        logger.warning("%s: %s refused — %s", deal.lead.public_id, move.step, move.reason)
 
 
 def _what_is_holding(sequence: str | None) -> str:

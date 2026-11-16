@@ -87,5 +87,5 @@ def _end_open_deals(email: str, outcome: str) -> int:
             .in_state(DealState.READY, DealState.EMAILED).select_related("lead"):
         deal.outcome = outcome
         move = deals.fire(deal.pk, end_suppressed, entity=deal)
-        ended += bool(move and move.applied)
+        ended += move is not None
     return ended

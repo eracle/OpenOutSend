@@ -45,6 +45,8 @@ class Migration(migrations.Migration):
         ("outsend_leads", "0007_lead_timezone"),
         ("agentic_fsm", "0001_initial"),
     ]
+    # It writes `version`, `applied` and `reason`, which agentic_fsm's 0002 drops.
+    run_before = [("agentic_fsm", "0002_only_real_moves")]
 
     operations = [
         migrations.RunPython(carry_states_over, carry_states_back),

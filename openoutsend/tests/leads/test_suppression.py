@@ -28,8 +28,8 @@ def test_each_deal_is_ended_by_its_own_logged_move(deal):
     suppress_email("anna@example.com", reason="asked to stop")
 
     move = deals.history(deal.pk)[-1]
-    assert (move.step, move.from_state, move.to_state, move.applied) == \
-        ("end_suppressed", DealState.EMAILED.value, DealState.COMPLETED.value, True)
+    assert (move.step, move.from_state, move.to_state) == \
+        ("end_suppressed", DealState.EMAILED.value, DealState.COMPLETED.value)
 
 
 def test_it_reaches_every_lead_holding_the_address(deal):

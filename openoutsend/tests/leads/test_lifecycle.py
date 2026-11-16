@@ -76,8 +76,8 @@ def test_an_opener_sent_by_the_pass_is_logged_as_its_move():
     move = deals.history(deal.pk)[-1]
     assert result.opened == 1
     assert (deal.state, deal.mailbox) == (DealState.EMAILED, box)
-    assert (move.step, move.from_state, move.to_state, move.applied, move.decided_by) == \
-        ("send_opener", "Ready to Email", "Emailed", True, "code")
+    assert (move.step, move.from_state, move.to_state, move.decided_by) == \
+        ("send_opener", "Ready to Email", "Emailed", "code")
 
 
 def test_a_step_saves_the_deal_whether_it_moves_or_not():

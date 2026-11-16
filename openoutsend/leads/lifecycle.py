@@ -11,14 +11,14 @@ list at the bottom of this file is the whole graph.
 the sending window) pick the box, the step and the prompt line, and that is timing, which
 is the caller's: the send pass (`send_pass.py`) asks the planner, sets the answer on the
 deal as its `plan`, and fires with the deal in hand (`fire(id, step, entity=deal)`). A
-`fire` with no deal in hand (the `agfsm` CLI, `advance`) goes through `load_deal`, which
+`fire` with no deal in hand (the `agfsm` CLI, `progress`, `progress_all`) goes through `load_deal`, which
 asks the planner the same question for that one deal, so a move made from the CLI is one
 the pass could have made right now, and no other. A step whose plan is not its own kind
 says "not now".
 
 **A step saves the deal itself**, the fields its send wrote and the outcome, whether it
-moves the deal or not, and the pass wraps the fire in one transaction, so the send's
-row, the deal and the move commit together. The library never opens one around a step.
+moves the deal or not, and the fire runs in one transaction that holds the deal's state
+row from read to move, so the send's row, the deal and the move commit together.
 
 **Sending into a live thread is not a move.** A reply, a later step and a follow-up leave
 the deal `EMAILED` and return `None`; the mail log is the record that they went.
