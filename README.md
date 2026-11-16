@@ -1,6 +1,6 @@
 ![OpenOutSend Logo](docs/logo.png)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 
 # OpenOutSend
 
@@ -359,4 +359,4 @@ in the `openoutreach-docs` repo. The parts this side owes:
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Apache 2.0 — see [LICENSE](LICENSE).
