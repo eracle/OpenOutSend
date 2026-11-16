@@ -20,7 +20,11 @@ in hand — and sending starts after that, so nothing here mirrors a finder stat
 from __future__ import annotations
 
 from django.db import models
+from django.db.models import CharField, Exists, OuterRef
+from django.db.models.functions import Cast
 from django.utils import timezone
+
+from openoutsend.leads.states import MACHINE, DealState
 
 
 class Lead(models.Model):
@@ -87,39 +91,6 @@ class Lead(models.Model):
         return self.linkedin_url or self.email or f"lead:{self.lead_id}"
 
 
-class DealState(models.TextChoices):
-    """Where a deal is in *this* side's funnel — the conversation, not the search.
-
-    The finder's states describe finding somebody and optionally resolving an
-    address; they all end before the first message is written. These three describe
-    what happens after:
-
-    - **READY** — ingested and not yet written to. A row with no address rests here
-      too: an address is an enrichment a later run fills in for free.
-    - **EMAILED** — at least one cold email went out and the conversation is live.
-      A silent lead rests here between touches and leaves as `COMPLETED`
-      (`unresponsive`) once its touches are spent; one who answers stays here while
-      the thread runs. Which of the two a row is, is never stored — it is the
-      comparison between the thread's newest inbound and outbound turns.
-    - **COMPLETED** — the conversation reached its end, with an `Outcome` saying how.
-
-    **The state says whether it is over; the outcome says why.** There used to be a
-    terminal state for an opt-out and another for a dead address, which put two of the
-    endings in this column and the other seven in `outcome` — so "why did this end"
-    was answered by reading one column for some deals and the other for the rest.
-    They are `unsubscribed` and `undeliverable` now, and the shape they moved to is
-    the one `give_up` always used: end the deal, name the reason.
-
-    **A state added here is unsendable by default.** The planner's pools name the state they
-    want (`state=READY`, `state=EMAILED`) rather than excluding the ones they don't,
-    so a terminal state cannot be re-selected by an exclusion somebody forgot.
-    """
-
-    READY = "Ready to Email"
-    EMAILED = "Emailed"
-    COMPLETED = "Completed"
-
-
 class Outcome(models.TextChoices):
     """Why a conversation ended — the outreach agent's own vocabulary.
 
@@ -158,6 +129,23 @@ class Outcome(models.TextChoices):
     MISSED = "missed"
 
 
+class DealQuerySet(models.QuerySet):
+    def in_state(self, *states: DealState) -> DealQuerySet:
+        """The deals whose current state, kept by the deal machine, is one of *states*.
+
+        A subquery on the library's current-state table rather than a list of ids, so it
+        composes with every other filter in one query. The library stores an entity's id
+        as text, hence the cast.
+        """
+        from agentic_fsm.backends.django.models import CurrentState
+
+        current = CurrentState.objects.filter(
+            machine=MACHINE, state__in=[state.value for state in states],
+            entity=Cast(OuterRef("pk"), CharField()),
+        )
+        return self.filter(Exists(current))
+
+
 class Deal(models.Model):
     """One lead's conversation in one sequence — the row ingest writes and the send path reads.
 
@@ -166,18 +154,20 @@ class Deal(models.Model):
     recovery-by-re-running is a way of mailing people twice. A lead enrolled in a
     second sequence gets a second deal; the history the model writes from already
     spans every deal of the lead (`core/agents/history.py`).
+
+    **Its state is not a column.** The deal machine (`leads/lifecycle.py`) keeps it in
+    the library's table, and every move is logged there; `state` reads it, and
+    `Deal.objects.in_state(...)` filters on it.
     """
 
     class Meta:
-        indexes = [
-            models.Index(fields=["state"], name="deal_state_idx"),
-        ]
         constraints = [
             models.UniqueConstraint(fields=["lead", "sequence"], name="deal_lead_sequence_uniq"),
         ]
 
+    objects = DealQuerySet.as_manager()
+
     lead = models.ForeignKey(Lead, on_delete=models.CASCADE, related_name="deals")
-    state = models.CharField(max_length=32, choices=DealState.choices, default=DealState.READY)
     outcome = models.CharField(max_length=20, choices=Outcome.choices, blank=True, default="")
     # Why the LLM chose this lead, in its own words. **Operator-facing**: it is the
     # evidence for the person running this, third-person and evaluative, and it never
@@ -226,6 +216,13 @@ class Deal(models.Model):
 
     def __str__(self):
         return f"{self.lead} [{self.state}]"
+
+    @property
+    def state(self) -> DealState | None:
+        """Where the deal is now, read from the deal machine; ``None`` before it started."""
+        from openoutsend.leads.lifecycle import deals
+
+        return deals.state_of(self.pk)
 
 
 class PendingDraft(models.Model):

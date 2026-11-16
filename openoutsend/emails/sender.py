@@ -31,7 +31,7 @@ class Refused(Exception):
     """A send the transport refused, already recorded, carrying how to record it again.
 
     The pass sends each email inside one transaction with the deal's new state
-    (``send_pass._send_in_one_transaction``), so a refusal recorded in there rolls back
+    (``send_pass._fire``), so a refusal recorded in there rolls back
     with everything else. ``record_again`` writes the row and its failure event a second
     time, for the caller whose transaction just discarded the first. ``cause`` is what
     the transport raised.

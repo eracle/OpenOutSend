@@ -66,16 +66,26 @@ def suppress_email(
     # row that arrived by any other route must not slip through.
     #
     # Nothing here can overwrite a verdict somebody else reached: a deal that has one
-    # is `COMPLETED`, and those are excluded.
-    ended = (
-        Deal.objects.filter(lead__email__iexact=email)
-        .exclude(state=DealState.COMPLETED)
-        .update(state=DealState.COMPLETED, outcome=outcome)
-    )
+    # is `COMPLETED`, and only the open ones are taken. Each is ended by its own move,
+    # so the deal machine's log says which suppression ended it.
+    ended = _end_open_deals(email, outcome)
     logger.info(
         "suppressed %s (%s) — %d open deal(s) ended",
         email, reason or "no reason given", ended,
     )
     if not created:
         logger.debug("%s was already suppressed", email)
+    return ended
+
+
+def _end_open_deals(email: str, outcome: str) -> int:
+    """Fire `end_suppressed` on each open deal of *email*, with *outcome*. Returns how many ended."""
+    from openoutsend.leads.lifecycle import deals, end_suppressed
+
+    ended = 0
+    for deal in Deal.objects.filter(lead__email__iexact=email) \
+            .in_state(DealState.READY, DealState.EMAILED).select_related("lead"):
+        deal.outcome = outcome
+        move = deals.fire(deal.pk, end_suppressed, entity=deal)
+        ended += bool(move and move.applied)
     return ended

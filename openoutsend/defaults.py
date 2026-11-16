@@ -18,6 +18,8 @@ from pathlib import Path
 #: The apps, in dependency order, for a host's `INSTALLED_APPS`. `django.contrib.auth`
 #: must be installed too — `emails.Message` points at `AUTH_USER_MODEL`.
 APPS = [
+    # The deal machine's state and log (`leads/lifecycle.py`), before the apps that move it.
+    "agentic_fsm.backends.django",
     "openoutsend.core",
     "openoutsend.leads",
     "openoutsend.emails",

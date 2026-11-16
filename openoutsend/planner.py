@@ -59,8 +59,8 @@ def emailable_deals(sequence: str | None = None):
     Three conditions and no more: the state, an address to send to, and no piped
     `stop`. Whether the first step is *due* is not a column — it is on disk and in
     business days — so `openers_due` asks it of what this returns.
-    **Suppression is not a fourth filter** — an opt-out moves every open deal for that
-    address to `UNSUBSCRIBED` when it lands, and ingest parks a suppressed row there on
+    **Suppression is not a fourth filter** — an opt-out ends every open deal for that
+    address (`COMPLETED`, `unsubscribed`) when it lands, and ingest parks a suppressed row there on
     arrival, so the state already carries the answer. `emails/sender.suppressed` asks
     the list again after the agent has written, which is the check that catches an
     opt-out arriving in the seconds an LLM call takes.
@@ -71,7 +71,7 @@ def emailable_deals(sequence: str | None = None):
     from openoutsend.leads.models import Deal, DealState
 
     return (
-        _scoped(Deal.objects.filter(state=DealState.READY, stop=False), sequence)
+        _scoped(Deal.objects.in_state(DealState.READY).filter(stop=False), sequence)
         .exclude(lead__email="")
         .select_related("lead")
         .order_by("created_at")
@@ -305,7 +305,7 @@ def _open_threads(sequence: str | None = None):
     from openoutsend.leads.models import Deal, DealState
 
     return _scoped(
-        Deal.objects.filter(state=DealState.EMAILED, outcome="", thread__isnull=False), sequence)
+        Deal.objects.in_state(DealState.EMAILED).filter(outcome="", thread__isnull=False), sequence)
 
 
 def _scoped(deals, sequence: str | None):

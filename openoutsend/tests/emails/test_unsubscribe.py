@@ -208,9 +208,9 @@ class TestWordedUnsubscribe:
              patch("openoutsend.emails.sender.send_email") as send:
             next_state = answer_reply(deal)
 
-        deal.state = next_state
-        deal.save()
         deal.refresh_from_db()
+        # The suppression ended the deal by its own move, so the step has nothing to add.
+        assert next_state is None
         assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.UNSUBSCRIBED)
         assert deal.outcome == Outcome.UNSUBSCRIBED
         assert suppressed(deal.lead)
@@ -227,7 +227,7 @@ class TestWordedUnsubscribe:
              patch("openoutsend.emails.sender.send_email") as send:
             next_state = answer_reply(deal)
 
-        assert next_state == DealState.COMPLETED
+        assert (next_state, deal.state) == (None, DealState.COMPLETED)
         assert suppressed(deal.lead)
         send.assert_not_called()
 

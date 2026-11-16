@@ -11,8 +11,10 @@ import pytest
 from django.utils import timezone
 
 from openoutsend.leads.ingest import ingest
+from openoutsend.leads.lifecycle import deals
 from openoutsend.leads.models import Deal, DealState, Lead, Outcome
 from openoutsend.leads.suppression import suppress_email
+from openoutsend.tests.factories import put_in_state
 
 pytestmark = pytest.mark.django_db
 
@@ -79,7 +81,8 @@ def test_the_same_lead_in_another_sequence_gets_a_deal_of_its_own():
 
 def test_a_new_sequence_does_not_reopen_a_finished_deal_in_another():
     ingest(stream(record()))
-    Deal.objects.update(state=DealState.COMPLETED, outcome=Outcome.NOT_INTERESTED)
+    put_in_state(Deal.objects.get(), DealState.COMPLETED)
+    Deal.objects.update(outcome=Outcome.NOT_INTERESTED)
 
     ingest(stream(record()), sequence="/seqs/relaunch")
 
@@ -249,7 +252,10 @@ def test_a_suppressed_address_arrives_unsendable():
     result = ingest(stream(record()))
 
     assert (result.stored, result.suppressed) == (1, 1)
-    assert Deal.objects.get().outcome == Outcome.UNSUBSCRIBED
+    deal = Deal.objects.get()
+    assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.UNSUBSCRIBED)
+    assert [(m.step, m.to_state) for m in deals.history(deal.pk)] == \
+        [(None, DealState.READY.value), ("end_suppressed", DealState.COMPLETED.value)]
 
 
 def test_an_opt_out_follows_the_lead_into_a_new_sequence():
@@ -286,8 +292,7 @@ def test_an_address_that_changes_into_a_suppressed_one_is_caught():
 def test_an_opt_out_ends_the_conversation_it_was_in():
     ingest(stream(record()))
     deal = Deal.objects.get()
-    deal.state = DealState.EMAILED
-    deal.save(update_fields=["state"])
+    put_in_state(deal, DealState.EMAILED)
 
     suppress_email("Anna@Example.com  ", reason="worded unsubscribe")
 

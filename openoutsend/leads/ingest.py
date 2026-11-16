@@ -39,9 +39,11 @@ from datetime import datetime
 from datetime import timezone as dt_timezone
 from typing import IO
 
+from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from openoutsend.leads.lifecycle import deals, end_suppressed
 from openoutsend.leads.models import Deal, DealState, Lead, Outcome
 from openoutsend.leads.suppression import is_suppressed, normalize
 
@@ -234,13 +236,15 @@ def _upsert_deal(lead: Lead, sequence: str, record: dict, suppressed: bool) -> D
     downwards — and a deal that already reached it keeps the outcome it reached it
     with, exactly as `suppress_email` leaves one alone. Ending is not sendable, so
     there is nothing to enforce and nothing to overwrite.
+
+    A new deal is started in the deal machine in the same transaction as its row, so
+    no deal exists without a state. A suppressed one is then ended by its own move,
+    which leaves `READY` → `COMPLETED` in the log rather than a deal born ended.
     """
-    opening = {"state": DealState.READY}
-    if suppressed:
-        opening = {"state": DealState.COMPLETED, "outcome": Outcome.UNSUBSCRIBED}
-    deal, created = Deal.objects.get_or_create(
-        lead=lead, sequence=sequence, defaults=opening,
-    )
+    with transaction.atomic():
+        deal, created = Deal.objects.get_or_create(lead=lead, sequence=sequence)
+        if created:
+            deals.start(deal.pk)
 
     updated = []
     reason = (record.get("reason") or "").strip()
@@ -251,14 +255,13 @@ def _upsert_deal(lead: Lead, sequence: str, record: dict, suppressed: bool) -> D
     if qualified_at and deal.qualified_at != qualified_at:
         deal.qualified_at = qualified_at
         updated.append("qualified_at")
-    if suppressed and not created and deal.state != DealState.COMPLETED:
-        deal.state = DealState.COMPLETED
-        deal.outcome = Outcome.UNSUBSCRIBED
-        updated += ["state", "outcome"]
     updated += _merge_sequence_fields(deal, record)
 
     if updated:
         deal.save(update_fields=[*updated, "updated_at"])
+    if suppressed and deal.state is not DealState.COMPLETED:
+        deal.outcome = Outcome.UNSUBSCRIBED
+        deals.fire(deal.pk, end_suppressed, entity=deal)
     return deal
 
 

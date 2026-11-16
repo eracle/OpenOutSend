@@ -35,5 +35,29 @@ class LeadFactory(factory.django.DjangoModelFactory):
 class DealFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = "outsend_leads.Deal"
+        skip_postgeneration_save = True
 
     lead = factory.SubFactory(LeadFactory)
+
+    @factory.post_generation
+    def state(deal, create, extracted, **kwargs):
+        """Start the deal in the deal machine, as ingest does, then put it in *extracted*."""
+        if create:
+            from openoutsend.leads.lifecycle import deals
+
+            deals.start(deal.pk)
+            if extracted is not None:
+                put_in_state(deal, extracted)
+
+
+def put_in_state(deal, state) -> None:
+    """Set a started deal's current state directly, as a test's starting point.
+
+    Not a move: no step runs and nothing is logged. Code under test moves a deal only
+    by firing a step of the deal machine.
+    """
+    from agentic_fsm.backends.django.models import CurrentState
+
+    from openoutsend.leads.states import MACHINE
+
+    CurrentState.objects.filter(machine=MACHINE, entity=str(deal.pk)).update(state=state.value)

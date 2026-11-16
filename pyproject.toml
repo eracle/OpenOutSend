@@ -63,6 +63,9 @@ dependencies = [
     "pytz>=2024.1",
     "imapclient>=3,<4",
     "tenacity>=8,<10",
+    # The deal machine (`leads/lifecycle.py`): a deal's state and the log of its moves
+    # are kept in the library's Django tables, in this store.
+    "agentic-fsm[django]>=0.1.5",
 ]
 
 [project.optional-dependencies]

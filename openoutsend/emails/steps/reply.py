@@ -182,7 +182,7 @@ def _send_reply(deal, message: str) -> DealState | None:
     return None
 
 
-def honour_opt_out(deal) -> DealState:
+def honour_opt_out(deal) -> DealState | None:
     """Honour a worded unsubscribe: suppress the address for good, send nothing.
 
     Enforcement is address-level and terminal: no later ingest can walk this person
@@ -190,15 +190,18 @@ def honour_opt_out(deal) -> DealState:
     hearing from us is not owed one more email.
 
     The deal closes like every other ended conversation — `COMPLETED`, with the
-    outcome saying why. The address being on the list is the part that is terminal;
-    the deal is just a deal that ended.
+    outcome saying why — and the suppression is what usually closes it:
+    `suppress_email` ends every open deal of the address, this one among them, by its
+    own move. Then this returns ``None``, since a second move from the state the deal
+    was read in would be refused. A lead with no address matches no deal, so this
+    one is still open and the step ends it itself.
     """
     from openoutsend.leads.suppression import suppress_email
 
     suppress_email(deal.lead.email, reason="worded unsubscribe in a reply")
     logger.info("%s asked to stop — suppressed for good", deal.lead.public_id)
     deal.outcome = Outcome.UNSUBSCRIBED
-    return DealState.COMPLETED
+    return None if deal.state is DealState.COMPLETED else DealState.COMPLETED
 
 
 # ── Helpers ───────────────────────────────────────────────────────

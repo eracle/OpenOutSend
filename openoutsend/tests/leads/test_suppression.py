@@ -1,8 +1,10 @@
 """The list that outlives everything else on this side."""
 import pytest
 
-from openoutsend.leads.models import Deal, DealState, Lead, Outcome, Suppression
+from openoutsend.leads.lifecycle import deals
+from openoutsend.leads.models import DealState, Lead, Outcome, Suppression
 from openoutsend.leads.suppression import is_suppressed, suppress_email
+from openoutsend.tests.factories import DealFactory, put_in_state
 
 pytestmark = pytest.mark.django_db
 
@@ -10,7 +12,7 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture
 def deal():
     lead = Lead.objects.create(lead_id="7", email="anna@example.com")
-    return Deal.objects.create(lead=lead, state=DealState.EMAILED)
+    return DealFactory(lead=lead, state=DealState.EMAILED)
 
 
 def test_suppressing_ends_the_open_deals(deal):
@@ -22,9 +24,17 @@ def test_suppressing_ends_the_open_deals(deal):
     assert is_suppressed("anna@example.com")
 
 
+def test_each_deal_is_ended_by_its_own_logged_move(deal):
+    suppress_email("anna@example.com", reason="asked to stop")
+
+    move = deals.history(deal.pk)[-1]
+    assert (move.step, move.from_state, move.to_state, move.applied) == \
+        ("end_suppressed", DealState.EMAILED.value, DealState.COMPLETED.value, True)
+
+
 def test_it_reaches_every_lead_holding_the_address(deal):
     other_lead = Lead.objects.create(lead_id="8", email="anna@example.com")
-    other = Deal.objects.create(lead=other_lead)
+    other = DealFactory(lead=other_lead)
 
     assert suppress_email("anna@example.com") == 2
 
@@ -56,8 +66,9 @@ def test_a_dead_address_is_not_a_person_declining(deal):
 def test_a_finished_conversation_is_left_as_it_ended(deal):
     """Including the verdict it ended with: an opt-out arriving after a conversation
     closed changes nothing about how it closed."""
-    deal.state, deal.outcome = DealState.COMPLETED, Outcome.NOT_INTERESTED
-    deal.save(update_fields=["state", "outcome"])
+    put_in_state(deal, DealState.COMPLETED)
+    deal.outcome = Outcome.NOT_INTERESTED
+    deal.save(update_fields=["outcome"])
 
     assert suppress_email("anna@example.com") == 0
 

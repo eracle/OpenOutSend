@@ -23,7 +23,7 @@ from openoutsend.emails.steps.send import send_first_email, step_fields
 from openoutsend.leads.models import DealState
 from openoutsend.planner import emailable_deals, free_for_first_email
 from openoutsend.tests.emails import maillog
-from openoutsend.tests.factories import DealFactory, LeadFactory
+from openoutsend.tests.factories import DealFactory, LeadFactory, put_in_state
 
 
 def _box(email="a@b.com", daily_limit=10):
@@ -49,7 +49,7 @@ def _record_send(deal, box, when=None):
     maillog.outbound(box, thread=thread, to=deal.lead.email, sent_at=when)
     deal.mailbox = box
     deal.thread = thread
-    deal.state = DealState.EMAILED
+    put_in_state(deal, DealState.EMAILED)
     deal.email_sent_at = when
     deal.save()
     return deal

@@ -179,7 +179,7 @@ def _answer_replies(result: PassResult, agent_draft: AgentDraft = OFF) -> set:
     leads still count as reached.
     """
     from openoutsend.core.conf import REPLIES_HOLD, replies
-    from openoutsend.emails.steps.reply import answer_reply
+    from openoutsend.leads.lifecycle import REPLY, Plan, answer_reply
     from openoutsend.planner import unanswered_replies
 
     if agent_draft.active:
@@ -191,7 +191,7 @@ def _answer_replies(result: PassResult, agent_draft: AgentDraft = OFF) -> set:
     for deal in list(unanswered_replies()):
         reached.add(deal.lead_id)
         try:
-            _send_in_one_transaction(deal, lambda: answer_reply(deal))
+            _fire(deal, answer_reply, Plan(REPLY))
             result.answered += 1
         except Exception:
             logger.exception("reply to %s failed", deal.lead.public_id)
@@ -211,7 +211,7 @@ def _answer_drafted_reply(result: PassResult, agent_draft: AgentDraft) -> set:
     deal is no longer owed a reply and the draft is dropped. Returns every lead owed a
     reply, as reached.
     """
-    from openoutsend.emails.steps.reply import send_drafted_reply
+    from openoutsend.leads.lifecycle import REPLY, Plan, answer_reply
     from openoutsend.leads.models import PendingDraft
     from openoutsend.planner import unanswered_replies
 
@@ -236,7 +236,7 @@ def _answer_drafted_reply(result: PassResult, agent_draft: AgentDraft) -> set:
                            payload=_reply_payload(deal))
 
     try:
-        _send_in_one_transaction(deal, lambda: send_drafted_reply(deal, pending.body))
+        _fire(deal, answer_reply, Plan(REPLY, body=pending.body))
     except Exception:
         logger.exception("reply to %s failed", deal.lead.public_id)
         result.failed += 1
@@ -274,18 +274,16 @@ def _close_ended(result: PassResult, sequence: str | None) -> None:
     Closing costs no send, so it is not gated on a box at all — a deal is closed
     whatever the pool's capacity.
     """
-    from openoutsend.emails.steps.follow_up import give_up
-    from openoutsend.leads.models import DealState, Outcome
+    from openoutsend.leads.lifecycle import GIVE_UP, MISSED, Plan, close_missed, give_up
     from openoutsend.planner import exhausted_touches, missed_enrolments
 
     for deal in exhausted_touches(sequence):
-        _apply(deal, give_up(deal))
+        _fire(deal, give_up, Plan(GIVE_UP))
         result.gave_up += 1
 
     for deal in missed_enrolments(sequence):
         logger.info("%s arrived with every step past its grace — closing", deal.lead.public_id)
-        deal.outcome = Outcome.MISSED
-        _apply(deal, DealState.COMPLETED)
+        _fire(deal, close_missed, Plan(MISSED))
         result.missed += 1
 
 
@@ -325,8 +323,7 @@ def _send_cold(result: PassResult, sequence: str | None, reached: set,
     for send, box in cold_sends_due(sequence=sequence, agent_drafted=agent_draft.active,
                                     reached=reached):
         try:
-            _send_in_one_transaction(
-                send.deal, lambda: _write_and_send(send, box, prompt_line_name))
+            _fire_cold_send(send, box, prompt_line_name)
         except Exception as exc:
             if _address_ended(exc, send.deal):
                 logger.warning("%s to %s refused: the address is undeliverable, suppressed",
@@ -350,18 +347,15 @@ def _address_ended(exc: Exception, deal) -> bool:
     return isinstance(exc, Refused) and is_suppressed(deal.lead.email)
 
 
-def _write_and_send(send, box, prompt_line_name: str | None):
-    """Hand one due send to the step that writes its kind. Returns the deal's next state."""
+def _fire_cold_send(send, box, prompt_line_name: str | None) -> None:
+    """Fire the deal machine's step for one due send's kind, with the box and line chosen here."""
     from openoutsend.core.prompt_lines import choose
-    from openoutsend.emails.steps.follow_up import send_follow_up
-    from openoutsend.emails.steps.send import send_first_email, send_next_step
+    from openoutsend.leads.lifecycle import Plan, follow_up, send_opener, send_step
     from openoutsend.planner import OPENER, STEP
 
-    if send.kind == OPENER:
-        return send_first_email(send.deal, box, send.step, choose(prompt_line_name))
-    if send.kind == STEP:
-        return send_next_step(send.deal, send.step, choose(prompt_line_name))
-    return send_follow_up(send.deal)
+    step = {OPENER: send_opener, STEP: send_step}.get(send.kind, follow_up)
+    prompt_line = choose(prompt_line_name) if send.kind in (OPENER, STEP) else None
+    _fire(send.deal, step, Plan(send.kind, step=send.step, box=box, prompt_line=prompt_line))
 
 
 def _count(result: PassResult, kind: str) -> None:
@@ -477,9 +471,9 @@ def _store_answer(pending, agent_draft: AgentDraft, send) -> None:
 def _send_answer(result: PassResult, pending, send, reached: set) -> bool:
     """Send the kept answer if its box is free. True once it is sent; a failed send keeps
     it for the next pass, as a failed `AI_MODEL` send is retried."""
-    from openoutsend.emails.steps.send import send_drafted_email, send_drafted_step
     from openoutsend.core.sending_window import lead_timezone
-    from openoutsend.planner import OPENER, free_for_first_email, free_thread_box
+    from openoutsend.leads.lifecycle import Plan, send_opener, send_step
+    from openoutsend.planner import OPENER, STEP, free_for_first_email, free_thread_box
 
     deal = pending.deal
     opener = send.kind == OPENER
@@ -493,12 +487,12 @@ def _send_answer(result: PassResult, pending, send, reached: set) -> bool:
 
     try:
         if opener:
-            _send_in_one_transaction(deal, lambda: send_drafted_email(
-                deal, box, send.step, pending.subject, pending.body, None))
+            _fire(deal, send_opener, Plan(OPENER, step=send.step, box=box,
+                                          subject=pending.subject, body=pending.body))
             result.opened += 1
         else:
-            _send_in_one_transaction(deal, lambda: send_drafted_step(
-                deal, send.step, pending.body, _rendered(send)))
+            _fire(deal, send_step, Plan(STEP, step=send.step, box=box,
+                                        body=pending.body, prompt=_rendered(send)))
             result.stepped += 1
     except Exception:
         logger.exception("%s to %s failed", send.kind, deal.lead.public_id)
@@ -532,38 +526,35 @@ def _rendered(send) -> str:
     return send.step.render(**step_fields(send.deal, None))
 
 
-def _send_in_one_transaction(deal, write_and_send) -> None:
-    """Run *write_and_send* and save *deal*'s new state, all in one transaction.
+def _fire(deal, step, plan) -> None:
+    """Fire the deal machine's *step* on *deal* with *plan*, all in one transaction.
 
-    The mail-log row, the transport call and the deal's state and step commit together,
-    after the send, so a pass killed before the commit leaves nothing half-recorded: no
-    row, the deal where it was, and the step due again on the next pass. A refusal rolls
-    the transaction back too, so its row and failure event are written again outside it,
-    because the bounce rate counts refusals.
+    The step saves the deal and the machine writes the move, so the mail-log row, the
+    transport call, the deal's fields and its new state commit together, after the
+    send: a pass killed before the commit leaves nothing half-recorded — no row, the
+    deal where it was, and the step due again on the next pass. A step returning
+    ``None`` stayed put (a reply sent, a lead suppressed while the agent was writing),
+    and its writes are saved just the same. A refusal rolls the transaction back too,
+    so its row and failure event are written again outside it, because the bounce rate
+    counts refusals.
+
+    A move the machine refuses (another process moved the deal since this pass read
+    it) is logged by the machine, and said here.
     """
     from django.db import transaction
 
     from openoutsend.emails.sender import Refused
+    from openoutsend.leads.lifecycle import deals
 
+    deal.plan = plan
     try:
         with transaction.atomic():
-            _apply(deal, write_and_send())
+            move = deals.fire(deal.pk, step, entity=deal)
     except Refused as refused:
         refused.record_again()
         raise
-
-
-def _apply(deal, next_state) -> None:
-    """Persist whatever the step did to *deal*, including its new state.
-
-    One save for the transition and the fields that justify it, so a deal can never be
-    recorded as sent without its thread and timestamp, or moved out of `READY` without
-    the send being recorded. A step returning `None` decided to stay put — a lead
-    suppressed while the agent was writing — and that is saved just the same.
-    """
-    if next_state is not None:
-        deal.state = next_state
-    deal.save()
+    if move is not None and not move.applied:
+        logger.warning("%s: %s refused — %s", deal.lead.public_id, move.step, move.reason)
 
 
 def _what_is_holding(sequence: str | None) -> str:

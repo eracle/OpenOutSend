@@ -211,13 +211,15 @@ def test_a_send_cut_off_before_its_commit_leaves_no_row_and_the_deal_waiting(ste
     steps.send.side_effect = _sending(box)
 
     with _free(box), patch("openoutsend.emails.sender._deliver"), \
-            patch("openoutsend.send_pass._apply", side_effect=RuntimeError("killed")):
+            patch("agentic_fsm.backends.django.base.StateBackend.move",
+                  side_effect=RuntimeError("killed")):
         result = run_send_pass()
 
     deal.refresh_from_db()
     assert result.failed == 1
     assert not Message.objects.exists()
     assert deal.state == DealState.READY
+    assert deal.thread is None
 
 
 def test_a_refused_send_keeps_its_row_and_failure_through_the_rollback(steps):
