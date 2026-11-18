@@ -1,8 +1,8 @@
 # openoutsend/tests/emails/test_send.py
-"""The first-email path: the per-box cap and spacing, the ready pool, and the step.
+"""The send path: the per-box cap and spacing, the deals whose step is due, and the step.
 
-A first email is the only cold volume this sender produces, so it is the only send
-under a cap — replies are exempt (see ``test_reply.py``)."""
+A step is cold volume, so it is sent under a cap and spaced out — an answer in a
+conversation is exempt (see ``test_machines.py``)."""
 import logging
 
 import pytest
@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from django.utils import timezone
 
-from openoutsend.core.agents.outreach import OutreachDecision
+from openoutsend.core.agents.outreach import Email
 from openoutsend.core.sequences import cold
 from openoutsend.emails.models import Mailbox, Thread
 from openoutsend.emails.sender import (
@@ -19,9 +19,9 @@ from openoutsend.emails.sender import (
     operator_bcc,
     send_email,
 )
-from openoutsend.emails.steps.send import send_first_email, step_fields
-from openoutsend.leads.models import DealState
-from openoutsend.planner import emailable_deals, free_for_first_email
+from openoutsend.emails.steps.send import Plan, send_step, step_fields
+from openoutsend.leads.states import COMPLETED, CONVERSING, awaiting, sending
+from openoutsend.planner import due_deals, free_for_first_email
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.factories import DealFactory, LeadFactory, put_in_state
 
@@ -31,10 +31,10 @@ def _box(email="a@b.com", daily_limit=10):
 
 
 def _ready(email="lead@corp.com"):
-    """A deal waiting for its first email — ingested, with an address."""
+    """A deal whose first email is due — ingested, with an address."""
     return DealFactory(
         lead=LeadFactory(email=email),
-        state=DealState.READY,
+        state=sending(0),
     )
 
 
@@ -49,7 +49,7 @@ def _record_send(deal, box, when=None):
     maillog.outbound(box, thread=thread, to=deal.lead.email, sent_at=when)
     deal.mailbox = box
     deal.thread = thread
-    put_in_state(deal, DealState.EMAILED)
+    put_in_state(deal, CONVERSING)
     deal.email_sent_at = when
     deal.save()
     return deal
@@ -148,26 +148,34 @@ class TestPickingABox:
             assert free_for_first_email() is None
 
 
-# ── Email pool ────────────────────────────────────────────────────
+# ── The deals whose step is due ───────────────────────────────────
 
 
 @pytest.mark.django_db
-class TestEmailableDeals:
-    def test_returns_only_deals_waiting_for_a_first_email(self):
+class TestDueDeals:
+    def test_returns_only_deals_whose_step_is_due(self):
         ready = _ready()
-        DealFactory(lead=LeadFactory(), state=DealState.EMAILED)
-        DealFactory(lead=LeadFactory(), state=DealState.COMPLETED)
-        assert list(emailable_deals()) == [ready]
+        DealFactory(lead=LeadFactory(email="waiting@c.com"), state=awaiting(0))
+        DealFactory(lead=LeadFactory(email="written@c.com"), state=CONVERSING)
+        DealFactory(lead=LeadFactory(email="over@c.com"), state=COMPLETED)
+
+        (due,) = due_deals()
+
+        assert due == ready
+        assert due.due_step == cold().first
 
     def test_excludes_a_lead_with_no_address(self):
         """A row can arrive without one — an address is an enrichment, not a promise."""
         _ready(email="")
-        assert list(emailable_deals()) == []
+        assert due_deals() == []
 
-    def test_oldest_first(self):
-        first = _ready("first@c.com")
-        second = _ready("second@c.com")
-        assert list(emailable_deals()) == [first, second]
+    def test_longest_due_first(self):
+        from datetime import timedelta
+
+        newly_due = _ready("first@c.com")
+        long_due = _ready("second@c.com")
+        put_in_state(long_due, sending(0), at=timezone.now() - timedelta(days=1))
+        assert due_deals() == [long_due, newly_due]
 
 
 @pytest.mark.django_db
@@ -267,8 +275,8 @@ class TestSendEmailAttribution:
         body = self._sent_body(self._box("Eracle"))
         assert body.index("Eracle") < body.index(ATTRIBUTION)
 
-    def test_follow_up_also_carries_attribution(self):
-        """Threaded replies go through the same assembly, so they carry it too."""
+    def test_a_later_email_in_the_thread_also_carries_attribution(self):
+        """Threaded sends go through the same assembly, so they carry it too."""
         body = self._sent_body(self._box("Eracle"), in_reply_to="<prior@corp.com>")
         assert body.endswith(f"{ATTRIBUTION}\n")
 
@@ -320,32 +328,34 @@ class TestPromptLineIsRecorded:
         assert row.prompt_line_digest == ""
 
 
-# ── send_first_email (the step) ───────────────────────────────────
+# ── send_step (the step) ──────────────────────────────────────────
 
 
 @pytest.mark.django_db
-class TestSendFirstEmail:
-    def _run(self, deal, box, subject="Hi there", message="Short opener."):
+class TestSendStep:
+    def _run(self, deal, box, subject="Hi there", message="Short opener.",
+             prompt_line=None, message_id="mid@corp.com"):
+        """Send cold's step to *deal*, the model's email stubbed. Returns the two mocks
+        (the send, the model call) and whether it went."""
         with patch(
             "openoutsend.leads.summaries.materialize_profile_summary_if_missing",
         ), patch(
-            "openoutsend.core.agents.outreach.run_outreach_agent",
-            return_value=OutreachDecision(
-                action="send_message", subject=subject, message=message),
-        ), patch(
+            "openoutsend.core.agents.outreach.write_email",
+            return_value=Email(subject=subject, message=message),
+        ) as write, patch(
             "openoutsend.emails.sender.send_email",
             side_effect=lambda mailbox, *a, **kw: maillog.outbound(
-                mailbox, message_id="mid@corp.com"),
+                mailbox, thread=kw.get("thread"), message_id=message_id),
         ) as send:
-            next_state = send_first_email(deal, box, cold().first, None)
+            went = send_step(deal, cold().first, Plan(box, prompt_line=prompt_line))
         deal.save()
-        return send, next_state
+        return send, write, went
 
-    def test_sends_records_and_moves_to_emailed(self, operator):
+    def test_sends_and_records_the_send_on_the_deal(self, operator):
         box = _box(daily_limit=10)
         deal = _ready("lead@corp.com")
 
-        send, next_state = self._run(deal, box)
+        send, write, went = self._run(deal, box)
 
         # Every send is the operator's own, so they get a BCC of their outreach.
         send.assert_called_once()
@@ -353,7 +363,10 @@ class TestSendFirstEmail:
         kwargs = send.call_args.kwargs
         assert kwargs["bcc"] == operator.email
         assert kwargs["prompt_line"] is None
-        assert next_state == DealState.EMAILED
+        assert kwargs["sequence"] == "cold"
+        assert went is True
+        # A deal with no thread has not been written to, so the model is asked for a subject.
+        assert write.call_args.kwargs == {"opener": True}
         deal.refresh_from_db()
         assert deal.mailbox == box
         assert deal.email_subject == "Hi there"
@@ -365,13 +378,24 @@ class TestSendFirstEmail:
         box = _box(daily_limit=10)
         deal = _ready("lead@corp.com")
 
-        send, _ = self._run(deal, box)
+        send, write, _ = self._run(deal, box)
 
         kwargs = send.call_args.kwargs
         assert (kwargs["step"].number, kwargs["step"].path.name) == (0, "E0-opener.prompt.j2")
         assert "Write a first email to this lead." in kwargs["prompt"]
-        deal.refresh_from_db()
-        assert deal.step == 0
+        assert write.call_args.args == (deal, kwargs["prompt"])
+
+    def test_the_drawn_prompt_line_reaches_the_prompt_and_the_send(self, operator):
+        from openoutsend.core.prompt_lines import choose
+
+        line = choose("plain-ask")
+        box = _box(daily_limit=10)
+
+        send, _, _ = self._run(_ready("lead@corp.com"), box, prompt_line=line)
+
+        kwargs = send.call_args.kwargs
+        assert kwargs["prompt_line"] is line
+        assert line.prompt in kwargs["prompt"]
 
     def test_the_deal_points_at_the_thread_the_send_opened(self, operator):
         """One record, not two: the deal borrows the log's thread rather than
@@ -384,6 +408,37 @@ class TestSendFirstEmail:
         message = deal.thread.messages.get()
         assert message.is_outbound
         assert message.message_id == "mid@corp.com"
+
+    def test_the_thread_it_opens_is_kept_against_the_deal(self, operator):
+        """So a reply finds the deal waiting for it (``machines/channel.py``)."""
+        box = _box(daily_limit=10)
+        deal = _ready("lead@corp.com")
+        self._run(deal, box)
+
+        deal.refresh_from_db()
+        thread = Thread.objects.get()
+        assert deal.thread == thread
+        assert thread.mailbox == box
+        assert (thread.machine, thread.entity) == ("deal-cold", str(deal.pk))
+
+    def test_a_later_send_goes_in_the_thread_under_the_subject_it_opened_with(self, operator):
+        """From the thread's own box, whichever one the plan names, and with no new subject."""
+        box = _box(daily_limit=10)
+        deal = _ready("lead@corp.com")
+        self._run(deal, box)
+
+        send, write, went = self._run(deal, _box("other@b.com"), subject=None,
+                                      message="A second email.", message_id="second@corp.com")
+
+        assert went is True
+        assert write.call_args.kwargs == {"opener": False}
+        assert send.call_args.args == (box, "lead@corp.com", "Hi there", "A second email.")
+        kwargs = send.call_args.kwargs
+        assert kwargs["in_reply_to"] == "<mid@corp.com>"
+        assert kwargs["references"] == "<mid@corp.com>"
+        assert kwargs["thread"] == deal.thread
+        assert Thread.objects.count() == 1
+        assert deal.email_subject == "Hi there"
 
     def test_the_box_is_spaced_out_afterwards(self, operator):
         box = _box(daily_limit=10)
@@ -415,20 +470,24 @@ class TestSendFirstEmail:
 
         def write_while_they_opt_out(d, prompt, opener=False):
             suppress_email(d.lead.email, reason="opted out mid-run")
-            return OutreachDecision(action="send_message", subject="s", message="m")
+            return Email(subject="s", message="m")
 
         with patch(
             "openoutsend.leads.summaries.materialize_profile_summary_if_missing",
         ), patch(
-            "openoutsend.core.agents.outreach.run_outreach_agent",
+            "openoutsend.core.agents.outreach.write_email",
             side_effect=write_while_they_opt_out,
         ), patch(
             "openoutsend.emails.sender.send_email",
         ) as send:
-            next_state = send_first_email(deal, box, cold().first, None)
+            went = send_step(deal, cold().first, Plan(box))
 
         send.assert_not_called()
-        assert next_state is None
+        assert went is False
+        # Nothing was opened and the box's spacing clock was not spent.
+        assert Thread.objects.count() == 0
+        box.refresh_from_db()
+        assert box.next_send_at is None
 
 
 @pytest.mark.django_db

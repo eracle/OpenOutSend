@@ -78,11 +78,11 @@ answered in any pass, whatever sequence the thread began in. `examples/sequences
 the repo is a whole sequence to copy.
 
 A pass, in order: read the mailbox (an opt-out overnight suppresses someone before anything is
-written to them), answer every thread the lead replied in, then send as many openers, later steps and
-follow-ups as the guards allow *right now* — one queue, oldest due first, so a backlog of threads can
-never hold new leads at zero. Replies ignore the daily cap, the spacing clock and the sending window;
-**every step and follow-up is cold volume**, and they share one capped, spaced budget per box —
-except a Resend box's cap, which each sequence spends on its own.
+written to them), move every deal whose step's day has come to due, answer every conversation with a
+message waiting, then send as many due steps as the guards allow *right now* — one queue, longest
+due first, so a backlog of threads can never hold new leads at zero. Answers ignore the daily cap,
+the spacing clock and the sending window; **every step is cold volume**, and they share one capped,
+spaced budget per box — except a Resend box's cap, which each sequence spends on its own.
 
 `outsend send 5` waits — sleeping out the spacing clock, the daily ceiling and the sending window
 between passes, including overnight or across a weekend if that is what the guards say. `outsend send
@@ -90,8 +90,12 @@ all` makes the pool itself the goal and exits 0 once nobody is left, even though
 would report `send 5` as falling short at three of five — it is the same ending with one verdict
 inverted, so prefer `all` to typing a count that goes stale as you type it.
 
-**A lead who never answers gets two more emails, then the pursuit ends** (after three working days,
-then five; Monday–Friday, or every day with `OUTSEND_ENFORCE_WEEKEND_PAUSE=off`); a reply at any point ends the sequence and the conversation takes over instead.
+**Every step of a sequence goes on its day, whether or not the lead wrote back.** After the last one
+the deal rests in its conversation, where a reply is answered, one that arrived during the steps
+included. Five working days of silence close it as `unresponsive` (Monday–Friday, or every day with
+`OUTSEND_ENFORCE_WEEKEND_PAUSE=off`); a folder's own `conversation-<days>d.prompt.j2` sets another
+gap and the prompt replies are answered from. Nothing nudges between steps: a second touch is a
+second step file. A reply that says `stop` suppresses the address on any step, with no model asked.
 
 ## Writing the openers and steps yourself, with no second LLM key
 
@@ -123,26 +127,15 @@ This resumes exactly that deal — no id to track, since at most one is ever pen
 moment a mailbox is free. **An answer already given is kept, not thrown away**, if the spacing clock
 or the sending window is holding every box right now; a later bare `outsend send --agent-draft` (no
 `--subject`/`--body`) will pick it back up and send it once a box frees up, so you never have to
-re-supply the same text. A deal stopped or replied to while its draft waited is dropped, not written
+re-supply the same text. A deal stopped or suppressed while its draft waited is dropped, not written
 to. No count yet — `--agent-draft` is one pass at a time, like a bare `outsend send`.
 
-**A reply comes before any step.** When a lead has written back, the `draft_pending` is theirs, with
-`"step": "reply"`, their line's own fields as `fields`, and the whole conversation followed by the
-reply prompt as `prompt`. Answer with `--body` alone; it goes in their thread at once, exempt from
-the send clocks. Ending the thread or honouring a worded "stop" is not an answer this takes — tell
-the operator. An install with `OUTSEND_REPLIES=hold` answers no reply on its own, so the replies
-wait for exactly this.
-
-**To answer replies and send nothing else, use `outsend reply`**, the same handover without the
-cold sends — the loop for a session answering customers while a timer keeps sending:
-
-```bash
-outsend --json reply                     # draft_pending for the oldest reply owed, or none
-outsend reply --body "Which ones?"       # sends it in their thread; run bare again for the next
-```
-
-It ends with exit 0 and `0 reply(ies) to answer` when nobody is waiting. A draft held for an opener
-or a step stops it with an error; answer that with `send --agent-draft` first.
+**A reply comes before any step.** When a lead in their conversation has written back, the
+`draft_pending` is theirs, with `"step": "reply"`, their line's own fields as `fields`, and the whole
+thread followed by how to answer it as `prompt`. Answer with `--body` alone; it goes in their thread
+at once, exempt from the send clocks. Ending the conversation is not an answer this takes — tell the
+operator, who ends it with `agfsm fire deal-<sequence>:<id> conversing_turn --answer '{"to":
+"completed", "outcome": "…"}'`.
 
 **Don't pass `--agent-draft` unless you intend to answer every `draft_pending` it raises** — a bare
 `outsend send` uses `AI_MODEL` and writes every opener and step itself, which is the right default for
@@ -153,7 +146,7 @@ before it is kept.
 ## Reading the output
 
 Nothing here prints a CSV — sending has no rows to hand on. Everything is narration on **stderr**:
-counts (`read 2 new message(s) · answered 1 · sent 0 later step(s) · followed up 0 · opened 3`), the gate holding a pass that
+counts (`read 2 new message(s) · answered 1 · sent 0 later step(s) · opened 3`), the gate holding a pass that
 did nothing (*"no mailbox connected, so nothing can be sent"* rather than a silent zero), and, for a
 goal, how the run ended (`opened 5 of 5 conversation(s) in 3 pass(es)`, or `stopped at ...` with the
 wall it hit). **Never report a pass that did nothing as "no leads to send"** — read the holding line;

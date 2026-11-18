@@ -1,19 +1,21 @@
 # openoutsend/emails/steps/send.py
-"""Sending a sequence step — the first, which opens a thread, and every later one in it.
+"""Sending one step of a sequence: the one that opens the thread, or a later one in it.
 
-The outreach agent writes the step from its prompt and the whole history, SMTP sends
-it, and the send is recorded on the Deal: the first moves it to EMAILED, every one
-moves `deal.step`.
+A prompt step is written by the outreach agent from its prompt and the whole history; an
+email step is rendered and sent as written, with no model call. Either way the send is
+recorded on the deal, and the deal machine's step that called this moves the deal on
+(``leads/lifecycle.py``).
 
-Every step is *cold volume*, which is what a receiver punishes; a reply inside a
-thread someone started is not, and goes out with no cap and no spacing
-(``steps/reply.py``). So each send here rewrites its box's spacing clock
-(``space_out``), and the planner only hands over a step whose box may send.
+Every step is *cold volume*, which is what a receiver punishes; an answer inside a
+thread someone wrote in is not, and goes out with no cap and no spacing (the deal's
+conversation, ``machines/``). So each send here rewrites its box's spacing clock
+(``space_out``), and the guards only hand over a box that may send (``planner.py``).
 """
 from __future__ import annotations
 
 import logging
 import random
+from dataclasses import dataclass
 from datetime import timedelta
 
 from django.utils import timezone
@@ -25,175 +27,127 @@ from openoutsend.core.conf import (
     SEND_INTERVAL_JITTER_MIN_SECONDS,
 )
 
-from openoutsend.leads.models import DealState
-
 logger = logging.getLogger(__name__)
 
 
-def send_first_email(deal, mailbox, step, prompt_line) -> DealState | None:
-    """Open the conversation with *deal* from *mailbox* with *step*. Returns the next state.
+@dataclass(frozen=True)
+class Plan:
+    """What the send guards chose for one send: the box, and the move it opens with.
 
-    *step* is the deal's opening step (``planner.opening_step``) — ``E0`` unless it was
-    past its grace when the lead arrived; for cold, ``E0-opener.prompt.j2``. The caller has
-    already established that this box may send right now (``planner.free_for_first_email``).
-    A prompt step is written by the model; an email step is rendered and sent as written,
-    with no model call and no prompt recorded. Returns ``None`` without sending if the lead
-    was suppressed while the agent was writing — an unsubscribe can land in the seconds an
-    LLM call takes, and this is the last gate before the message goes.
-
-    ``prompt_line`` is the move this opener makes (``core/prompt_lines.py``), and it is
-    required — an opener that reaches the log unattributed is a hole nothing can fill
-    in afterwards, and a default would let a new call site open one silently. ``None``
-    is a legitimate value (an install with no prompt lines), but it has to be said.
-    The **pass** draws it rather than this function, so two sends in one pass can be
-    told apart instead of sharing whatever one call happened to pick. A step whose
-    prompt does not name ``{{ prompt_line }}`` drops it, so the log never credits a
-    move the model was not shown.
+    ``body`` set means a calling agent wrote the email (``send --agent-draft``), with
+    the ``subject`` a thread's first email needs and the rendered ``prompt`` it was
+    handed, recorded on the send as the model's would be.
     """
-    from openoutsend.core.agents.outreach import run_outreach_agent
-    from openoutsend.emails.sender import suppressed
-    from openoutsend.leads.summaries import materialize_profile_summary_if_missing
 
-    if not step.uses_prompt_line:
-        prompt_line = None
+    box: object
+    prompt_line: object = None
+    subject: str = ""
+    body: str = ""
+    prompt: str = ""
+
+
+def send_step(deal, step, plan: Plan) -> bool:
+    """Send *step* to *deal* from the planned box. True once it went.
+
+    The deal's first send opens its thread from ``plan.box``; every later one goes in
+    that thread, from the thread's own box, under the subject it opened with. False,
+    with nothing sent, when the lead was suppressed while the email was being written:
+    an unsubscribe can land in the seconds an LLM call takes, and this is the last gate
+    before the message goes.
+
+    ``plan.prompt_line`` is the move a prompt step makes (``core/prompt_lines.py``),
+    drawn by the pass so two sends in one pass can be told apart. A step whose prompt
+    does not name ``{{ prompt_line }}`` drops it, so the log never credits a move the
+    model was not shown.
+    """
+    from openoutsend.emails.sender import suppressed
+
+    opens = deal.thread_id is None
+    prompt_line = plan.prompt_line if step.uses_prompt_line else None
     logger.info("%s %s via %s (%s, %s)",
-                colored("▶ first email", "blue", attrs=["bold"]),
-                deal.lead.public_id, mailbox.from_address, step.path.name,
+                colored("▶ first email" if opens else "▶ step", "blue", attrs=["bold"]),
+                deal.lead.public_id, plan.box.from_address, step.path.name,
+                "agent-drafted" if plan.body else
                 prompt_line.id if prompt_line else "no prompt line")
 
-    if step.is_email:
-        subject, message = step.opening(**step_fields(deal, None))
-        prompt = ""
-    else:
-        materialize_profile_summary_if_missing(deal.lead)
-        prompt = step.render(**step_fields(deal, prompt_line))
-        opener = run_outreach_agent(deal, prompt, opener=True)
-        subject, message = opener.subject, opener.message
-
+    subject, message, prompt = _written(deal, step, plan, prompt_line, opens)
     if suppressed(deal.lead):
         logger.warning("%s was suppressed mid-run — not sending", deal.lead.public_id)
-        return None
+        return False
+    if opens:
+        _open_thread(deal, plan.box, subject, message, prompt_line, prompt, step)
+    else:
+        _send_in_thread(deal, message, prompt_line, prompt, step)
+    space_out(deal.mailbox, timezone.now())
+    return True
 
-    return _finish_send(deal, mailbox, subject, message, prompt_line,
-                        prompt=prompt, step=step)
 
+def _written(deal, step, plan: Plan, prompt_line, opens: bool) -> tuple[str, str, str]:
+    """``(subject, message, prompt)`` of the email to send: drafted, rendered, or written.
 
-def send_drafted_email(deal, mailbox, step, subject: str, message: str,
-                       prompt_line) -> DealState | None:
-    """Open the conversation with a subject/message an agent wrote, not `AI_MODEL`.
-
-    The mirror image of `send_first_email` with the LLM call removed — everything
-    after it (the suppression recheck, the SMTP send, the deal bookkeeping, the
-    spacing clock) is identical, because none of that cares who wrote the words.
-    It is still the deal's opening *step*, and recorded as one; there is no rendered
-    prompt to record, because the calling agent wrote from its own context.
+    The subject is ``""`` for an email that goes in an existing thread, and the prompt
+    is ``""`` for an email step, which was written from none.
     """
-    from openoutsend.emails.sender import suppressed
-
-    logger.info("%s %s via %s (agent-drafted)",
-                colored("▶ first email", "blue", attrs=["bold"]),
-                deal.lead.public_id, mailbox.from_address)
-
-    if suppressed(deal.lead):
-        logger.warning("%s was suppressed while its draft waited — not sending",
-                       deal.lead.public_id)
-        return None
-
-    return _finish_send(deal, mailbox, subject, message, prompt_line,
-                        prompt="", step=step)
-
-
-def send_next_step(deal, step, prompt_line) -> DealState | None:
-    """Write *step* to *deal* in its own thread, from its own box. Returns the next state.
-
-    The planner has established the step is due and the thread's box may send
-    (``planner.cold_sends_due``). Same thread and no new subject: the reader sees one
-    conversation, and the step's prompt says what this email is for, or, for an email
-    step, is the email. ``prompt_line`` follows ``send_first_email``'s rule and is
-    dropped by a step that does not name it.
-    """
+    from openoutsend.core.agents.outreach import write_email
     from openoutsend.leads.summaries import materialize_profile_summary_if_missing
 
-    if not step.uses_prompt_line:
-        prompt_line = None
-    logger.info("%s %s via %s (%s)", colored("▶ step", "blue", attrs=["bold"]),
-                deal.lead.public_id, deal.mailbox.from_address, step.path.name)
-
+    if plan.body:
+        return plan.subject, plan.body, plan.prompt
     if step.is_email:
-        _, message = step.written(**step_fields(deal, None))
-        return _send_written_in_thread(deal, message, "", step=step, prompt_line=None)
-
+        fields = step_fields(deal, None)
+        subject, message = step.opening(**fields) if opens else step.written(**fields)
+        return subject, message, ""
     materialize_profile_summary_if_missing(deal.lead)
     prompt = step.render(**step_fields(deal, prompt_line))
-    return send_in_thread(deal, prompt, step=step, prompt_line=prompt_line)
+    email = write_email(deal, prompt, opener=opens)
+    return email.subject or "", email.message, prompt
 
 
-def send_in_thread(deal, prompt: str, *, step=None, prompt_line=None) -> DealState | None:
-    """Have the agent write *prompt* in *deal*'s thread, and send what it wrote.
+def _open_thread(deal, mailbox, subject: str, message: str, prompt_line, prompt: str, step) -> None:
+    """Send the deal's first email and record the conversation it started.
 
-    The shared tail of a later step and a follow-up — every send we make into a thread
-    nobody has answered. Returns ``None`` when the deal stays where it is: sent, or
-    nothing sent because the lead was suppressed while the agent wrote, or the agent
-    answered with something other than a message.
-
-    *step* is recorded on the send and moves ``deal.step``; a follow-up has none.
+    The thread the send opens is kept against the deal (``Thread.machine``,
+    ``Thread.entity``), so a reply finds the deal waiting for it. It is written once
+    the send has gone, never made ahead of it: a refused send is recorded again
+    outside the transaction that rolls back here (``sender.Refused``), and must not
+    point at a thread that went with it. The deal points at the thread rather than
+    copying it: the mail log is the record of what left the box.
     """
-    from openoutsend.core.agents.outreach import run_outreach_agent
-    from openoutsend.emails.steps.reply import ends_in_an_opt_out, honour_opt_out
-
-    decision = run_outreach_agent(deal, prompt)
-
-    # Written to somebody who has said nothing, so there is no opt-out here to read
-    # and no prompt offers one. It is honoured anyway if the agent reaches for it: the
-    # alternative is the branch below, which logs the decision and discards it —
-    # leaving a deal the agent judged an opt-out sendable again next pass.
-    if ends_in_an_opt_out(decision):
-        return honour_opt_out(deal)
-    if decision.action == "mark_completed":
-        logger.info("%s judged not worth another email: %s",
-                    deal.lead.public_id, decision.outcome)
-        deal.outcome = decision.outcome
-        return DealState.COMPLETED
-    if decision.action != "send_message":
-        logger.warning("agent for %s answered %s in thread — sending nothing",
-                       deal.lead.public_id, decision.action)
-        return None
-    return _send_written_in_thread(deal, decision.message, prompt, step=step,
-                                   prompt_line=prompt_line)
-
-
-def send_drafted_step(deal, step, message: str, prompt: str) -> DealState | None:
-    """Send a later *step* a calling agent wrote, in *deal*'s thread, not `AI_MODEL`.
-
-    The mirror of `send_next_step` with the LLM call removed. *prompt* is the rendered
-    step the agent was handed, recorded on the send as `AI_MODEL`'s would be.
-    """
-    logger.info("%s %s via %s (%s, agent-drafted)", colored("▶ step", "blue", attrs=["bold"]),
-                deal.lead.public_id, deal.mailbox.from_address, step.path.name)
-    return _send_written_in_thread(deal, message, prompt, step=step, prompt_line=None)
-
-
-def _send_written_in_thread(deal, message: str, prompt: str, *, step,
-                            prompt_line) -> DealState | None:
-    """Send *message* in *deal*'s thread under its original subject, and record it."""
     from openoutsend.core.operator import get_active_user
-    from openoutsend.emails.sender import operator_bcc, send_email, suppressed
-    from openoutsend.emails.steps.reply import thread_ids
+    from openoutsend.emails.sender import operator_bcc, send_email
+    from openoutsend.leads.states import machine_name
 
-    # Last gate before the message goes, exactly as the opener has: an opt-out can
-    # land in the seconds an LLM call takes, and a bounce may have suppressed the
-    # address since the pool was built.
-    if suppressed(deal.lead):
-        logger.warning("%s was suppressed mid-run — not sending", deal.lead.public_id)
-        return None
+    sent = send_email(
+        mailbox, deal.lead.email, subject, message,
+        bcc=operator_bcc(get_active_user()),
+        prompt_line=prompt_line,
+        prompt=prompt,
+        step=step,
+        sequence=deal.sequence,
+        unsubscribe_url=unsubscribe_url(deal),
+    )
+    thread = sent.thread
+    thread.machine, thread.entity = machine_name(deal.sequence), str(deal.pk)
+    thread.save(update_fields=["machine", "entity"])
+    deal.mailbox = mailbox
+    deal.email_subject = subject
+    deal.thread = thread
+    deal.email_sent_at = sent.sent_at
 
-    chain = thread_ids(deal)
+
+def _send_in_thread(deal, message: str, prompt_line, prompt: str, step) -> None:
+    """Send *message* in *deal*'s thread under its original subject."""
+    from openoutsend.core.operator import get_active_user
+    from openoutsend.emails.sender import operator_bcc, send_email
+    from openoutsend.emails.threads import message_ids
+
+    chain = message_ids(deal.thread)
     send_email(
         deal.mailbox,
         deal.lead.email,
-        # The original subject, unchanged and with no "Re:" — they never wrote back,
-        # so there is nothing to be replying to. The threading headers are what put
-        # it in the same conversation; the subject only has to not lie about it.
+        # The original subject, unchanged and with no "Re:": a step is ours, whether or
+        # not they wrote back. The threading headers are what put it in the same
+        # conversation; the subject only has to not lie about it.
         deal.email_subject,
         message,
         bcc=operator_bcc(get_active_user()),
@@ -206,10 +160,6 @@ def _send_written_in_thread(deal, message: str, prompt: str, *, step,
         sequence=deal.sequence,
         unsubscribe_url=unsubscribe_url(deal),
     )
-    if step is not None:
-        deal.step = step.number
-    space_out(deal.mailbox, timezone.now())
-    return None
 
 
 def step_fields(deal, prompt_line) -> dict:
@@ -242,36 +192,8 @@ def unsubscribe_url(deal) -> str:
     return str(deal.fields.get("unsubscribe_url") or "")
 
 
-def _finish_send(deal, mailbox, subject: str, message: str, prompt_line, *,
-                 prompt: str, step) -> DealState:
-    """SMTP-send the opener and record it on *deal*. Shared by both drafting paths."""
-    from openoutsend.core.operator import get_active_user
-    from openoutsend.emails.sender import operator_bcc, send_email
-
-    sent = send_email(
-        mailbox, deal.lead.email, subject, message,
-        bcc=operator_bcc(get_active_user()),
-        prompt_line=prompt_line,
-        prompt=prompt,
-        step=step,
-        sequence=deal.sequence,
-        unsubscribe_url=unsubscribe_url(deal),
-    )
-
-    # The send wrote itself into the mail log and opened a thread; the deal just
-    # points at the conversation it started. Nothing about this message is stored
-    # twice, so nothing about it can disagree with itself later.
-    deal.mailbox = mailbox
-    deal.email_subject = subject
-    deal.thread = sent.thread
-    deal.email_sent_at = sent.sent_at
-    deal.step = step.number
-    space_out(mailbox, timezone.now())
-    return DealState.EMAILED
-
-
 def space_out(mailbox, now) -> None:
-    """Set when this box may send its next cold email — an opener or a follow-up.
+    """Set when this box may send its next cold email.
 
     Fresh jitter every time: a fixed cadence is its own machine signature, so the
     gap has to vary. Per box, because the daily ceiling is per box — two mailboxes

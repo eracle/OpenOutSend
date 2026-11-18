@@ -63,7 +63,7 @@ def send_email(
 
     The mailbox's signature, the opt-out block and the product attribution line
     are appended to ``body`` here rather than at the call sites, so every send —
-    opener and follow-up — carries all three, in the order body → signature →
+    a step or an answer — carries all three, in the order body → signature →
     opt-out → attribution. The matching ``List-Unsubscribe`` header goes on the
     same message: header and body line are two halves of one opt-out, and only
     building them together makes it impossible to ship one without the other.
@@ -150,7 +150,7 @@ def unsubscribe_address(from_address: str) -> str:
     / ``imap.gmail.com``) and what IceMail provisions, so it holds for the boxes
     this actually runs on. A provider that *rejects* plus-addressing would bounce
     the opt-out, and the recipient — believing they unsubscribed — would get the
-    next follow-up and reasonably hit "spam". Nothing verifies the alias round-trips
+    next step and reasonably hit "spam". Nothing verifies the alias round-trips
     at onboarding; connecting a non-Gmail box is the case to check by hand.
     """
     local, _, domain = from_address.partition("@")
@@ -251,7 +251,8 @@ def _sign(body: str, signature: str | None) -> str:
     return f"{body.rstrip()}\n\n{signature}\n"
 
 
-OPT_OUT_LINE = "Not interested? Reply \"stop\" and I won't write again."
+OPT_OUT_WORD = "stop"
+OPT_OUT_LINE = f"Not interested? Reply \"{OPT_OUT_WORD}\" and I won't write again."
 
 
 def _opt_out(body: str) -> str:
@@ -263,9 +264,10 @@ def _opt_out(body: str) -> str:
     those recipients have no visible exit but the spam button, and a complaint costs
     the sending reputation everything else here is built to protect.
 
-    **The quoted word is load-bearing.** `emails/steps/reply.py` matches it before any
-    model is consulted, so the one wording this asks for is honoured by code rather
-    than by inference. Reword the sentence freely; keep a word the gate can match.
+    **The quoted word is load-bearing.** `emails/project.py` matches it in a reply's
+    own text before any model is consulted, so the one wording this asks for is
+    honoured by code rather than by inference, on whichever step it answers. Reword
+    the sentence freely; keep ``OPT_OUT_WORD`` the word it quotes.
     """
     return f"{body.rstrip()}\n\n{OPT_OUT_LINE}\n"
 

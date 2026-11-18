@@ -12,7 +12,8 @@ from openoutsend.emails.delivery_policy import (
     record_failure,
 )
 from openoutsend.emails.models import DeliveryEvent, Mailbox
-from openoutsend.leads.models import DealState, Outcome
+from openoutsend.leads.models import Outcome
+from openoutsend.leads.states import COMPLETED, CONVERSING
 from openoutsend.leads.suppression import is_suppressed
 from openoutsend.planner import free_for_first_email
 from openoutsend.tests.emails import maillog
@@ -116,7 +117,7 @@ class TestRecordFailure:
     def test_a_refusal_at_the_door_suppresses_just_as_a_report_would(self):
         """The same status means the same thing whichever route it comes home by."""
         send = maillog.outbound(_box(), to="gone@corp.com")
-        deal = DealFactory(lead=LeadFactory(email="gone@corp.com"), state=DealState.EMAILED)
+        deal = DealFactory(lead=LeadFactory(email="gone@corp.com"), state=CONVERSING)
 
         record_failure(send, smtplib.SMTPRecipientsRefused(
             {"gone@corp.com": (550, b"5.1.1 The email account does not exist")},
@@ -124,11 +125,11 @@ class TestRecordFailure:
 
         deal.refresh_from_db()
         assert is_suppressed("gone@corp.com")
-        assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.UNDELIVERABLE)
+        assert (deal.state, deal.outcome) == (COMPLETED, Outcome.UNDELIVERABLE)
 
     def test_a_reputation_refusal_at_the_door_suppresses_nobody(self):
         send = maillog.outbound(_box(), to="fine@corp.com")
-        deal = DealFactory(lead=LeadFactory(email="fine@corp.com"), state=DealState.EMAILED)
+        deal = DealFactory(lead=LeadFactory(email="fine@corp.com"), state=CONVERSING)
 
         policy = record_failure(send, smtplib.SMTPDataError(
             550, b"5.7.1 Our system has detected ... blocked",
@@ -136,7 +137,7 @@ class TestRecordFailure:
 
         deal.refresh_from_db()
         assert not is_suppressed("fine@corp.com")
-        assert deal.state == DealState.EMAILED
+        assert deal.state == CONVERSING
         # It is still the box's problem, and still stops the box for the day.
         assert policy.pause_today and policy.needs_operator
 

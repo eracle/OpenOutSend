@@ -16,8 +16,8 @@ timestamp this side can read directly.
 
 **The wait is spent working.** Every slice ends in a whole pass, so the mail is read and
 replies are answered on a five-minute cadence throughout (``conf.WAIT_SLICE_SECONDS``);
-only the openers are on hold. Follow-ups and replies do not count toward the goal — the
-goal is cold volume, and answering somebody who wrote to you is not that.
+only the first emails are on hold. Later steps and answers do not count toward the
+goal — the goal is conversations opened.
 
 **What ends a run that is not finished:**
 
@@ -186,8 +186,8 @@ def _run_one_pass(prompt_line_name: str | None, result: SendJobResult,
     """Run a pass and fold its counts into the run's totals. Returns the pass's own."""
     done = run_send_pass(prompt_line_name, narrate=False, sequence=sequence)
     result.passes += 1
-    for count in ("mirrored", "classified", "projected", "answered",
-                  "opened", "stepped", "followed_up", "gave_up", "missed", "undeliverable",
+    for count in ("mirrored", "classified", "projected", "answered", "ended",
+                  "opened", "stepped", "gave_up", "missed", "undeliverable",
                   "failed"):
         setattr(result.totals, count, getattr(result.totals, count) + getattr(done, count))
     return done
@@ -205,7 +205,7 @@ def _wait_before_the_next_pass(opening_at: datetime, now: datetime, idle: bool) 
     **An idle pass always waits a whole slice**, whatever the clock says. A wait of zero
     can only follow a pass that opened nothing while the pool said a box was free — the
     guards said yes and the pass disagreed — and asking again in the same instant is a
-    spin, not a retry. The cost when the disagreement is benign (a follow-up took the
+    spin, not a retry. The cost when the disagreement is benign (a later step took the
     box's slot) is one slice against a four-minute clock.
     """
     if idle:
@@ -264,9 +264,9 @@ def _anyone_waiting(sequence: str | None) -> bool:
     separate invocation of this command. Sleeping for a lead that cannot arrive is how
     a bounded run turns into a process the operator has to remember to kill.
     """
-    from openoutsend.planner import emailable_deals
+    from openoutsend.planner import waiting_to_open
 
-    return emailable_deals(sequence).exists()
+    return waiting_to_open(sequence).exists()
 
 
 # ── Endings ───────────────────────────────────────────────────────

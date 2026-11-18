@@ -8,8 +8,8 @@ the way back — and the prompt for the message being written comes after it::
     prompt     E0, as rendered when it was sent
     you sent   the E0 email, as sent
     silence    no reply for 3 business days
-    prompt     the follow-up prompt
-    you sent   the follow-up
+    prompt     E1, as rendered when it was sent
+    you sent   the E1 email, as sent
     they wrote their reply
 
 **Verbatim and uncapped.** What this replaces was a rolling fact list beside a window

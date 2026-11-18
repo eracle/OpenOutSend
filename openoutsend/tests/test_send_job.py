@@ -64,12 +64,12 @@ def test_only_openers_count_toward_the_goal(waiting, slept):
 
     A busy inbox must not satisfy `send 2` without opening anything.
     """
-    result, _ = _run(2, [PassResult(answered=4, followed_up=3),
+    result, _ = _run(2, [PassResult(answered=4, stepped=3),
                          PassResult(opened=1),
                          PassResult(opened=1)], slept)
 
     assert result.opened == 2
-    assert (result.totals.answered, result.totals.followed_up) == (4, 3)
+    assert (result.totals.answered, result.totals.stepped) == (4, 3)
 
 
 def test_the_run_stops_the_moment_the_goal_is_met(waiting, slept):

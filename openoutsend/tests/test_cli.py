@@ -160,34 +160,16 @@ def test_subject_without_a_body_is_refused():
 # ── reply ─────────────────────────────────────────────────────────
 
 
-def test_reply_takes_a_body():
-    args = _parse_args(["reply", "--body", "Which ones?"])
-    assert (args.command, args.body) == ("reply", "Which ones?")
-
-
-@pytest.mark.parametrize("argv", [["reply", "--subject", "Hi", "--body", "B"],
-                                  ["reply", "--agent-draft"],
-                                  ["reply", "--sequence", "warm"],
-                                  ["reply", "5"]])
-def test_reply_refuses_what_belongs_to_send(argv):
+@pytest.mark.parametrize("argv", [["reply"], ["reply", "--body", "Which ones?"]])
+def test_reply_is_no_longer_a_verb(argv, capsys):
+    """A reply is answered by `send`, in the deal's conversation: the parser refuses the verb."""
     with pytest.raises(SystemExit):
         _parse_args(argv)
 
+    assert "invalid choice: 'reply'" in capsys.readouterr().err
 
-def test_reply_runs_the_reply_pass_without_an_llm_key(site_config, capsys):
-    from openoutsend.__main__ import _reply
 
-    maillog.mailbox()
-    with patch("openoutsend.send_pass.run_reply_pass",
-               return_value=PassResult(mirrored=1, answered=1,
-                                       holding="0 reply(ies) to answer")) as run, \
-            patch("openoutsend.send_pass.run_send_pass") as whole_pass:
-        assert _reply(_args(command="reply", body="Which ones?")) == 0
-
-    whole_pass.assert_not_called()
-    assert run.call_args.args[0].body == "Which ones?"
-    assert "read 1 new message(s) · answered 1 · 0 reply(ies) to answer" in \
-        capsys.readouterr().err
+# ── file ──────────────────────────────────────────────────────────
 
 
 def test_file_takes_a_message_and_a_lead():
@@ -199,7 +181,7 @@ def test_file_takes_a_message_and_a_lead():
                                   ["file", "--lead", "sample-7"],
                                   ["file", "--message", "m", "--lead", "l", "--body", "B"],
                                   ["file", "--message", "m", "--lead", "l", "--sequence", "s"],
-                                  ["reply", "--message", "m"]])
+                                  ["send", "--message", "m"]])
 def test_file_refuses_what_is_not_its_own(argv):
     with pytest.raises(SystemExit):
         _parse_args(argv)
@@ -212,15 +194,6 @@ def test_a_refused_filing_is_one_error_line(db, capsys):
         assert main(["file", "--message", "ghost@corp.com", "--lead", "sample-7"]) == 1
 
     assert "error: no received message ghost@corp.com" in capsys.readouterr().err
-
-
-def test_a_failed_answer_is_carried_into_the_exit_code(connected, capsys):
-    from openoutsend.__main__ import _reply
-
-    with patch("openoutsend.send_pass.run_reply_pass", return_value=PassResult(failed=1)):
-        assert _reply(_args(command="reply", body="Which ones?")) == 1
-
-    assert "the answer failed to send" in capsys.readouterr().err
 
 
 def test_draft_pending_renders_as_one_typed_line(connected, capsys):
@@ -264,8 +237,7 @@ def test_send_runs_one_pass(connected, capsys):
     from openoutsend.core.agent_draft import OFF
     run.assert_called_once_with(None, agent_draft=OFF, sequence=None)
     narration = capsys.readouterr().err
-    assert ("read 2 new message(s) · answered 1 · sent 0 later step(s) · followed up 0 · "
-            "opened 3") in narration
+    assert "read 2 new message(s) · answered 1 · sent 0 later step(s) · opened 3" in narration
 
 
 def test_a_count_runs_to_the_goal_instead_of_passing_once(connected, capsys):

@@ -3,7 +3,7 @@
 A thread carries the machine and the entity it belongs to (`Thread.machine`,
 `Thread.entity`), written when the entity's first email opens it, so a reply finds
 whoever is waiting for it. What is incoming is read off the mail log, never stored:
-a thread whose newest turn is theirs.
+a thread's newest turn of theirs with no answer of ours after it.
 """
 from __future__ import annotations
 
@@ -26,17 +26,31 @@ def turns_of(machine: str, entity: str) -> list[Message]:
 
 
 def incoming(machine: str, entity: str) -> Message | None:
-    """The message waiting for an answer: the newest turn of a thread, when it is theirs.
+    """The message waiting for an answer: a thread's newest turn of theirs that nothing
+    of ours has answered since.
 
+    A step of a sequence (a send that records its ``step``) is not an answer: it was
+    going on its day whoever wrote, so whoever wrote before it is still owed one.
     Turns only, so a bounce or an out-of-office is never one. With several threads
     waiting, the one stored first.
     """
     waiting = []
     for thread in threads_of(machine, entity):
-        newest = thread.turns().select_related("thread__mailbox").last()
-        if newest is not None and not newest.is_outbound:
-            waiting.append(newest)
+        unanswered = _unanswered(thread)
+        if unanswered is not None:
+            waiting.append(unanswered)
     return min(waiting, key=lambda message: message.pk) if waiting else None
+
+
+def _unanswered(thread) -> Message | None:
+    """*thread*'s newest turn of theirs, unless an answer of ours follows it."""
+    unanswered = None
+    for turn in thread.turns().select_related("thread__mailbox"):
+        if not turn.is_outbound:
+            unanswered = turn
+        elif turn.step is None:
+            unanswered = None
+    return unanswered
 
 
 def open_thread(machine: str, entity: str, mailbox, to_address: str, subject: str, body: str,

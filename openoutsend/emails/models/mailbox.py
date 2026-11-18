@@ -127,7 +127,7 @@ class Mailbox(models.Model):
                                  default=Transport.MAILBOX)
     host = models.CharField(max_length=255, default="smtp.gmail.com")
     port = models.PositiveIntegerField(default=587)
-    # IMAP read side, for the agentic follow-up loop's reply-reader
+    # IMAP read side, for the mail pass that reads replies
     # (emails/sync.py); authenticates with the same address + app password as SMTP.
     imap_host = models.CharField(max_length=255, default="imap.gmail.com")
     imap_port = models.PositiveIntegerField(default=993)
@@ -136,8 +136,8 @@ class Mailbox(models.Model):
     username = models.CharField(max_length=320, unique=True)
     password = models.CharField(max_length=255)
     from_address = models.EmailField(max_length=320)
-    # Sign-off appended verbatim to every email sent from this box (opener and
-    # follow-ups alike). Per box, not global: the signature is part of the sending
+    # Sign-off appended verbatim to every email sent from this box (steps and
+    # answers alike). Per box, not global: the signature is part of the sending
     # identity, and a second box is usually a second identity. The email agent is
     # told its signature is added after the body (prompts/frame.j2), so this is the
     # only sign-off.
@@ -263,7 +263,7 @@ class Mailbox(models.Model):
         """True when this box's spacing clock has elapsed — cold volume may go.
 
         The per-box half of `planner.free_for_first_email`, split out because a
-        follow-up cannot choose its box: the thread was opened from one, and answering
+        later step cannot choose its box: the thread was opened from one, and writing
         from another would break the conversation. So the planner asks that box whether
         it is free instead of asking the pool for whichever box is freest.
 

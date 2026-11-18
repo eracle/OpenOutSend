@@ -36,30 +36,26 @@ import sys
 
 USAGE = """outsend [--sequence DIR]         read JSON Lines on stdin, enrol them, exit
 outsend send [N|all] [--sequence DIR] [--prompt-line ID]
-                                 one pass: read the mail, answer replies, send what the
-                                 guards allow right now. With N, keep at it until N
+                                 one pass: read the mail, answer replies, send the steps
+                                 that are due and the guards allow. With N, keep at it until N
                                  conversations are open, waiting out the send clocks;
                                  with `all`, until nobody is left to email.
                                  --sequence names a folder of step files. The pipe
                                  enrols into it (cold without it); send sends only it
                                  (every sequence without it, cold among them)
 outsend send --agent-draft [--subject S] [--body B]
-                                 opt replies, the opener and later steps out of
+                                 opt replies and the steps written from a prompt out of
                                  AI_MODEL: stop at the oldest reply owed, else the
-                                 oldest deal owed a send (error type draft_pending,
+                                 longest-due prompt step (error type draft_pending,
                                  carrying its profile_text/company/title, the step —
                                  "reply" for a reply — and its rendered prompt)
                                  instead of calling the LLM. Resume with
-                                 --subject/--body for an opener, --body for a reply
-                                 or a later step. No count.
-outsend reply [--body B]         read the mail and hand the oldest reply owed to the
-                                 calling agent (draft_pending, step "reply", the whole
-                                 conversation in its prompt); --body sends the answer in
-                                 its thread. Sends nothing else: no opener, no step
+                                 --subject/--body for a thread's first email, --body
+                                 for a reply or a later step. No count.
 outsend file --message ID --lead ID
                                  put an unrelated received message, which names nothing
                                  the store holds, into that lead's newest conversation,
-                                 where `reply` hands it over. Sends nothing
+                                 where it is answered. Sends nothing
 outsend check                  verify this environment can send — what you sell and to
                                  whom, a model that answers, who signs the mail, and a
                                  mailbox that accepts its login"""
@@ -74,8 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     from openoutsend.errors import DraftPending, OutsendError
 
     try:
-        return {"check": _check, "send": _send, "reply": _reply,
-                "file": _file}.get(args.command, _ingest)(args)
+        return {"check": _check, "send": _send, "file": _file}.get(args.command, _ingest)(args)
     except DraftPending as exc:
         if args.json_output:
             print(json.dumps({"error": {"type": "draft_pending", "message": str(exc),
@@ -90,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="outsend", usage=USAGE)
-    parser.add_argument("command", nargs="?", choices=["check", "send", "reply", "file"])
+    parser.add_argument("command", nargs="?", choices=["check", "send", "file"])
     # `send 5` is a goal, `send` is a pass — see `_send`. Positional and optional
     # because the count *is* the verb's object, the way `find 5`'s is.
     parser.add_argument("count", nargs="?", type=_goal, default=None,
@@ -128,16 +123,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         return args
     if args.message or args.lead:
         parser.error("--message/--lead belong to `file`")
-    if args.sequence is not None and args.command in ("check", "reply"):
+    if args.sequence is not None and args.command == "check":
         parser.error("--sequence belongs to the pipe and to `send`")
-    if args.command == "reply":
-        if args.agent_draft or args.subject:
-            parser.error("`reply` answers in the thread: --body alone")
-        return args
     if args.agent_draft and args.count is not None:
         parser.error("--agent-draft has no count yet — `outsend send --agent-draft`")
     if (args.subject or args.body) and not args.agent_draft:
-        parser.error("--subject/--body need --agent-draft or `reply`")
+        parser.error("--subject/--body need --agent-draft")
     if args.subject and not args.body:
         parser.error("--subject needs a --body")
     return args
@@ -271,30 +262,6 @@ def _run_to_goal(args: argparse.Namespace, sequence: str | None) -> int:
     return 0 if run.ok else 1
 
 
-# ── Answering replies ─────────────────────────────────────────────
-
-
-def _reply(args: argparse.Namespace) -> int:
-    """Read the mail and answer one reply through the calling agent — nothing else.
-
-    The loop a session runs: `outsend --json reply` hands over the oldest reply owed as
-    a `draft_pending`, `outsend reply --body "…"` sends the answer in its thread, and
-    the next bare `reply` hands over the next one, until a run ends with none owed.
-    No model is asked for, as under `send --agent-draft`.
-    """
-    from openoutsend.core.agent_draft import AgentDraft
-    from openoutsend.first_run import check_ready
-    from openoutsend.send_pass import run_reply_pass
-
-    check_ready(agent_draft_active=True)
-    result = run_reply_pass(AgentDraft(active=True, body=args.body))
-    print(f"read {result.mirrored} new message(s) · answered {result.answered} · "
-          f"{result.holding}", file=sys.stderr)
-    if result.failed:
-        print("the answer failed to send — see above", file=sys.stderr)
-    return 0 if result.ok else 1
-
-
 def _file(args: argparse.Namespace) -> int:
     """File one unrelated message into a lead's conversation (``emails/filing.py``)."""
     from openoutsend.emails.filing import file_message
@@ -308,10 +275,11 @@ def _file(args: argparse.Namespace) -> int:
 def _report(result) -> None:
     """The counts a pass or a whole run produced, in the same words for both."""
     print(f"read {result.mirrored} new message(s) · answered {result.answered} · "
-          f"sent {result.stepped} later step(s) · followed up {result.followed_up} · "
-          f"opened {result.opened}", file=sys.stderr)
+          f"sent {result.stepped} later step(s) · opened {result.opened}", file=sys.stderr)
+    if result.ended:
+        print(f"{result.ended} conversation(s) reached their end", file=sys.stderr)
     if result.gave_up:
-        print(f"{result.gave_up} lead(s) never answered and were closed", file=sys.stderr)
+        print(f"{result.gave_up} conversation(s) went quiet and were closed", file=sys.stderr)
     if result.missed:
         print(f"{result.missed} lead(s) arrived with every step past its grace and were closed",
               file=sys.stderr)

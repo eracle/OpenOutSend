@@ -1,5 +1,5 @@
 # openoutsend/tests/emails/test_mail_pass.py
-"""The three jobs end to end: a reply arrives and the deal becomes actionable.
+"""The three jobs end to end: a reply arrives and the deal's conversation has a message waiting.
 
 Everything here goes through ``run_mail_pass`` rather than the jobs individually,
 because the property under test spans them — mail lands, is read, and only then
@@ -11,9 +11,10 @@ from unittest.mock import patch
 import pytest
 
 from openoutsend.emails.mail_pass import run_mail_pass
-from openoutsend.emails.models import Kind, Message
-from openoutsend.leads.models import DealState
-from openoutsend.planner import unanswered_replies
+from openoutsend.emails.models import Kind, Message, Thread
+from openoutsend.leads.lifecycle import machine_of
+from openoutsend.leads.states import CONVERSING, awaiting, machine_name
+from openoutsend.planner import conversations_waiting
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.emails.fake_imap import (
     RECEIVED_AT,
@@ -28,21 +29,25 @@ SENDER = "s@infra.com"
 ROOT = "root@infra.com"
 
 
-def _emailed(box, email="p@corp.com", root=ROOT):
-    """A deal whose opener has gone out — the state a reply arrives into.
+def _emailed(box, email="p@corp.com", root=ROOT, state=CONVERSING):
+    """A deal whose every step has gone out — the state a reply is answered in.
 
     Sent the day before the fake inbox's mail, so "their newest is newer than
-    ours" is a fact about the thread rather than about test timing.
+    ours" is a fact about the thread rather than about test timing. The thread is
+    kept against the deal, as the send that opens one keeps it.
     """
     sent = maillog.outbound(box, to=email, message_id=root,
                             sent_at=RECEIVED_AT - timedelta(days=1))
-    return DealFactory(
+    deal = DealFactory(
         lead=LeadFactory(email=email),
-        state=DealState.EMAILED,
+        state=state,
         mailbox=box,
         email_subject="Hi",
         thread=sent.thread,
     )
+    Thread.objects.filter(pk=sent.thread_id).update(
+        machine=machine_name(deal.sequence), entity=str(deal.pk))
+    return deal
 
 
 def _pass(box, *rows):
@@ -59,10 +64,25 @@ class TestAReplyReachesItsDeal:
         _pass(box, message(7, to=SENDER, sender="p@corp.com", references=f"<{ROOT}>",
                            body="Sure, happy to chat."))
 
-        assert list(unanswered_replies()) == [deal]
+        assert list(conversations_waiting()) == [deal]
         reply = Message.objects.get(direction="in")
         assert reply.kind == Kind.HUMAN_REPLY
         assert "happy to chat" in reply.body_text
+        assert machine_of(deal).incoming(deal) == reply
+
+    def test_one_that_arrives_before_the_conversation_waits_in_the_thread(self):
+        """A reply never stops a step: it is a turn in the thread, answered once the
+        deal converses."""
+        box = maillog.mailbox(SENDER)
+        deal = _emailed(box, state=awaiting(0))
+
+        _pass(box, message(7, to=SENDER, sender="p@corp.com", references=f"<{ROOT}>"))
+
+        reply = Message.objects.get(direction="in")
+        assert (reply.kind, reply.thread_id) == (Kind.HUMAN_REPLY, deal.thread_id)
+        assert deal.state == awaiting(0)
+        assert list(conversations_waiting()) == []
+        assert machine_of(deal).incoming(deal) == reply
 
     def test_by_in_reply_to_alone(self):
         """A client that fills only ``In-Reply-To`` points at the newest message,
@@ -76,7 +96,7 @@ class TestAReplyReachesItsDeal:
         _pass(box, message(7, to=SENDER, sender="p@corp.com",
                            in_reply_to="<second@infra.com>"))
 
-        assert list(unanswered_replies()) == [deal]
+        assert list(conversations_waiting()) == [deal]
 
     def test_a_stranger_is_not_stored_and_makes_nothing_actionable(self):
         """The operator's own mail stays theirs: it is not our conversation."""
@@ -85,7 +105,7 @@ class TestAReplyReachesItsDeal:
 
         _pass(box, message(7, to=SENDER, sender="newsletter@x.com"))
 
-        assert list(unanswered_replies()) == []
+        assert list(conversations_waiting()) == []
         assert Message.objects.filter(direction="in").count() == 0
 
     def test_a_thread_from_another_box_is_not_folded_in(self):
@@ -105,7 +125,7 @@ class TestAReplyReachesItsDeal:
         classify_pending()
         project_pending()
 
-        assert list(unanswered_replies()) == []
+        assert list(conversations_waiting()) == []
 
     def test_rereading_the_box_creates_no_duplicate(self):
         box = maillog.mailbox(SENDER)
@@ -130,7 +150,7 @@ class TestWhatIsNotAReply:
 
         _pass(box, bounce(7, to=SENDER, original=f"<{ROOT}>"))
 
-        assert list(unanswered_replies()) == []
+        assert list(conversations_waiting()) == []
 
     def test_an_out_of_office_does_not_make_the_deal_actionable(self):
         box = maillog.mailbox(SENDER)
@@ -138,7 +158,7 @@ class TestWhatIsNotAReply:
 
         _pass(box, auto_reply(7, to=SENDER, sender="p@corp.com", original=f"<{ROOT}>"))
 
-        assert list(unanswered_replies()) == []
+        assert list(conversations_waiting()) == []
 
 
 @pytest.mark.django_db
@@ -155,4 +175,4 @@ class TestTheJobsAreIndependent:
             mirrored, classified, projected = run_mail_pass()
 
         assert (mirrored, classified, projected) == (0, 1, 1)
-        assert list(unanswered_replies()) == [deal]
+        assert list(conversations_waiting()) == [deal]

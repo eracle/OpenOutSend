@@ -135,12 +135,71 @@ class TestEmailSteps:
         assert not load(folder, "s").first.uses_prompt_line
 
 
+class TestConversation:
+    """The one file that says how a folder's conversation is held."""
+
+    def test_a_folder_without_the_file_has_none(self, tmp_path):
+        assert load(_folder(tmp_path, **{"E0-a.prompt.j2": "x"}), "s").conversation is None
+
+    def test_the_file_loads_beside_the_steps_with_no_gap_of_its_own(self, tmp_path):
+        sequence = load(_folder(tmp_path, **{
+            "E0-a.prompt.j2": "x", "conversation.prompt.j2": "Answer {{ first_name }}."}), "s")
+
+        assert [step.name for step in sequence.steps] == ["a"]
+        assert sequence.conversation.path == tmp_path / "conversation.prompt.j2"
+        assert sequence.conversation.source == "Answer {{ first_name }}."
+        assert sequence.conversation.days is None
+
+    def test_the_gap_is_read_from_the_filename(self, tmp_path):
+        sequence = load(_folder(tmp_path, **{
+            "E0-a.prompt.j2": "x", "conversation-7d.prompt.j2": "Answer them."}), "s")
+
+        assert sequence.conversation.path.name == "conversation-7d.prompt.j2"
+        assert sequence.conversation.days == 7
+
+    @pytest.mark.parametrize("files, complaint", [
+        ({"conversation.prompt.j2": "y", "conversation-7d.prompt.j2": "z"},
+         r"conversation\.prompt\.j2: a second conversation prompt"),
+        ({"conversation-0d.prompt.j2": "y"}, r"conversation-0d\.prompt\.j2: .*at least 1d"),
+        ({"conversation-7d.prompt.j2": "{% if %}"}, r"conversation-7d\.prompt\.j2:1"),
+        ({"conversation.email.j2": "y"}, r"conversation\.email\.j2: not a step file name"),
+        ({"conversation-7.prompt.j2": "y"}, r"conversation-7\.prompt\.j2: not a step file name"),
+        ({"reply.prompt.j2": "y"}, r"reply\.prompt\.j2: not a step file name"),
+    ])
+    def test_a_malformed_one_fails_naming_the_file(self, tmp_path, files, complaint):
+        with pytest.raises(SequenceError, match=complaint):
+            load(_folder(tmp_path, **{"E0-a.prompt.j2": "x"}, **files), "s")
+
+    def test_it_is_not_a_step_so_a_folder_holding_only_it_has_none(self, tmp_path):
+        with pytest.raises(SequenceError, match="no step files"):
+            load(_folder(tmp_path, **{"conversation.prompt.j2": "Answer them."}), "s")
+
+    def test_fields_are_filled_in(self, tmp_path):
+        conversation = load(_folder(tmp_path, **{
+            "E0-a.prompt.j2": "x", "conversation.prompt.j2": "Answer {{ first_name }}.\n"}),
+            "s").conversation
+
+        assert conversation.render(first_name="Asha") == "Answer Asha."
+
+    def test_a_field_the_deal_lacks_is_an_error_not_a_blank(self, tmp_path):
+        conversation = load(_folder(tmp_path, **{
+            "E0-a.prompt.j2": "x", "conversation-7d.prompt.j2": "Answer about {{ product }}."}),
+            "s").conversation
+
+        with pytest.raises(SequenceError, match=r"conversation-7d\.prompt\.j2: .*product"):
+            conversation.render(first_name="Asha")
+
+
 class TestCold:
     def test_the_shipped_one_is_a_single_opener(self, tmp_path):
         with patch.object(sequences, "operator_dir", return_value=tmp_path):
             cold = sequences.cold()
 
         assert [step.path.name for step in cold.steps] == ["E0-opener.prompt.j2"]
+
+    def test_the_shipped_one_holds_its_conversation_the_built_in_way(self, tmp_path):
+        with patch.object(sequences, "operator_dir", return_value=tmp_path):
+            assert sequences.cold().conversation is None
 
     def test_an_operator_copy_wins_whole(self, tmp_path):
         (tmp_path / "cold").mkdir()
@@ -212,6 +271,12 @@ class TestForDeal:
         name = sequences.key(str(folder))
 
         assert sequences.for_deal(SimpleNamespace(sequence=name)).first.name == "a"
+
+    def test_a_deal_is_looked_up_by_the_name_it_records(self, tmp_path):
+        name = sequences.key(str(_folder(tmp_path, **{"E0-a.prompt.j2": "x"})))
+
+        assert sequences.for_deal(SimpleNamespace(sequence=name)) == sequences.named(name)
+        assert sequences.named(sequences.COLD).name == sequences.COLD
 
     def test_an_unnamed_run_finds_it_in_the_operator_folder(self, tmp_path):
         (tmp_path / "relaunch").mkdir()

@@ -1,4 +1,4 @@
-"""The outreach agent: the frame, the conversation it is handed, and the opener check.
+"""The outreach agent: the frame, the conversation it is handed, and the email it writes.
 
 Every message is the same call — the frame as the system prompt, then the history with
 the lead, then the prompt for this email — so these tests check each part once rather
@@ -105,31 +105,47 @@ class TestTheConversation:
         assert message.endswith("Answer them.")
 
 
-# ── The opener check ──────────────────────────────────────────────
+# ── The call ──────────────────────────────────────────────────────
 
 
-class TestValidateOpener:
-    def test_rejects_an_opener_without_a_subject(self):
-        from openoutsend.core.agents.outreach import OutreachDecision, _validate_opener
+def model_writing(**fields):
+    """The install's model, answering every call with an email of *fields*."""
+    from unittest.mock import patch
 
-        decision = OutreachDecision(action="send_message", message="Hi.")
-        with pytest.raises(ValueError, match="no subject"):
-            _validate_opener(decision, "lead@corp.com")
+    from pydantic_ai.models.test import TestModel
 
-    def test_rejects_an_opener_that_does_not_send(self):
-        from openoutsend.core.agents.outreach import OutreachDecision, _validate_opener
+    return patch("openoutsend.core.agents.outreach.get_llm_model",
+                 return_value=TestModel(custom_output_args=fields))
 
-        decision = OutreachDecision(action="mark_completed", outcome="not_interested")
-        with pytest.raises(ValueError, match="must send_message"):
-            _validate_opener(decision, "lead@corp.com")
 
-    def test_accepts_a_well_formed_opener(self):
-        from openoutsend.core.agents.outreach import OutreachDecision, _validate_opener
+class TestWriteEmail:
+    def test_rejects_an_opener_without_a_subject(self, deal):
+        from openoutsend.core.agents.outreach import write_email
 
-        decision = OutreachDecision(
-            action="send_message", subject="quick question", message="Hi.",
-        )
-        _validate_opener(decision, "lead@corp.com")
+        with model_writing(message="Hi."), pytest.raises(ValueError, match="no subject"):
+            write_email(deal, "Say hello.", opener=True)
+
+    def test_accepts_a_well_formed_opener(self, deal):
+        from openoutsend.core.agents.outreach import Email, write_email
+
+        with model_writing(subject="quick question", message="Hi."):
+            email = write_email(deal, "Say hello.", opener=True)
+
+        assert email == Email(subject="quick question", message="Hi.")
+
+    def test_an_email_in_an_existing_thread_needs_no_subject(self, deal):
+        from openoutsend.core.agents.outreach import Email, write_email
+
+        with model_writing(message="Hi again."):
+            email = write_email(deal, "Say hello again.")
+
+        assert email == Email(subject=None, message="Hi again.")
+
+    def test_it_only_writes(self):
+        """Which step is owed and whether a conversation ends are never asked of it."""
+        from openoutsend.core.agents.outreach import Email
+
+        assert set(Email.model_fields) == {"subject", "message"}
 
 
 # ── Cold's opener, rendered ───────────────────────────────────────

@@ -30,6 +30,6 @@ Which conversations exist, what their prompts say and where they lead is declare
 whoever builds the machine. None is declared here.
 """
 from openoutsend.machines.machine import MailMachine
-from openoutsend.machines.states import Conversation, Wait, timed, turn
+from openoutsend.machines.states import Conversation, Turn, Wait, timed, turn
 
-__all__ = ["Conversation", "MailMachine", "Wait", "timed", "turn"]
+__all__ = ["Conversation", "MailMachine", "Turn", "Wait", "timed", "turn"]

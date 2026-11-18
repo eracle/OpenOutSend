@@ -20,14 +20,14 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from datetime import datetime
 
-from agentic_fsm import Decide, Decision, Machine, MachineError, States, check
+from agentic_fsm import Decide, Machine, MachineError, States, check
 from django.utils import timezone
-from pydantic import Field, create_model, model_validator
+from pydantic import create_model, model_validator
 from pydantic_ai import Agent
 
 from openoutsend.errors import OutsendError
 from openoutsend.machines import channel
-from openoutsend.machines.states import Conversation, Wait, timed, turn
+from openoutsend.machines.states import Conversation, Turn, Wait, timed, turn
 
 DJANGO_BACKEND = "agentic_fsm.backends.django"
 
@@ -43,16 +43,6 @@ You can only send email in this thread. Never claim to have done anything outsid
 def now() -> datetime:
     """The time a wait is measured against."""
     return timezone.now()
-
-
-class Turn(Decision):
-    """One turn of a conversation: stay with a message, or leave."""
-
-    to: States
-    message: str | None = Field(
-        default=None,
-        description="The email to send, when `to` keeps the conversation open. Leave empty when it ends.",
-    )
 
 
 class MailMachine(Machine):
@@ -168,11 +158,15 @@ class MailMachine(Machine):
             if answers_first and self.incoming(entity) is not None:
                 return None
             due_at = wait.runs_out_at(entity, self.entered_at(self.key(entity)))
-            return target if now() >= due_at else None
+            if now() < due_at:
+                return None
+            if wait.then is not None:
+                wait.then(entity)
+            return target
 
         ran_out.__name__ = f"{state.name}_ran_out"
         ran_out.__doc__ = f"Leave {state.name} once its wait has run out."
-        return check(ran_out)
+        return ran_out if wait.then is not None else check(ran_out)
 
     def _turn(self, state) -> Decide:
         """The `Decide` that takes one turn of the conversation *state* is."""
@@ -187,10 +181,12 @@ class MailMachine(Machine):
         def send_the_answer(entity, decision):
             if decision.to == state:
                 self.answer(entity, decision.message, prompt=conversation.prompt_for(entity))
+            if conversation.effect is not None:
+                conversation.effect(entity, decision)
 
         agent = Agent(
             None,
-            output_type=_turn_schema(state),
+            output_type=_turn_schema(state, conversation.schema),
             instructions=TURN_INSTRUCTIONS.format(state=state.value),
             defer_model_check=True,
         )
@@ -218,8 +214,8 @@ class _ModelTurn(Decide):
 # ── Helpers ──
 
 
-def _turn_schema(state) -> type[Turn]:
-    """`Turn`, refusing an answer that stays in *state* with nothing to send."""
+def _turn_schema(state, schema: type[Turn]) -> type[Turn]:
+    """*schema*, refusing an answer that stays in *state* with nothing to send."""
 
     def staying_needs_a_message(self):
         if self.to == state and not (self.message or "").strip():
@@ -227,8 +223,8 @@ def _turn_schema(state) -> type[Turn]:
         return self
 
     return create_model(
-        "Turn",
-        __base__=Turn,
+        schema.__name__,
+        __base__=schema,
         __validators__={"staying_needs_a_message": model_validator(mode="after")(staying_needs_a_message)},
     )
 

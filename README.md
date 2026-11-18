@@ -46,7 +46,7 @@ a second, separate invocation is what mails them:
 uv tool install openoutsend             # or pip install -e . from a checkout
 outsend check                           # confirm the environment can send from a box
 outfind find 50 --json | outsend        # store
-outsend send                            # one pass: read, answer, later steps, follow up, open
+outsend send                            # one pass: read, answer, send the steps that are due
 outsend send 5                          # or: keep going until 5 are open
 outsend send all                        # or: until nobody is left to email
 ```
@@ -105,26 +105,21 @@ outsend send --agent-draft --body "One more thought on the list..."   # a later 
 This resumes the same deal — no id to track, since at most one is ever pending — and sends it the
 moment a mailbox is free (an answer already given is kept, not thrown away, if the spacing clock or the
 sending window is holding every box right now). No count yet — it is one pass at a time, like a bare
-`outsend send`. A deal stopped or replied to while its draft waited is dropped, not written to.
+`outsend send`. A deal stopped or suppressed while its draft waited is dropped, not written to.
 Don't pass `--agent-draft` unless you intend to answer every `draft_pending` it raises; without it,
 `AI_MODEL` writes every opener and step as before.
 
-**Replies come first.** A lead who wrote back is handed over before any step, with `step: "reply"`,
-the line they were piped with as `fields`, and the whole conversation followed by the reply prompt as
-`prompt`. Answer with `--body` alone: it goes in their thread at once, whatever the send clocks say.
-Ending the thread or honouring a worded "stop" is not an answer `--agent-draft` takes. That stays with
-the model or the operator. `OUTSEND_REPLIES=hold` keeps an unattended pass from answering at all: it
-reads the reply, stops that deal's steps, sends everyone else's, and leaves the reply for an
-`--agent-draft` session. **`outsend reply` answers replies and does nothing else**: it reads the mail
-and hands over the oldest reply owed the same way, `outsend reply --body "…"` sends the answer in its
-thread, and no opener, step or follow-up goes out, so a session can run it beside a timer's passes on
-the same store. A draft held for an opener or a step stops it until `send --agent-draft` answers that.
+**Replies come first.** A lead in their conversation who wrote back is handed over before any step,
+with `step: "reply"`, the line they were piped with as `fields`, and the whole thread followed by how
+to answer it as `prompt`. Answer with `--body` alone: it goes in their thread at once, whatever the
+send clocks say, and is logged as a turn decided by `agent`. Ending the conversation is not an answer
+`--agent-draft` takes: `agfsm fire deal-<sequence>:<id> conversing_turn --answer '{"to": "completed",
+"outcome": "not_interested"}'` does that for one deal.
 **`outsend file --message ID --lead ID` places a reply the headers could not**: an answer to mail this
 install did not send names nothing the store holds and is read as `unrelated`. Whoever sent that mail
 knows whose answer it is, and filing puts it, with its own thread, into that lead's newest conversation,
-where `reply` hands it over. Only `unrelated` mail is filed, and only into a lead that has a thread.
-Follow-ups still go to `AI_MODEL`, so set
-`OUTSEND_FOLLOW_UPS=off` with it unless a model is configured. **`--agent-draft` also drops the model out of
+where it is answered. Only `unrelated` mail is filed, and only into a lead that has a thread.
+**`--agent-draft` also drops the model out of
 `outsend check`'s requirements for that run** — `OUTSEND_AI_MODEL`/`OUTSEND_LLM_API_KEY` are never
 checked or pinged, since a key that will never be spent is not a reason to stop.
 
@@ -138,17 +133,32 @@ prompt, every email sent, every reply and how long each silence lasted, verbatim
 for the email at hand. The first email's prompt is a file, `openoutsend/sequences/cold/E0-opener.prompt.j2`;
 a copy of the `cold/` folder at `~/.openoutsend/sequences/cold/` replaces it whole.
 
-**A lead who never answers gets two more emails, then the pursuit ends** — after three working days,
-then five, and the deal closes as `unresponsive`. Working days are Monday–Friday, and first emails
-wait for them too; `OUTSEND_ENFORCE_WEEKEND_PAUSE=off` makes every day one, so the install sends at
-weekends and counts every wait in calendar days (`OUTSEND_ENFORCE_WORK_HOURS=off` drops the
-08:00–20:00 line on its own). `OUTSEND_FOLLOW_UPS=off` turns those two off for the
-install. A reply at any point ends the follow-ups and the conversation takes over. **Follow-ups are cold volume and are treated as such**: they share one daily
-cap, one spacing clock and one sending window with the openers, rather than claiming ahead of them out
-of a budget of their own. **The window and the working days are the lead's**: a line carrying
-`timezone` (`America/Chicago`) is sent 08:00–20:00 there and its waits skip that lead's weekend; a
-line without one reads the operator's clock. Turning a country into a zone is the producer's job. A reply obeys none of the three, because answering someone who wrote to you
-is not cold volume and holding the answer until Monday is worse than sending it at 21:00.
+**A sequence is a machine, and a deal's state is where it is in it.** Each step is two states: the
+deal waits for the step's day (`awaiting_E<k>`), then for a box the guards say is free
+(`sending_E<k>`). After the last step it rests in its conversation (`conversing`), and then it is
+`completed`, with an outcome saying why. `agfsm --machine openoutsend.leads.lifecycle:cold show`
+prints the built-in sequence's graph, and any folder under `~/.openoutsend/sequences/` by its name.
+
+**A reply never stops a step, and is answered in the conversation.** A sequence's steps are written
+for a list, so each goes on its day whether or not the lead wrote back. Once the last one has gone,
+the model reads the whole thread and answers whoever wrote, a reply that arrived during the steps
+included, or ends the conversation and says why. **Five working days of silence close it** as
+`unresponsive`, counted from the last turn, and never while a message waits for an answer. Nothing
+nudges between steps: a second touch is a second step file.
+
+**Asking to stop is honoured by code, on any step.** Every email's footer names the way out. A reply
+whose own text carries the word `stop` suppresses the address when the mail pass reads it, and so
+does mail to the unsubscribe alias. Any other wording is read by the model in the conversation.
+
+Working days are Monday–Friday, and first emails wait for them too;
+`OUTSEND_ENFORCE_WEEKEND_PAUSE=off` makes every day one, so the install sends at weekends and counts
+every wait in calendar days (`OUTSEND_ENFORCE_WORK_HOURS=off` drops the 08:00–20:00 line on its
+own). **Every step is cold volume**: they share one daily cap, one spacing clock and one sending
+window. **The window and the working days are the lead's**: a line carrying `timezone`
+(`America/Chicago`) is sent 08:00–20:00 there and its waits skip that lead's weekend; a line without
+one reads the operator's clock. Turning a country into a zone is the producer's job. An answer in a
+conversation obeys none of the three, because answering someone who wrote to you is not cold volume
+and holding the answer until Monday is worse than sending it at 21:00.
 
 ### Sequences
 
@@ -182,13 +192,16 @@ outsend send --sequence after-a-demo                    # or in this one alone
   error for that lead, never a blank.
 - **One deal per lead per sequence.** The same `lead_id` piped into cold and into an event sequence is
   two deals. Re-piping into the same sequence is a correction, latest wins key by key, and a line with
-  `"stop": true` takes the lead out of every remaining send.
-- **A pass sends every sequence**, cold among them, in one queue, oldest due first, because they all
+  `"stop": true` ends the deal where it stands, with the outcome `stopped`.
+- **A pass sends every sequence**, cold among them, in one queue, longest due first, because they all
   spend the same boxes' cap, spacing and window, and **at most one message per address**. `--sequence
-  F` narrows a pass to `F`. Reading the mail and answering replies are never narrowed, and a reply
-  stops the remaining steps: the agent answers it and takes the thread over.
-- **Follow-ups are per install** (`OUTSEND_FOLLOW_UPS`); an install mailing event sequences usually
-  turns them off. With them on, each lands only if it fits before the next step is due.
+  F` narrows a pass to `F`. Reading the mail and holding the conversations are never narrowed.
+- **A folder can say how its conversation is held**, in one more file,
+  `conversation[-<days>d].prompt.j2`: the prompt the model answers replies from after the last step,
+  rendered like a step, and the working days of silence that close the conversation. Without it the
+  built-in prompt, written for cold outreach, and five days.
+- **A step removed or renumbered while deals rest on it** leaves them in a state the folder no longer
+  has. The pass names each such deal and stops, rather than guess where it belongs.
 - **Every send records** its sequence, its step, the step file's path, the prompt as rendered and,
   when one was drawn, the prompt line's id.
 
@@ -280,12 +293,13 @@ came across with the transport now assert against this side's own models.
 | `openoutsend/core/` | app `outsend_core` — the outreach agent, its templates, the sending window, and the stored site configuration |
 | `openoutsend/docs/` | how the agent and its templating work |
 | `openoutsend/sequences/` | the built-in cold sequence, one prompt file per step |
-| `openoutsend/leads/lifecycle.py` | the deal machine ([AgenticFSM](https://github.com/eracle/AgenticFSM)): every way a deal's state may change, in one list; the state and a log of each move live in the library's `agentic_fsm_*` tables. `agfsm --machine openoutsend.leads.lifecycle:deals show` prints it |
+| `openoutsend/leads/lifecycle.py` | the deal machine ([AgenticFSM](https://github.com/eracle/AgenticFSM)): a sequence folder read as a machine, one per folder, with a wait and a send per step, then the conversation; the state and a log of each move live in the library's `agentic_fsm_*` tables under `deal-<sequence>`. `agfsm --machine openoutsend.leads.lifecycle:cold show` prints one |
+| `openoutsend/leads/conversing.py` | a deal's conversation: the prompt the model answers from, and what a turn records |
 | `openoutsend/machines/` | two kinds of state for any AgenticFSM machine whose entities have an address, a deal or not. A `Wait` rests for a time counted from the entity's newest move in the library's log, and its `timed` row is refused until then. A `Conversation` rests across the turns of an email thread: with a message waiting, the model answers in the thread (a logged move from the state to itself) or leaves by one of the state's rows, and a quiet one leaves by time. `MailMachine` builds both steps and keeps each thread against its machine and entity. The docstring of `machines/__init__.py` has an example |
-| `openoutsend/planner.py` | what is due, from which box, and when the next send can go |
+| `openoutsend/planner.py` | the send guards: which box may carry a due send, and when the next can go |
 | `openoutsend/settings.py` | this repo's own Django settings — one host of the apps, not the only one |
 | `openoutsend/defaults.py` | what any host must splat: `APPS`, `state_dir()`, `app_settings()` |
-| `openoutsend/send_pass.py` | one pass — read, answer, open — and the line saying what held it |
+| `openoutsend/send_pass.py` | one pass — read, run out the waits, answer, send — and the line saying what held it |
 | `openoutsend/send_job.py` | `send N` — passes until the goal is open, waiting out the send clocks |
 | `openoutsend/first_run.py` | what `check` verifies — the message fields, the model, the operator, the mailbox |
 | `openoutsend/core/config.py` | the `OUTSEND_*` a message is written from, read fresh on every run |
@@ -315,8 +329,6 @@ The environment is the operator seam — the only way in a timer has:
 | `OUTSEND_MAILBOX_ADDRESS` / `OUTSEND_MAILBOX_PASSWORD` | the box to send from, and its **app password** — a Google box rejects the login password |
 | `OUTSEND_SMTP_HOST` / `OUTSEND_SMTP_PORT` / `OUTSEND_IMAP_HOST` / `OUTSEND_IMAP_PORT` | only for a box that is not on Google Workspace; those four default to Gmail's and are never prompted for |
 | `OUTSEND_SIGNATURE` | the sign-off appended to every send from that box; empty declines one for good |
-| `OUTSEND_FOLLOW_UPS` | `off` stops the two follow-ups to a lead who never answered; on by default |
-| `OUTSEND_REPLIES` | `model` (the default) answers replies with `AI_MODEL`; `hold` leaves them for an `outsend reply` or `send --agent-draft` session |
 | `OUTSEND_TRANSPORT` | `mailbox` (the default) or `resend` — see *Sending through Resend* |
 | `OUTSEND_RESEND_API_KEY` | a resend install's **full-access** key, in place of `OUTSEND_MAILBOX_PASSWORD` |
 | `OUTSEND_DAILY_CAP` | a resend install's first contacts per day; 50 by default |

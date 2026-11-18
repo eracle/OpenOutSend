@@ -116,34 +116,22 @@ SEND_INTERVAL_JITTER_MIN_SECONDS = 30    # + U[30, 90] → a 3.5–4.5 minute sp
 SEND_INTERVAL_JITTER_MAX_SECONDS = 90
 
 # ----------------------------------------------------------------------
-# Follow-ups (planner.awaiting_follow_up, emails/steps/follow_up.py)
+# The conversation's closing gap (leads/lifecycle.py) — how long a deal rests in its
+# conversation, after the sequence's last step or the last turn, before silence closes
+# it `unresponsive`.
 #
-# **The gaps are constants, not a decision.** An earlier version let the agent pick
-# its own interval and re-arm a per-deal countdown; that produced the defect in
-# `p2-e2-followup-identity-backoff-sentiment`, where a `wait` verdict failed to push
-# the next action out and the same unchanged context was re-read five times in one
-# window. Nothing here is scheduled on a row — the gap is measured backwards from
-# the mail log, so a pass can be interrupted anywhere and simply asked again.
-#
-# **Business days, not calendar days.** A Friday opener followed up on Monday has
-# waited one working day, and chasing across a weekend reads as a machine counting
-# hours (`core/business_time.py`). An operator who sends at weekends
+# **Business days, not calendar days.** A Friday email unanswered on Monday has waited
+# one working day (`core/business_time.py`). An operator who sends at weekends
 # (``OUTSEND_ENFORCE_WEEKEND_PAUSE`` off) works them too, so for them every day counts.
 #
-# **The number of follow-ups is the length of the gaps.** Two after a sequence's last
-# step, then the deal ends `unresponsive`; after an earlier step, only those that land
-# before the next step is due (`planner._follow_up_due_at`). The number is deliberately
-# small: cold volume is what damages a sending domain, and a third touch is already
-# likelier to draw a complaint than a reply.
-#
-# **Switched per install** by ``OUTSEND_FOLLOW_UPS``, on by default. Cold outreach wants
-# them; an install mailing an event sequence to people who opted in turns them off,
-# because its steps already say everything it means to say.
+# A sequence folder that wants another gap names it on its conversation prompt
+# (``conversation-<days>d.prompt.j2``, `core/sequences.py`). Nobody owed an answer is
+# closed, however long it takes to give it.
 # ----------------------------------------------------------------------
-FOLLOW_UP_GAPS_BUSINESS_DAYS = (3, 5)    # the first after 3 days, the second 5 after that
+CONVERSATION_CLOSES_AFTER_BUSINESS_DAYS = 5
 
 # ----------------------------------------------------------------------
-# Grace (planner.opening_step) — how late a deal's first step may still go.
+# Grace (leads/lifecycle.opening_step) — how late a deal's first step may still go.
 #
 # A lead piped in with an old `start_at` (a request from last month, exported today)
 # has steps whose due time had already passed when it arrived. Sending them now would
@@ -153,51 +141,6 @@ FOLLOW_UP_GAPS_BUSINESS_DAYS = (3, 5)    # the first after 3 days, the second 5 
 # who waited in a long queue was on time when it arrived, and the queue is ours.
 # ----------------------------------------------------------------------
 GRACE_DAYS = 2
-
-
-def follow_ups_on() -> bool:
-    """Whether this install chases silence (``OUTSEND_FOLLOW_UPS``, default on).
-
-    Read on every call rather than at import, like the rest of what an install is
-    configured with: the environment is the configuration, and a run reads it fresh.
-    """
-    from openoutsend.defaults import env_flag
-
-    return env_flag("OUTSEND_FOLLOW_UPS")
-
-# ----------------------------------------------------------------------
-# Replies (``OUTSEND_REPLIES``) — who writes the answer to someone who wrote back.
-#
-# ``model`` (the default) answers every reply in the pass that reads it, with
-# `AI_MODEL`. ``hold`` leaves them to a calling agent: an unattended pass reads the
-# reply, stops the sequence for that deal, and sends nothing to the person; a
-# `send --agent-draft` pass hands the reply over (``send_pass._answer_drafted_reply``).
-#
-# **Steps and replies are trusted separately.** A step is a prompt somebody wrote
-# and read the drafts of before turning the timer on; a reply answers whatever the
-# person said, and can be about money, a mistake in what they were sent, or a deal.
-# An install holds them until the drafts have earned the model the job, while its
-# steps keep going out on their own.
-# ----------------------------------------------------------------------
-REPLIES_MODEL = "model"
-REPLIES_HOLD = "hold"
-REPLIES = (REPLIES_MODEL, REPLIES_HOLD)
-
-
-def replies() -> str:
-    """How this install answers replies (``OUTSEND_REPLIES``, default ``model``).
-
-    An unknown value raises rather than falling back: answering with the model when
-    somebody asked to hold is the one direction this must not err in.
-    """
-    import os
-
-    from openoutsend.errors import OutsendError
-
-    value = (os.environ.get("OUTSEND_REPLIES") or REPLIES_MODEL).strip().lower()
-    if value not in REPLIES:
-        raise OutsendError(f"OUTSEND_REPLIES must be one of {', '.join(REPLIES)}, not {value!r}")
-    return value
 
 # ----------------------------------------------------------------------
 # Transport (``OUTSEND_TRANSPORT``) — what the mail leaves through, and so which of

@@ -41,23 +41,50 @@ class DealFactory(factory.django.DjangoModelFactory):
 
     @factory.post_generation
     def state(deal, create, extracted, **kwargs):
-        """Start the deal in the deal machine, as ingest does, then put it in *extracted*."""
+        """Start the deal in its sequence's machine, as ingest does, then put it in *extracted*."""
         if create:
-            from openoutsend.leads.lifecycle import deals
+            from openoutsend.leads.lifecycle import machine_of
 
-            deals.start(deal.pk)
+            machine_of(deal).start(deal.pk)
             if extracted is not None:
                 put_in_state(deal, extracted)
 
 
-def put_in_state(deal, state) -> None:
-    """Set a started deal's current state directly, as a test's starting point.
+def let_days_pass(days: int) -> None:
+    """Age everything a due time is read from, as if *days* calendar days had gone by.
 
-    Not a move: no step runs and nothing is logged. Code under test moves a deal only
-    by firing a step of the deal machine.
+    The mail log, each deal's own dates, and the machines' log and current-state rows a
+    wait counts from. Every box's spacing clock is cleared with it.
     """
-    from agentic_fsm.backends.django.models import CurrentState
+    from datetime import timedelta
 
-    from openoutsend.leads.states import MACHINE
+    from agentic_fsm.backends.django.models import CurrentState, LogEntry
+    from django.db.models import F
 
-    CurrentState.objects.filter(machine=MACHINE, entity=str(deal.pk)).update(state=state.value)
+    from openoutsend.emails.models import Mailbox, Message
+    from openoutsend.leads.models import Deal
+
+    gone = timedelta(days=days)
+    Message.objects.update(sent_at=F("sent_at") - gone)
+    Deal.objects.update(start_at=F("start_at") - gone, created_at=F("created_at") - gone)
+    LogEntry.objects.update(at=F("at") - gone)
+    CurrentState.objects.update(updated_at=F("updated_at") - gone)
+    Mailbox.objects.update(next_send_at=None)
+
+
+def put_in_state(deal, state: str, at=None) -> None:
+    """Place a started deal in *state* as of *at* (now when left out), as a test's starting point.
+
+    Written as a row of the log, like a real move, because a wait counts from the
+    newest one. No step runs: code under test moves a deal only by firing a step.
+    """
+    from agentic_fsm.backends.django.models import CurrentState, LogEntry
+    from django.utils import timezone
+
+    from openoutsend.leads.states import machine_name
+
+    at = at or timezone.now()
+    machine = machine_name(deal.sequence)
+    CurrentState.objects.filter(machine=machine, entity=str(deal.pk)).update(state=state, updated_at=at)
+    LogEntry.objects.create(machine=machine, entity=str(deal.pk), step=None, from_state=None,
+                            to_state=state, decided_by="code", at=at)

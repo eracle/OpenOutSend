@@ -20,11 +20,11 @@ in hand — and sending starts after that, so nothing here mirrors a finder stat
 from __future__ import annotations
 
 from django.db import models
-from django.db.models import CharField, Exists, OuterRef
-from django.db.models.functions import Cast
+from django.db.models import CharField, Exists, OuterRef, Subquery, Value
+from django.db.models.functions import Cast, Concat
 from django.utils import timezone
 
-from openoutsend.leads.states import MACHINE, DealState
+from openoutsend.leads.states import COMPLETED, machine_name
 
 
 class Lead(models.Model):
@@ -99,11 +99,11 @@ class Outcome(models.TextChoices):
     useful here, to the operator and to the learner over the send log, and nowhere
     else.
 
-    **The last three are not the agent's**, which is why they are listed apart: the
-    agent may choose any of the first seven, and these three are written by the code
+    **The last four are not the agent's**, which is why they are listed apart: the
+    agent may choose any of the first seven, and these four are written by the code
     that learns the fact. They are outcomes all the same — a deal that ended because
     somebody asked to stop ended for a reason, and the reader of a funnel should not
-    have to know that three of the ten are kept in a different column.
+    have to know that four of the eleven are kept in a different column.
     """
 
     CONVERTED = "converted"
@@ -124,26 +124,47 @@ class Outcome(models.TextChoices):
     # funnel later.
     UNDELIVERABLE = "undeliverable"
     # Every step of the sequence was already past its grace when the lead was
-    # enrolled (`planner.opening_step`), so nothing was ever sent. Not `unresponsive`:
-    # nobody was asked anything.
+    # enrolled (`leads/lifecycle.opening_step`), so nothing was ever sent. Not
+    # `unresponsive`: nobody was asked anything.
     MISSED = "missed"
+    # The producer piped the line with `stop`: whatever the sequence was for has
+    # happened by other means (a payment), and only the producer knows what.
+    STOPPED = "stopped"
+
+
+def _current_state():
+    """The library's current-state row of the deal a query is on.
+
+    Each sequence is its own machine, so the row is found by the deal's sequence and
+    its id, which the library stores as text.
+    """
+    from agentic_fsm.backends.django.models import CurrentState
+
+    return CurrentState.objects.filter(
+        machine=Concat(Value(machine_name("")), OuterRef("sequence")),
+        entity=Cast(OuterRef("pk"), CharField()),
+    )
 
 
 class DealQuerySet(models.QuerySet):
-    def in_state(self, *states: DealState) -> DealQuerySet:
-        """The deals whose current state, kept by the deal machine, is one of *states*.
+    def in_state(self, *states: str) -> DealQuerySet:
+        """The deals whose current state, kept by their machine, is one of *states*.
 
         A subquery on the library's current-state table rather than a list of ids, so it
-        composes with every other filter in one query. The library stores an entity's id
-        as text, hence the cast.
+        composes with every other filter in one query.
         """
-        from agentic_fsm.backends.django.models import CurrentState
+        return self.filter(Exists(_current_state().filter(state__in=states)))
 
-        current = CurrentState.objects.filter(
-            machine=MACHINE, state__in=[state.value for state in states],
-            entity=Cast(OuterRef("pk"), CharField()),
+    def open(self) -> DealQuerySet:
+        """The deals that have started and not reached `completed`."""
+        return self.filter(Exists(_current_state().exclude(state=COMPLETED)))
+
+    def with_state(self) -> DealQuerySet:
+        """Each deal with ``current_state`` and ``entered_at``: where it rests, since when."""
+        return self.annotate(
+            current_state=Subquery(_current_state().values("state")[:1]),
+            entered_at=Subquery(_current_state().values("updated_at")[:1]),
         )
-        return self.filter(Exists(current))
 
 
 class Deal(models.Model):
@@ -155,9 +176,9 @@ class Deal(models.Model):
     second sequence gets a second deal; the history the model writes from already
     spans every deal of the lead (`core/agents/history.py`).
 
-    **Its state is not a column.** The deal machine (`leads/lifecycle.py`) keeps it in
-    the library's table, and every move is logged there; `state` reads it, and
-    `Deal.objects.in_state(...)` filters on it.
+    **Its state is not a column.** Its sequence's machine (`leads/lifecycle.py`) keeps
+    it in the library's table, and every move is logged there; `state` reads it, and
+    `Deal.objects.in_state(...)` filters on it. Which step it is owed is that state.
     """
 
     class Meta:
@@ -195,10 +216,8 @@ class Deal(models.Model):
     # ── Where it is in its sequence ───────────────────────────────
     #
     # The sequence by its folder's name (`core/sequences.key`), never its path: `cold`
-    # for the built-in one. `step` is the number of the last step sent, and null until the
-    # first one goes. Follow-ups and replies are not steps and never move it.
+    # for the built-in one.
     sequence = models.CharField(max_length=500, default="cold")
-    step = models.PositiveSmallIntegerField(null=True, blank=True)
 
     # ── What the piped line carried for this sequence ─────────────
     #
@@ -218,20 +237,26 @@ class Deal(models.Model):
         return f"{self.lead} [{self.state}]"
 
     @property
-    def state(self) -> DealState | None:
-        """Where the deal is now, read from the deal machine; ``None`` before it started."""
-        from openoutsend.leads.lifecycle import deals
+    def state(self) -> str | None:
+        """Where the deal is now, as its machine stores it; ``None`` before it started.
 
-        return deals.state_of(self.pk)
+        Read from the library's table by the machine's name, so it needs no sequence
+        folder: a deal can be asked where it is by a run that was not handed its folder.
+        """
+        from agentic_fsm.backends.django.models import CurrentState
+
+        return (CurrentState.objects
+                .filter(machine=machine_name(self.sequence), entity=str(self.pk))
+                .values_list("state", flat=True).first())
 
 
 class PendingDraft(models.Model):
-    """The one deal handed to a calling agent for a reply, an opener or a later step, if any.
+    """The one deal handed to a calling agent for a reply or a step written from a prompt, if any.
 
-    Which of the three is not stored: it is asked again on resume — a deal owed a reply
-    is answered (``send_pass._answer_drafted_reply``), any other is asked what it is owed
-    (``send_pass._owed_send``) — so a deal stopped or replied to meanwhile is dropped
-    rather than written to.
+    Which of the two is not stored: it is the deal's state on resume. One in its
+    conversation is owed an answer (``send_pass._answer_drafted_reply``), one whose
+    step is due is owed that step (``send_pass._send_agent_draft``), and one stopped,
+    suppressed or closed meanwhile is dropped rather than written to.
 
     `send --agent-draft` stops the pass right before the call that would otherwise go
     to `AI_MODEL`, and the process exits — there is nobody left in memory to remember

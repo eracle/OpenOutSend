@@ -12,11 +12,11 @@ from django.utils import timezone
 
 from openoutsend.emails import resend, resend_events, resend_inbound
 from openoutsend.emails.mail_pass import run_mail_pass
-from openoutsend.emails.models import FolderCoverage, Kind, Message, Transport
+from openoutsend.emails.models import FolderCoverage, Kind, Message, Thread, Transport
 from openoutsend.emails.sender import send_email
 from openoutsend.errors import OutsendError
-from openoutsend.leads.models import DealState
-from openoutsend.planner import unanswered_replies
+from openoutsend.leads.states import CONVERSING, machine_name
+from openoutsend.planner import conversations_waiting
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.emails.fake_imap import RECEIVED_AT
 from openoutsend.tests.factories import DealFactory, LeadFactory
@@ -161,8 +161,10 @@ def test_a_polled_reply_reaches_its_deal_and_is_owed_an_answer():
     box = _resend_box()
     sent = maillog.outbound(box, to="lead@corp.com", message_id=ROOT,
                             sent_at=RECEIVED_AT - timedelta(days=1))
-    deal = DealFactory(lead=LeadFactory(email="lead@corp.com"), state=DealState.EMAILED,
+    deal = DealFactory(lead=LeadFactory(email="lead@corp.com"), state=CONVERSING,
                        mailbox=box, email_subject="Ten leads", thread=sent.thread)
+    Thread.objects.filter(pk=sent.thread_id).update(
+        machine=machine_name(deal.sequence), entity=str(deal.pk))
 
     with patch.object(resend, "received_emails",
                       return_value=[_listed("em_1", "r1@corp.com")]), \
@@ -173,7 +175,7 @@ def test_a_polled_reply_reaches_its_deal_and_is_owed_an_answer():
     assert mirrored == 1
     reply = Message.objects.get(message_id="r1@corp.com")
     assert (reply.kind, reply.thread_id) == (Kind.HUMAN_REPLY, deal.thread_id)
-    assert list(unanswered_replies()) == [deal]
+    assert conversations_waiting() == [deal]
 
 
 # ── The reply address on a send ───────────────────────────────────

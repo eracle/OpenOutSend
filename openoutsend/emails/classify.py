@@ -153,7 +153,9 @@ def _is_opt_out(message: Message, msg) -> bool:
 
     A client's unsubscribe button mints a fresh message with no threading headers
     at all, so the alias is the only thing that identifies it. A *worded*
-    unsubscribe threads normally, reaches the agent, and is honoured there.
+    unsubscribe threads normally and is a ``human_reply``: the footer's word in it
+    is honoured when it is projected (``project.asks_to_stop``), any other wording
+    by the model in the deal's conversation.
     """
     from openoutsend.emails.sender import unsubscribe_address
 

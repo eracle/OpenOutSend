@@ -6,17 +6,30 @@ stream rather than a real pipe, because the thing under test is what the bytes b
 """
 import io
 import json
+from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
 
+from openoutsend.core.sequences import SequenceError, key
 from openoutsend.leads.ingest import ingest
-from openoutsend.leads.lifecycle import deals
-from openoutsend.leads.models import Deal, DealState, Lead, Outcome
+from openoutsend.leads.lifecycle import machine_of
+from openoutsend.leads.models import Deal, Lead, Outcome
+from openoutsend.leads.states import COMPLETED, CONVERSING, awaiting, sending
 from openoutsend.leads.suppression import suppress_email
 from openoutsend.tests.factories import put_in_state
 
 pytestmark = pytest.mark.django_db
+
+
+@pytest.fixture
+def relaunch(tmp_path):
+    """A second sequence folder, under the key `--sequence` gives it."""
+    folder = tmp_path / "relaunch"
+    folder.mkdir()
+    (folder / "E0-a.prompt.j2").write_text("Write to them.", encoding="utf-8")
+    (folder / "E1-2d-b.prompt.j2").write_text("Write again.", encoding="utf-8")
+    return key(str(folder))
 
 
 def record(**overrides) -> dict:
@@ -51,7 +64,8 @@ def test_a_record_becomes_a_lead_and_a_deal():
     assert lead.email == "anna@example.com"
     assert lead.profile_text == "cto at acme, milan, 50 employees"
     deal = Deal.objects.get(lead=lead)
-    assert deal.state == DealState.READY
+    assert deal.state == awaiting(0)
+    assert [(m.step, m.to_state) for m in machine_of(deal).history(deal.pk)] == [(None, "awaiting_E0")]
     assert deal.reason.startswith("runs the platform team")
     assert deal.qualified_at.isoformat() == "2026-08-20T09:00:00+00:00"
 
@@ -70,24 +84,57 @@ def test_a_lead_lands_in_cold_unless_told_otherwise():
     assert Deal.objects.get().sequence == "cold"
 
 
-def test_the_same_lead_in_another_sequence_gets_a_deal_of_its_own():
+def test_the_same_lead_in_another_sequence_gets_a_deal_of_its_own(relaunch):
     ingest(stream(record()))
-    ingest(stream(record()), sequence="/seqs/sample-to-order")
-    ingest(stream(record()), sequence="/seqs/sample-to-order")
+    ingest(stream(record()), sequence=relaunch)
+    ingest(stream(record()), sequence=relaunch)
 
     assert Lead.objects.count() == 1
-    assert sorted(Deal.objects.values_list("sequence", flat=True)) == ["/seqs/sample-to-order", "cold"]
+    assert sorted(Deal.objects.values_list("sequence", flat=True)) == ["cold", "relaunch"]
 
 
-def test_a_new_sequence_does_not_reopen_a_finished_deal_in_another():
+def test_each_deal_is_started_in_its_own_sequences_machine(relaunch):
     ingest(stream(record()))
-    put_in_state(Deal.objects.get(), DealState.COMPLETED)
+    ingest(stream(record()), sequence=relaunch)
+
+    cold, other = Deal.objects.get(sequence="cold"), Deal.objects.get(sequence=relaunch)
+    assert (machine_of(cold).name, machine_of(other).name) == ("deal-cold", "deal-relaunch")
+    assert (cold.state, other.state) == (awaiting(0), awaiting(0))
+    assert machine_of(cold).state_of(other.pk) is None
+
+
+def test_a_new_sequence_does_not_reopen_a_finished_deal_in_another(relaunch):
+    ingest(stream(record()))
+    put_in_state(Deal.objects.get(), COMPLETED)
     Deal.objects.update(outcome=Outcome.NOT_INTERESTED)
 
-    ingest(stream(record()), sequence="/seqs/relaunch")
+    ingest(stream(record()), sequence=relaunch)
 
-    assert Deal.objects.get(sequence="cold").outcome == Outcome.NOT_INTERESTED
-    assert Deal.objects.get(sequence="/seqs/relaunch").state == DealState.READY
+    finished = Deal.objects.get(sequence="cold")
+    assert (finished.state, finished.outcome) == (COMPLETED, Outcome.NOT_INTERESTED)
+    assert Deal.objects.get(sequence=relaunch).state == awaiting(0)
+
+
+def test_a_re_ingest_never_moves_a_deal_back_to_its_start():
+    """Where a conversation is in its sequence is this side's own business."""
+    ingest(stream(record()))
+    put_in_state(Deal.objects.get(), CONVERSING)
+
+    ingest(stream(record(reason="re-qualified under a changed ICP")))
+
+    deal = Deal.objects.get()
+    assert (deal.state, deal.reason) == (CONVERSING, "re-qualified under a changed ICP")
+
+
+def test_a_sequence_with_no_folder_stores_no_deal(tmp_path):
+    """A deal has no state without its folder's machine, so none is made without one."""
+    from openoutsend.core import sequences
+
+    with patch.object(sequences, "operator_dir", return_value=tmp_path), \
+            pytest.raises(SequenceError, match="no folder of that name"):
+        ingest(stream(record()), sequence="nowhere")
+
+    assert not Deal.objects.exists()
 
 
 def test_latest_wins_on_a_correction():
@@ -119,7 +166,7 @@ def test_a_row_with_no_address_is_stored_not_rejected():
     result = ingest(stream(record(email=None)))
 
     assert result.stored == 1
-    assert Deal.objects.get().state == DealState.READY
+    assert Deal.objects.get().state == awaiting(0)
 
 
 def test_a_malformed_line_is_skipped_and_the_others_survive(caplog):
@@ -202,6 +249,74 @@ def test_a_re_export_with_stop_lands_on_the_same_deal():
     assert "stop" not in deal.fields
 
 
+# ── A line piped with `stop` ──────────────────────────────────────
+
+
+def test_a_line_arriving_with_stop_ends_its_deal_stopped():
+    result = ingest(stream(record(stop=True)))
+
+    deal = Deal.objects.get()
+    assert (result.stored, result.suppressed) == (1, 0)
+    assert (deal.state, deal.outcome) == (COMPLETED, Outcome.STOPPED)
+    assert [(m.step, m.to_state) for m in machine_of(deal).history(deal.pk)] == \
+        [(None, "awaiting_E0"), ("end_suppressed", "completed")]
+
+
+@pytest.mark.parametrize("state", [awaiting(0), sending(0), CONVERSING])
+def test_a_re_ingest_with_stop_ends_an_open_deal_wherever_it_is(state):
+    ingest(stream(record()))
+    put_in_state(Deal.objects.get(), state)
+
+    ingest(stream(record(stop=True)))
+
+    deal = Deal.objects.get()
+    move = machine_of(deal).history(deal.pk)[-1]
+    assert (deal.state, deal.outcome) == (COMPLETED, Outcome.STOPPED)
+    assert (move.step, move.from_state, move.to_state) == ("end_suppressed", state, "completed")
+
+
+def test_stop_ends_the_deal_of_the_sequence_it_was_piped_into_and_no_other(relaunch):
+    ingest(stream(record()))
+    ingest(stream(record()), sequence=relaunch)
+
+    ingest(stream(record(stop=True)), sequence=relaunch)
+
+    stopped, other = Deal.objects.get(sequence=relaunch), Deal.objects.get(sequence="cold")
+    assert (stopped.state, stopped.outcome) == (COMPLETED, Outcome.STOPPED)
+    assert (other.state, other.outcome) == (awaiting(0), "")
+
+
+def test_a_stopped_deal_is_not_ended_twice_and_a_later_line_does_not_reopen_it():
+    ingest(stream(record(stop=True)))
+    ingest(stream(record(stop=True)))
+    ingest(stream(record(stop=False)))
+
+    deal = Deal.objects.get()
+    assert (deal.state, deal.outcome, deal.stop) == (COMPLETED, Outcome.STOPPED, False)
+    assert len(machine_of(deal).history(deal.pk)) == 2
+
+
+def test_stop_does_not_change_how_a_finished_deal_ended():
+    ingest(stream(record()))
+    put_in_state(Deal.objects.get(), COMPLETED)
+    Deal.objects.update(outcome=Outcome.CONVERTED)
+
+    ingest(stream(record(stop=True)))
+
+    deal = Deal.objects.get()
+    assert (deal.state, deal.outcome) == (COMPLETED, Outcome.CONVERTED)
+
+
+def test_a_suppressed_line_piped_with_stop_still_ends_unsubscribed():
+    suppress_email("anna@example.com", reason="opted out last week")
+
+    result = ingest(stream(record(stop=True)))
+
+    deal = Deal.objects.get()
+    assert result.suppressed == 1
+    assert (deal.state, deal.outcome) == (COMPLETED, Outcome.UNSUBSCRIBED)
+
+
 @pytest.mark.parametrize("bad", [{"start_at": "next tuesday"}, {"start_at": 5}, {"stop": "yes"}])
 def test_an_engine_field_it_cannot_read_makes_the_line_malformed(bad, caplog):
     result = ingest(stream(record(**bad)))
@@ -253,19 +368,20 @@ def test_a_suppressed_address_arrives_unsendable():
 
     assert (result.stored, result.suppressed) == (1, 1)
     deal = Deal.objects.get()
-    assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.UNSUBSCRIBED)
-    assert [(m.step, m.to_state) for m in deals.history(deal.pk)] == \
-        [(None, DealState.READY.value), ("end_suppressed", DealState.COMPLETED.value)]
+    assert (deal.state, deal.outcome) == (COMPLETED, Outcome.UNSUBSCRIBED)
+    assert [(m.step, m.to_state) for m in machine_of(deal).history(deal.pk)] == \
+        [(None, "awaiting_E0"), ("end_suppressed", "completed")]
 
 
-def test_an_opt_out_follows_the_lead_into_a_new_sequence():
+def test_an_opt_out_follows_the_lead_into_a_new_sequence(relaunch):
     ingest(stream(record()))
     suppress_email("anna@example.com", reason="asked to stop")
 
-    result = ingest(stream(record()), sequence="/seqs/relaunch")
+    result = ingest(stream(record()), sequence=relaunch)
 
     assert result.suppressed == 1
-    assert Deal.objects.get(sequence="/seqs/relaunch").outcome == Outcome.UNSUBSCRIBED
+    followed = Deal.objects.get(sequence=relaunch)
+    assert (followed.state, followed.outcome) == (COMPLETED, Outcome.UNSUBSCRIBED)
 
 
 def test_a_re_ingest_never_resurrects_an_opt_out():
@@ -282,22 +398,23 @@ def test_an_address_that_changes_into_a_suppressed_one_is_caught():
     """Ingest is lead-keyed, suppression is address-keyed — so a corrected address is re-checked."""
     suppress_email("anna@acme.io", reason="opted out under her work address")
     ingest(stream(record()))
-    assert Deal.objects.get().state == DealState.READY
+    assert Deal.objects.get().state == awaiting(0)
 
     ingest(stream(record(email="anna@acme.io")))
 
-    assert Deal.objects.get().outcome == Outcome.UNSUBSCRIBED
+    deal = Deal.objects.get()
+    assert (deal.state, deal.outcome) == (COMPLETED, Outcome.UNSUBSCRIBED)
 
 
 def test_an_opt_out_ends_the_conversation_it_was_in():
     ingest(stream(record()))
     deal = Deal.objects.get()
-    put_in_state(deal, DealState.EMAILED)
+    put_in_state(deal, CONVERSING)
 
     suppress_email("Anna@Example.com  ", reason="worded unsubscribe")
 
     deal.refresh_from_db()
-    assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.UNSUBSCRIBED)
+    assert (deal.state, deal.outcome) == (COMPLETED, Outcome.UNSUBSCRIBED)
 
 
 # ── A resend install ──────────────────────────────────────────────
@@ -326,8 +443,9 @@ def test_a_stop_line_needs_no_link(monkeypatch):
 
     result = ingest(stream(record(stop=True)))
 
+    deal = Deal.objects.get()
     assert result.stored == 1
-    assert Deal.objects.get().stop is True
+    assert (deal.stop, deal.state, deal.outcome) == (True, COMPLETED, Outcome.STOPPED)
 
 
 def test_a_mailbox_install_takes_a_line_without_a_link(monkeypatch):

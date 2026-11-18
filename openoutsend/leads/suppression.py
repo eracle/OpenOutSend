@@ -1,8 +1,8 @@
 """The suppression list — the door, and the last gate before a message is built.
 
-Two writers reach it: the mail pass, when an opt-out lands in the box
-(`emails/project.py`, `emails/steps/reply.py`), and ingest, which checks it on every
-row that arrives. One reader matters more than either — `emails/sender.suppressed`,
+Three writers reach it: the mail pass, when an opt-out lands in the box
+(`emails/project.py`), a conversation's turn that read a worded one
+(`leads/conversing.py`), and ingest, which checks it on every row that arrives. One reader matters more than either — `emails/sender.suppressed`,
 which asks again at send time, because an unsubscribe can land in the seconds an LLM
 call takes.
 
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 
-from openoutsend.leads.models import Deal, DealState, Outcome, Suppression
+from openoutsend.leads.models import Deal, Outcome, Suppression
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +39,12 @@ def suppress_email(
     *,
     reason: str = "",
     outcome: str = Outcome.UNSUBSCRIBED,
+    leaving=None,
 ) -> int:
     """Put *address* on the list for good and end its open conversations.
+
+    ``leaving`` is a deal whose own step is suppressing the address and ends it by its
+    own move (a turn that read a worded unsubscribe), so it is not ended a second time.
 
     Returns the number of deals ended — the deals rather than the leads, because the
     duty is to stop emailing and a deal is what would have emailed them. A deal that
@@ -68,7 +72,7 @@ def suppress_email(
     # Nothing here can overwrite a verdict somebody else reached: a deal that has one
     # is `COMPLETED`, and only the open ones are taken. Each is ended by its own move,
     # so the deal machine's log says which suppression ended it.
-    ended = _end_open_deals(email, outcome)
+    ended = _end_open_deals(email, outcome, leaving)
     logger.info(
         "suppressed %s (%s) — %d open deal(s) ended",
         email, reason or "no reason given", ended,
@@ -78,14 +82,27 @@ def suppress_email(
     return ended
 
 
-def _end_open_deals(email: str, outcome: str) -> int:
-    """Fire `end_suppressed` on each open deal of *email*, with *outcome*. Returns how many ended."""
-    from openoutsend.leads.lifecycle import deals, end_suppressed
+def _end_open_deals(email: str, outcome: str, leaving) -> int:
+    """Fire `end_suppressed` on each open deal of *email*, with *outcome*. Returns how many ended.
+
+    A deal whose sequence folder this run cannot find is left open and said so: the
+    address is on the list, so nothing can be sent to it, and the deal is ended by the
+    next pass that has its folder.
+    """
+    from openoutsend.core.sequences import SequenceError
+    from openoutsend.leads.lifecycle import END_SUPPRESSED, machine_of
 
     ended = 0
-    for deal in Deal.objects.filter(lead__email__iexact=email) \
-            .in_state(DealState.READY, DealState.EMAILED).select_related("lead"):
+    open_deals = Deal.objects.filter(lead__email__iexact=email).open().select_related("lead")
+    if leaving is not None:
+        open_deals = open_deals.exclude(pk=leaving.pk)
+    for deal in open_deals:
         deal.outcome = outcome
-        move = deals.fire(deal.pk, end_suppressed, entity=deal)
+        try:
+            move = machine_of(deal).fire(deal.pk, END_SUPPRESSED, entity=deal)
+        except SequenceError as error:
+            logger.error("%s is suppressed, and its deal in %r stays open until a run "
+                         "has that folder: %s", email, deal.sequence, error)
+            continue
         ended += move is not None
     return ended

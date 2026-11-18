@@ -18,7 +18,8 @@ from openoutsend.emails.delivery_policy import Response, classify
 from openoutsend.emails.models import DeliveryEvent, Message, Thread, Transport
 from openoutsend.emails.sender import OPT_OUT_LINE, Refused, send_email
 from openoutsend.errors import OutsendError
-from openoutsend.leads.models import DealState, Outcome
+from openoutsend.leads.models import Outcome
+from openoutsend.leads.states import COMPLETED, CONVERSING, machine_name, sending
 from openoutsend.leads.suppression import is_suppressed
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.factories import DealFactory, LeadFactory
@@ -197,31 +198,37 @@ class TestResendSend:
 
 @pytest.mark.django_db
 def test_the_step_sends_the_link_its_line_was_piped_with(operator):
-    from openoutsend.core.agents.outreach import OutreachDecision
+    from openoutsend.core.agents.outreach import Email
     from openoutsend.core.sequences import cold
-    from openoutsend.emails.steps.send import send_first_email
+    from openoutsend.emails.steps.send import Plan, send_step
 
     box = _resend_box()
-    deal = DealFactory(lead=LeadFactory(email="lead@corp.com"), state=DealState.READY,
+    deal = DealFactory(lead=LeadFactory(email="lead@corp.com"), state=sending(0),
                        fields={"unsubscribe_url": UNSUBSCRIBE})
-    decision = OutreachDecision(action="send_message", subject="Hi", message="Body")
-    with patch("openoutsend.core.agents.outreach.run_outreach_agent", return_value=decision), \
+    email = Email(subject="Hi", message="Body")
+    with patch("openoutsend.core.agents.outreach.write_email", return_value=email), \
             patch("openoutsend.leads.summaries.materialize_profile_summary_if_missing"), \
             patch.object(resend, "send", return_value="em_1") as post:
-        send_first_email(deal, box, cold().first, None)
+        assert send_step(deal, cold().first, Plan(box))
     assert post.call_args.args[1]["headers"]["List-Unsubscribe"] == f"<{UNSUBSCRIBE}>"
 
 
 @pytest.mark.django_db
-def test_a_reply_sends_the_link_its_line_was_piped_with(operator):
-    from openoutsend.emails.steps.reply import send_drafted_reply
+def test_an_answer_in_the_conversation_sends_the_link_its_line_was_piped_with(operator):
+    from openoutsend.leads.lifecycle import TURN, machine_of
 
     box = _resend_box()
-    deal = DealFactory(lead=LeadFactory(email="lead@corp.com"), state=DealState.EMAILED,
-                       mailbox=box, email_subject="Ten leads",
+    sent = maillog.outbound(box, to="lead@corp.com", subject="Ten leads",
+                            sent_at=timezone.now() - timedelta(days=1))
+    deal = DealFactory(lead=LeadFactory(email="lead@corp.com"), state=CONVERSING,
+                       mailbox=box, email_subject="Ten leads", thread=sent.thread,
                        fields={"unsubscribe_url": UNSUBSCRIBE})
+    Thread.objects.filter(pk=sent.thread_id).update(
+        machine=machine_name(deal.sequence), entity=str(deal.pk))
+    maillog.inbound(box, thread=sent.thread, sender="lead@corp.com")
     with patch.object(resend, "send", return_value="em_1") as post:
-        send_drafted_reply(deal, "Thanks, here's the link.")
+        machine_of(deal).fire(deal.pk, TURN, entity=deal,
+                              answer={"to": CONVERSING, "message": "Thanks, here's the link."})
     payload = post.call_args.args[1]
     assert payload["headers"]["List-Unsubscribe"] == f"<{UNSUBSCRIBE}>"
     assert payload["subject"] == "Re: Ten leads"
@@ -247,12 +254,25 @@ class TestCapacity:
 
 def _first_contact(box, sequence):
     """One person first contacted today from *box*, in *sequence* — what the ledger counts."""
-    deal = DealFactory(sequence=sequence, state=DealState.EMAILED, mailbox=box,
+    deal = DealFactory(sequence=sequence, state=CONVERSING, mailbox=box,
                        thread=Thread.objects.create(mailbox=box))
     maillog.outbound(box, thread=deal.thread, to=deal.lead.email, sent_at=timezone.now())
 
 
+@pytest.fixture
+def two_sequences(tmp_path):
+    """The folders ``relaunch`` and ``sample-to-order``, one email each, known to this run."""
+    from openoutsend.core.sequences import key
+
+    for name in ("relaunch", "sample-to-order"):
+        folder = tmp_path / name
+        folder.mkdir()
+        (folder / "E0-first.email.j2").write_text("Subject: Hi\n\nHello.\n")
+        key(str(folder))
+
+
 @pytest.mark.django_db
+@pytest.mark.usefixtures("two_sequences")
 class TestCapPerSequence:
     """Two sequences on one resend box each spend their own declared budget."""
 
@@ -323,7 +343,7 @@ def test_the_mail_pass_polls_a_resend_box_instead_of_reading_it():
 @pytest.mark.django_db
 class TestPoll:
     def _accepted(self, box, email_id="em_1", to="lead@corp.com"):
-        deal = DealFactory(lead=LeadFactory(email=to), state=DealState.EMAILED)
+        deal = DealFactory(lead=LeadFactory(email=to), state=CONVERSING)
         row = maillog.outbound(box, to=to)
         DeliveryEvent.objects.create(message=row, status=DeliveryEvent.Status.ACCEPTED,
                                      queue_id=email_id)
@@ -342,7 +362,7 @@ class TestPoll:
         assert row.delivery_events.filter(status=DeliveryEvent.Status.BOUNCED).exists()
         assert is_suppressed("lead@corp.com")
         deal.refresh_from_db()
-        assert (deal.state, deal.outcome) == (DealState.COMPLETED, Outcome.UNDELIVERABLE)
+        assert (deal.state, deal.outcome) == (COMPLETED, Outcome.UNDELIVERABLE)
 
     def test_a_complaint_is_an_unsubscribe(self):
         box = _resend_box()

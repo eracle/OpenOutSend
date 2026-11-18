@@ -20,12 +20,7 @@ leads.jsonl                                 one lead, as your export would print
 
 ## The whole loop
 
-An install mailing a sequence like this one usually has follow-ups off, because its steps already
-say everything:
-
 ```bash
-export OUTSEND_FOLLOW_UPS=off
-
 outsend --sequence examples/sequences/after-a-demo < examples/sequences/after-a-demo/leads.jsonl
 outsend send --sequence examples/sequences/after-a-demo --agent-draft   # read the first draft
 outsend send --sequence examples/sequences/after-a-demo                 # send what is due

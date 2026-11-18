@@ -7,10 +7,10 @@ suppresses the person who asked. Everything it writes is derived from rows that
 never move, so a corrected classification simply clears ``processed_at`` and the
 projection is redone.
 
-A ``human_reply`` is projected by doing **nothing**: it is already a turn in its
-thread, and the cycle finds the deal by comparing the thread's newest inbound turn
-with its newest outbound one. There is no second copy of the conversation to keep
-in step — which is the dual-write this design deleted.
+A ``human_reply`` is already a turn in its thread, and the deal it belongs to finds
+it there (``machines/channel.py``): there is no second copy of the conversation to
+keep in step. It is acted on in one case only: its own text carries the footer's
+opt-out word (``asks_to_stop``), which suppresses the address like any other opt-out.
 
 **A bounce that names a dead address ends the pursuit.** Only the receiver's own
 explicit statement counts — the enhanced statuses in
@@ -28,8 +28,16 @@ import re
 from django.utils import timezone
 
 from openoutsend.emails.models import DeliveryEvent, Direction, Kind, Message
+from openoutsend.emails.sender import OPT_OUT_WORD
 
 logger = logging.getLogger(__name__)
+
+# The footer's opt-out word, standing as a word of its own in a reply.
+_OPT_OUT_WORD = re.compile(rf"\b{re.escape(OPT_OUT_WORD)}\b", re.IGNORECASE)
+
+# Our own footer's invitation (`Reply "stop"`), as a client quotes it back: whatever
+# quote marks it was given, and wrapped wherever the client wrapped it.
+_OUR_INVITATION = re.compile(rf"reply\s+[\"“”'‘’]{re.escape(OPT_OUT_WORD)}[\"“”'‘’]", re.IGNORECASE)
 
 # Any Message-ID appearing anywhere in an NDR's bytes. A report quotes the failed
 # message's headers in its own body parts, so the id we sent is in there even when
@@ -65,7 +73,9 @@ def project(message: Message) -> None:
     if message.kind == Kind.BOUNCE:
         _record_bounce(message)
     elif message.kind == Kind.OPT_OUT:
-        _honour_opt_out(message)
+        _honour_opt_out(message, "opt-out to the unsubscribe alias")
+    elif message.kind == Kind.HUMAN_REPLY and asks_to_stop(message.body_text):
+        _honour_opt_out(message, f'replied "{OPT_OUT_WORD}"')
 
     message.processed_at = timezone.now()
     message.save(update_fields=["processed_at"])
@@ -146,7 +156,21 @@ def _dsn_status(ndr: Message) -> str:
     return match.group(1).decode() if match else ""
 
 
-def _honour_opt_out(message: Message) -> None:
+def asks_to_stop(own_text: str) -> bool:
+    """Whether a reply's own text carries the word every email's footer offers as the exit.
+
+    *own_text* is what they wrote, the quoted history already stripped
+    (``parsing.body_text``). Not every client marks what it quotes, so our own footer
+    can survive that; its invitation is taken out here before the word is looked for,
+    and a reply that only quotes us back asks for nothing. The word anywhere in what is
+    left counts, as a word of its own: somebody who writes "please stop" is using the
+    exit they were given. Any other wording of the same wish is read by the model once
+    the deal is in its conversation.
+    """
+    return bool(_OPT_OUT_WORD.search(_OUR_INVITATION.sub("", own_text or "")))
+
+
+def _honour_opt_out(message: Message, reason: str) -> None:
     """Suppress the address this opt-out came from, for good.
 
     Enforcement is address-level and terminal: the list outlives the deals it ends,
@@ -156,6 +180,6 @@ def _honour_opt_out(message: Message) -> None:
 
     if not message.from_address:
         return
-    ended = suppress_email(message.from_address, reason="opt-out to the unsubscribe alias")
+    ended = suppress_email(message.from_address, reason=reason)
     logger.info("project: opt-out from %s — %d open deal(s) ended",
                 message.from_address, ended)

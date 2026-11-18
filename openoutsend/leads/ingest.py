@@ -43,8 +43,10 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from openoutsend.leads.lifecycle import deals, end_suppressed
-from openoutsend.leads.models import Deal, DealState, Lead, Outcome
+from openoutsend.core.sequences import named
+from openoutsend.leads.lifecycle import END_SUPPRESSED, machine_for
+from openoutsend.leads.models import Deal, Lead, Outcome
+from openoutsend.leads.states import COMPLETED
 from openoutsend.leads.suppression import is_suppressed, normalize
 
 logger = logging.getLogger(__name__)
@@ -92,6 +94,9 @@ def ingest(stream: IO[str], sequence: str = "cold") -> IngestResult:
     from openoutsend.core.conf import TRANSPORT_RESEND, transport
 
     needs_unsubscribe_url = transport() == TRANSPORT_RESEND
+    # The sequence's machine, found before a line is read: a sequence with no folder
+    # stops the run with nothing stored.
+    machine = machine_for(named(sequence))
     result = IngestResult()
     for number, line in enumerate(stream, start=1):
         line = line.strip()
@@ -101,7 +106,7 @@ def ingest(stream: IO[str], sequence: str = "cold") -> IngestResult:
         if record is None:
             result.skipped += 1
             continue
-        _store(record, sequence, result)
+        _store(record, sequence, machine, result)
     return result
 
 
@@ -174,11 +179,11 @@ def _start_at(record: dict) -> datetime | None:
     return parsed
 
 
-def _store(record: dict, sequence: str, result: IngestResult) -> None:
+def _store(record: dict, sequence: str, machine, result: IngestResult) -> None:
     """Upsert one record's lead and its deal in *sequence*, and count what it turned out to be."""
     lead, address_changed = _upsert_lead(record)
     suppressed = _check_the_door(lead, address_changed)
-    _upsert_deal(lead, sequence, record, suppressed)
+    _upsert_deal(lead, sequence, machine, record, suppressed)
 
     result.stored += 1
     if suppressed:
@@ -226,7 +231,7 @@ def _check_the_door(lead: Lead, address_changed: bool) -> bool:
     return suppressed
 
 
-def _upsert_deal(lead: Lead, sequence: str, record: dict, suppressed: bool) -> Deal:
+def _upsert_deal(lead: Lead, sequence: str, machine, record: dict, suppressed: bool) -> Deal:
     """This lead's row in *sequence*, created or corrected.
 
     `reason` is refreshed on every arrival — that is the correction a re-ingest most
@@ -237,14 +242,15 @@ def _upsert_deal(lead: Lead, sequence: str, record: dict, suppressed: bool) -> D
     with, exactly as `suppress_email` leaves one alone. Ending is not sendable, so
     there is nothing to enforce and nothing to overwrite.
 
-    A new deal is started in the deal machine in the same transaction as its row, so
-    no deal exists without a state. A suppressed one is then ended by its own move,
-    which leaves `READY` → `COMPLETED` in the log rather than a deal born ended.
+    A new deal is started in its sequence's machine in the same transaction as its row,
+    so no deal exists without a state. A suppressed one, or one piped with `stop`, is
+    then ended by its own move, which leaves a move to `completed` in the log rather
+    than a deal born ended.
     """
     with transaction.atomic():
         deal, created = Deal.objects.get_or_create(lead=lead, sequence=sequence)
         if created:
-            deals.start(deal.pk)
+            machine.start(deal.pk)
 
     updated = []
     reason = (record.get("reason") or "").strip()
@@ -259,9 +265,10 @@ def _upsert_deal(lead: Lead, sequence: str, record: dict, suppressed: bool) -> D
 
     if updated:
         deal.save(update_fields=[*updated, "updated_at"])
-    if suppressed and deal.state is not DealState.COMPLETED:
-        deal.outcome = Outcome.UNSUBSCRIBED
-        deals.fire(deal.pk, end_suppressed, entity=deal)
+    if (suppressed or deal.stop) and deal.state != COMPLETED:
+        if suppressed:
+            deal.outcome = Outcome.UNSUBSCRIBED
+        machine.fire(deal.pk, END_SUPPRESSED, entity=deal)
     return deal
 
 

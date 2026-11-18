@@ -9,14 +9,15 @@ from unittest.mock import patch
 
 import pytest
 
+from openoutsend.core.sequences import key
 from openoutsend.emails.classify import classify_pending
 from openoutsend.emails.filing import file_message
-from openoutsend.emails.models import Kind, Message
-from openoutsend.emails.steps.reply import send_drafted_reply
+from openoutsend.emails.models import Kind, Message, Thread
 from openoutsend.emails.sync import mirror
 from openoutsend.errors import OutsendError
-from openoutsend.leads.models import DealState
-from openoutsend.planner import unanswered_replies
+from openoutsend.leads.lifecycle import TURN, machine_of
+from openoutsend.leads.states import CONVERSING, awaiting, machine_name
+from openoutsend.planner import conversations_waiting
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.emails.fake_imap import FakeIMAP, auto_reply, message
 from openoutsend.tests.factories import DealFactory, LeadFactory
@@ -29,14 +30,27 @@ def _box():
     return maillog.mailbox(SENDER)
 
 
-def _deal(box, *, lead=None, sequence="cold", created_at=None):
-    """A deal we emailed before the customer's message arrived."""
-    sent = maillog.outbound(box, to=CUSTOMER, sent_at=datetime(2026, 3, 1, tzinfo=UTC))
-    return DealFactory(
+def _deal(box, *, lead=None, sequence="cold", created_at=None, state=CONVERSING):
+    """A deal we emailed before the customer's message arrived, its thread kept against it."""
+    sent = maillog.outbound(box, to=CUSTOMER, subject="Hi",
+                            sent_at=datetime(2026, 3, 1, tzinfo=UTC))
+    deal = DealFactory(
         lead=lead or LeadFactory(lead_id="sample-7", email=CUSTOMER),
-        state=DealState.EMAILED, mailbox=box, email_subject="Hi", thread=sent.thread,
+        state=state, mailbox=box, email_subject="Hi", thread=sent.thread,
         sequence=sequence, **({"created_at": created_at} if created_at else {}),
     )
+    Thread.objects.filter(pk=sent.thread_id).update(
+        machine=machine_name(deal.sequence), entity=str(deal.pk))
+    return deal
+
+
+@pytest.fixture
+def sample_to_order(tmp_path):
+    """A second sequence the same lead is enrolled in."""
+    folder = tmp_path / "sample-to-order"
+    folder.mkdir()
+    (folder / "E0-sample.email.j2").write_text("Subject: Ten leads\n\nHere they are.\n")
+    return key(str(folder))
 
 
 def _received(box, *rows) -> Message:
@@ -59,7 +73,30 @@ class TestFiling:
 
         assert filed.kind == Kind.HUMAN_REPLY
         assert filed.thread_id == deal.thread_id
-        assert list(unanswered_replies()) == [deal]
+
+    def test_the_deals_conversation_sees_it_waiting_for_an_answer(self):
+        box = _box()
+        deal = _deal(box)
+        _received(box, message(7, to=SENDER, sender=CUSTOMER,
+                               in_reply_to="<sample@resend.dev>"))
+        assert machine_of(deal).incoming(deal) is None
+
+        filed = file_message("<m7@corp.com>", "sample-7")
+
+        assert machine_of(deal).incoming(deal) == filed
+        assert conversations_waiting() == [deal]
+
+    def test_one_filed_before_the_conversation_waits_in_the_thread_for_it(self):
+        """Filing never moves the deal: its steps go on, and the message is there after them."""
+        box = _box()
+        deal = _deal(box, state=awaiting(0))
+        _received(box, message(7, to=SENDER, sender=CUSTOMER))
+
+        filed = file_message("m7@corp.com", "sample-7")
+
+        assert deal.state == awaiting(0)
+        assert conversations_waiting() == []
+        assert machine_of(deal).incoming(deal) == filed
 
     def test_its_own_thread_moves_with_it(self):
         box = _box()
@@ -74,13 +111,14 @@ class TestFiling:
                    .values_list("kind", flat=True)) == {Kind.HUMAN_REPLY}
         assert deal.thread.messages.filter(direction="in").count() == 2
 
-    def test_it_joins_the_newest_deal(self):
+    def test_it_joins_the_newest_deal(self, sample_to_order):
         box = _box()
         older = _deal(box, created_at=datetime(2026, 3, 1, tzinfo=UTC))
-        newer = _deal(box, lead=older.lead, sequence="sample-to-order")
+        newer = _deal(box, lead=older.lead, sequence=sample_to_order)
         _received(box, message(7, to=SENDER, sender=CUSTOMER))
 
         assert file_message("m7@corp.com", "sample-7").thread_id == newer.thread_id
+        assert conversations_waiting() == [newer]
 
     def test_a_re_reading_keeps_it_in_place(self):
         box = _box()
@@ -101,10 +139,14 @@ class TestFiling:
         file_message("m7@corp.com", "sample-7")
 
         with patch("openoutsend.emails.sender.send_email") as send:
-            send_drafted_reply(deal, "Thanks — here is your order link.")
+            move = machine_of(deal).fire(
+                deal.pk, TURN, entity=deal,
+                answer={"to": CONVERSING, "message": "Thanks — here is your order link."},
+            )
 
+        assert (move.from_state, move.to_state) == (CONVERSING, CONVERSING)
+        assert send.call_args.args[1:] == (CUSTOMER, "Re: Hi", "Thanks — here is your order link.")
         assert send.call_args.kwargs["in_reply_to"] == "<m7@corp.com>"
-        assert send.call_args.args[2] == "Re: Hi"
 
 
 @pytest.mark.django_db

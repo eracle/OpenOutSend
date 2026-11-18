@@ -1,20 +1,23 @@
-"""One pass: read the mail, answer what came back, open what there is room to open.
+"""One pass: read the mail, move every deal that is due a move, send what the guards allow.
 
-**A pass does what the guards allow *right now* and exits** — no per-recipient timers,
-no loop of its own. It is the unit of work, not the unit an operator asks for: `outsend
+**A pass does what can be done *right now* and exits** — no per-recipient timers, no
+loop of its own. It is the unit of work, not the unit an operator asks for: `outsend
 send 5` is a *goal*, and `send_job.py` reaches it by running this repeatedly and waiting
 out the clock in between. Nothing here waits, so the pass stays the thing a timer can
 also fire on its own.
 
-The order is the design, and each step feeds the next:
+Every move is a step of a deal's machine (`leads/lifecycle.py`); the pass only says
+which steps to try, in an order where each feeds the next:
 
     read      IMAP → rows → kinds → events, suppression   (`emails/mail_pass.py`)
     measure   each box's warm capacity for today, once     (`emails/warmth.py`)
-    answer    every thread the lead has replied in         (no cap, no spacing)
-    close     deals past their last touch, or never due    (no send)
-    send      openers, later steps, follow-ups — one       (capped, spaced, in-window)
-              queue, oldest due first
-
+    end       deals stopped or suppressed since last pass  (no send)
+    wait      deals whose wait ran out become due; deals   (no send)
+              that arrived too late are closed
+    converse  answer every conversation with a message     (no cap, no spacing)
+              waiting; close the ones gone quiet
+    send      the steps that are due — one queue,          (capped, spaced, in-window)
+              longest due first
 
 Reading first is what makes the rest honest: an opt-out that arrived overnight
 suppresses the person *before* anything is written to them, and a reply is visible in
@@ -25,19 +28,17 @@ signal the warm ramp has, and it arrives hours later as ordinary mail rather tha
 failed send — so it is the read that puts it on the record. Measuring before reading
 would ramp a box on yesterday's evidence while today's sat unopened in it.
 
-**Every step and follow-up is cold volume**, so they share the cap. A reply inside a
-thread somebody started is not cold volume, and answering within minutes is more
-human, not less — so replies ignore the daily ceiling, the spacing clock and the
+**Every step is cold volume**, so they share the cap. An answer inside a thread
+somebody wrote in is not cold volume, and answering within minutes is more human, not
+less — so a conversation's turn ignores the daily ceiling, the spacing clock and the
 sending window alike.
 
 **The waiting lives one level up.** A goal-bounded run sleeps on the spacing clock, the
-daily ceiling *and* the sending window — see `send_job.py`, which reaches a goal by
-running this pass repeatedly and asking the planner when it could next open a conversation.
+daily ceiling *and* the sending window — see `send_job.py`, which asks the planner when
+it could next open a conversation.
 
-**What is due and which box carries it are the planner's answers** (`planner.py`); this
-module only writes, sends and counts.
-Keeping the wait out of here is what leaves the pass firable by a timer, and what lets
-each wait be spent reading the mail rather than blocking inside one step of it.
+**Which box carries a due send is the planner's answer** (`planner.py`); this module
+only fires steps and counts.
 """
 from __future__ import annotations
 
@@ -58,9 +59,9 @@ class PassResult:
     classified: int = 0
     projected: int = 0
     answered: int = 0
+    ended: int = 0
     opened: int = 0
     stepped: int = 0
-    followed_up: int = 0
     gave_up: int = 0
     missed: int = 0
     undeliverable: int = 0
@@ -81,26 +82,26 @@ class PassResult:
 
 def run_send_pass(prompt_line_name: str | None = None, narrate: bool = True,
                   agent_draft: AgentDraft = OFF, sequence: str | None = None) -> PassResult:
-    """Read, answer, open — once — and report. Never raises for a failed send.
+    """Read, move, send — once — and report. Never raises for a failed send.
 
-    The pass closes and sends every sequence in the install, cold among them, in one
+    The pass moves and sends every sequence in the install, cold among them, in one
     queue. ``sequence`` (a ``core/sequences.key``) narrows that to one. Reading the mail
-    and answering replies are never narrowed: they are the install's, whichever
+    and holding the conversations are never narrowed: they are the install's, whichever
     sequence the thread began in.
 
-    ``prompt_line_name`` pins every opener in this pass to one move
-    (``core/prompt_lines.py``); left unset, each opener draws its own at random, which
-    is what makes the log a comparison rather than a run of whatever was pinned.
+    ``prompt_line_name`` pins every prompt step in this pass to one move
+    (``core/prompt_lines.py``); left unset, each draws its own at random, which is what
+    makes the log a comparison rather than a run of whatever was pinned.
 
     ``narrate`` prints the holding line. A single `outsend send` wants it — it is the
     whole answer to *why did that do nothing*. A `send N` run does not want it once per
     pass, because the answer does not change while it waits; it reads ``result.holding``
     and says it when it moves.
 
-    ``agent_draft`` opts the replies, openers and later steps out of `AI_MODEL` — see
-    ``_answer_replies`` and ``_send_cold``. Unlike a failed send, this **does** raise
-    (``DraftPending``), because there is nobody to report a holding line to: the process
-    is about to exit.
+    ``agent_draft`` opts the conversations and the prompt steps out of `AI_MODEL` — see
+    ``_answer_drafted_reply`` and ``_send_agent_draft``. Unlike a failed send, this
+    **does** raise (``DraftPending``), because there is nobody to report a holding line
+    to: the process is about to exit.
     """
     from openoutsend.emails.mail_pass import run_mail_pass
     from openoutsend.emails.warmth import measure_pool
@@ -108,116 +109,149 @@ def run_send_pass(prompt_line_name: str | None = None, narrate: bool = True,
     result = PassResult()
     result.mirrored, result.classified, result.projected = run_mail_pass()
     measure_pool()
-    reached = _answer_replies(result, agent_draft)
-    _close_ended(result, sequence)
-    _send_cold(result, sequence, reached, prompt_line_name, agent_draft)
+    _end_stopped(result, sequence)
+    _run_out_waits(result, sequence)
+    reached = _converse(result, agent_draft)
+    _send_due(result, sequence, reached, prompt_line_name, agent_draft)
     result.holding = _what_is_holding(sequence)
     if narrate:
         logger.info("%s", result.holding)
     return result
 
 
-def run_reply_pass(agent_draft: AgentDraft) -> PassResult:
-    """Read the mail and answer the replies through the calling agent, and nothing else.
+# ── Ending and waiting ────────────────────────────────────────────
 
-    `outsend reply`'s pass: no opener, no step, no follow-up, no closing, so a session
-    answering customers can run it beside the timer's passes on the same store without
-    sending anything but answers. The handover is ``--agent-draft``'s
-    (``_answer_drafted_reply``), one reply at a time; ``agent_draft.body`` answers the
-    one already handed over.
 
-    A draft held for an opener or a step would leave the replies waiting behind it
-    with nothing said, so it stops the pass instead: ``send --agent-draft`` answers it.
+def _end_stopped(result: PassResult, sequence: str | None) -> None:
+    """End every open deal whose line was piped with `stop` or whose address is suppressed.
+
+    A suppression ends its address's deals when it lands, and ingest ends a stopped line
+    as it arrives, so this finds only what neither could: a deal whose folder that run
+    did not have.
     """
-    from openoutsend.emails.mail_pass import run_mail_pass
-    from openoutsend.planner import unanswered_replies
+    from django.db.models import Q
 
-    result = PassResult()
-    result.mirrored, result.classified, result.projected = run_mail_pass()
-    _clear_the_way_for_replies()
-    _answer_drafted_reply(result, agent_draft)
-    result.holding = f"{unanswered_replies().count()} reply(ies) to answer"
-    return result
+    from openoutsend.leads.lifecycle import END_SUPPRESSED
+    from openoutsend.leads.models import Deal, Suppression
+    from openoutsend.planner import machines
+
+    machine_of = machines()
+    stopped = _scoped(Deal.objects.open(), sequence).filter(
+        Q(stop=True) | Q(lead__email__in=Suppression.objects.values("email"))
+    ).select_related("lead")
+    for deal in stopped:
+        _try(result, "ending", deal, machine_of(deal), END_SUPPRESSED)
 
 
-def _clear_the_way_for_replies() -> None:
-    """Drop a held draft whose deal is owed nothing now; refuse one owed an opener or a step.
+def _run_out_waits(result: PassResult, sequence: str | None) -> None:
+    """Move every deal whose wait ran out to its send, and close the ones that arrived
+    with every step past its grace. Costs no send, so no box is asked."""
+    from agentic_fsm import ProgressError
 
-    A draft is owed nothing once its deal was stopped, closed or written to since —
-    a refused answer among them, whose row is our turn — and would otherwise sit in
-    front of every reply.
+    from openoutsend.core.sequences import named
+    from openoutsend.leads.lifecycle import CLOSE_MISSED, machine_for
+    from openoutsend.leads.models import Deal
+    from openoutsend.leads.states import WAITING
+
+    open_sequences = (_scoped(Deal.objects.open(), sequence)
+                      .values_list("sequence", flat=True).distinct())
+    for name in sorted(open_sequences):
+        try:
+            moves = machine_for(named(name)).progress_all(WAITING)
+        except ProgressError as error:
+            moves = error.moves
+            for entity, failure in error.failures.items():
+                logger.error("deal %s of %s could not be moved: %s", entity, name, failure)
+            result.failed += len(error.failures)
+        result.missed += sum(move.step == CLOSE_MISSED for move in moves)
+
+
+# ── The conversations ─────────────────────────────────────────────
+
+
+def _converse(result: PassResult, agent_draft: AgentDraft) -> set:
+    """Take a turn in every conversation with a message waiting, then close the quiet
+    ones. Returns the lead ids whose message was taken up.
+
+    The waiting conversations are listed before the loop rather than re-queried: one
+    whose answer *fails* to send keeps its state, so asking again would hand back the
+    same deal forever. A failure costs that one conversation this pass, and the next
+    pass tries it again.
+
+    The ids are every lead whose message was taken up, answered or not: whoever just
+    wrote in is sent no step of another sequence in the same pass (``_send_due``).
+
+    A calling agent takes the turn instead of `AI_MODEL` under ``--agent-draft``.
     """
-    from openoutsend.errors import OutsendError
-    from openoutsend.leads.models import PendingDraft
-    from openoutsend.planner import unanswered_replies
-
-    held = PendingDraft.objects.exclude(deal__in=unanswered_replies().values("pk")) \
-        .select_related("deal__lead").first()
-    if held is None:
-        return
-    if _owed_send(held.deal) is None:
-        logger.info("%s is no longer owed a send — dropping its draft", held.deal.lead.public_id)
-        held.delete()
-        return
-    raise OutsendError(f"{held.deal.lead.public_id} holds a draft for an opener or a step — "
-                       "`outsend send --agent-draft` answers it")
-
-
-def _answer_replies(result: PassResult, agent_draft: AgentDraft = OFF) -> set:
-    """Answer every thread whose newest turn is theirs. Returns the lead ids it handled.
-
-    The pool is materialised before the loop rather than re-queried: a deal whose
-    reply *fails* to send keeps its state, so asking the database again would hand
-    back the same row forever. A failure costs that one conversation this pass, and
-    the next pass tries it again.
-
-    The ids are every lead whose reply was taken up, answered or not: whoever just
-    wrote in is sent no step of another sequence in the same pass (``_send_cold``).
-
-    A calling agent answers instead of `AI_MODEL` under ``--agent-draft``, and nobody
-    does under ``OUTSEND_REPLIES=hold`` (``core/conf.py``): the replies wait, and their
-    leads still count as reached.
-    """
-    from openoutsend.core.conf import REPLIES_HOLD, replies
-    from openoutsend.leads.lifecycle import REPLY, Plan, answer_reply
-    from openoutsend.planner import unanswered_replies
+    from openoutsend.leads.lifecycle import TURN
+    from openoutsend.leads.states import CONVERSING
+    from openoutsend.planner import conversations_waiting, machines
 
     if agent_draft.active:
-        return _answer_drafted_reply(result, agent_draft)
-    if replies() == REPLIES_HOLD:
-        return set(unanswered_replies().values_list("lead_id", flat=True))
-
-    reached = set()
-    for deal in list(unanswered_replies()):
-        reached.add(deal.lead_id)
-        try:
-            _fire(deal, answer_reply, Plan(REPLY))
-            result.answered += 1
-        except Exception:
-            logger.exception("reply to %s failed", deal.lead.public_id)
-            result.failed += 1
+        reached = _answer_drafted_reply(result, agent_draft)
+    else:
+        machine_of = machines()
+        reached = set()
+        for deal in conversations_waiting():
+            reached.add(deal.lead_id)
+            move = _try(result, "answer", deal, machine_of(deal), TURN)
+            if move is not None:
+                _count_turn(result, move.to_state == CONVERSING)
+    _close_quiet(result)
     return reached
 
 
+def _count_turn(result: PassResult, stayed: bool) -> None:
+    if stayed:
+        result.answered += 1
+    else:
+        result.ended += 1
+
+
+def _close_quiet(result: PassResult) -> None:
+    """Close each conversation whose closing gap of silence has run out.
+
+    The step refuses while a message waits for an answer, so nobody owed one is closed.
+    """
+    from openoutsend.leads.lifecycle import RAN_QUIET
+    from openoutsend.leads.models import Deal
+    from openoutsend.leads.states import CONVERSING
+    from openoutsend.planner import machines
+
+    machine_of = machines()
+    for deal in Deal.objects.in_state(CONVERSING).select_related("lead", "mailbox", "thread"):
+        if _try(result, "closing", deal, machine_of(deal), RAN_QUIET) is not None:
+            logger.info("%s went quiet — closing the conversation", deal.lead.public_id)
+            result.gave_up += 1
+
+
 def _answer_drafted_reply(result: PassResult, agent_draft: AgentDraft) -> set:
-    """Send the reply already handed to the calling agent, or hand the oldest one over.
+    """Send the answer already handed to the calling agent, or hand the oldest message over.
 
     The same one-draft-at-a-time contract as ``_send_agent_draft``, which it runs
     ahead of: somebody waiting on an answer comes before a step nobody asked for. A
-    draft held for a step is left to that path, and the replies wait behind it.
+    draft held for a step is left to that path, and the conversations wait behind it.
 
-    A reply is exempt from every send guard, so an answer is sent the pass it arrives.
-    A refused send is recorded like the model path's: its row is our turn, so the
-    deal is no longer owed a reply and the draft is dropped. Returns every lead owed a
-    reply, as reached.
+    The agent's answer is the turn: it is sent in the thread and logged as a move from
+    the conversation to itself, decided by `agent`. An answer is exempt from every send
+    guard, so it goes the pass it arrives. Returns every lead owed an answer, as reached.
     """
-    from openoutsend.leads.lifecycle import REPLY, Plan, answer_reply
+    from openoutsend.leads.lifecycle import TURN
     from openoutsend.leads.models import PendingDraft
-    from openoutsend.planner import unanswered_replies
+    from openoutsend.leads.states import CONVERSING
+    from openoutsend.planner import conversations_waiting, machines
 
-    owed = list(unanswered_replies())
+    owed = conversations_waiting()
     reached = {deal.lead_id for deal in owed}
-    pending = PendingDraft.objects.first()
+    pending = PendingDraft.objects.select_related("deal__lead").first()
+    if pending is not None and pending.deal.state == CONVERSING \
+            and pending.deal_id not in {deal.pk for deal in owed}:
+        # Answered some other way since it was handed over (from the mailbox, by hand):
+        # nothing waits in that conversation, and the draft would sit before every other.
+        logger.info("%s is no longer owed an answer — dropping its draft",
+                    pending.deal.lead.public_id)
+        pending.delete()
+        pending = None
     if pending is None:
         if owed:
             PendingDraft.objects.create(deal=owed[0])
@@ -235,25 +269,21 @@ def _answer_drafted_reply(result: PassResult, agent_draft: AgentDraft) -> set:
         raise DraftPending(f"{deal.lead.public_id} is still waiting on a reply",
                            payload=_reply_payload(deal))
 
-    try:
-        _fire(deal, answer_reply, Plan(REPLY, body=pending.body))
-    except Exception:
-        logger.exception("reply to %s failed", deal.lead.public_id)
-        result.failed += 1
-        return reached
-    result.answered += 1
-    pending.delete()
+    answer = {"to": CONVERSING, "message": pending.body}
+    if _try(result, "answer", deal, machines()(deal), TURN, answer=answer) is not None:
+        result.answered += 1
+        pending.delete()
     return reached
 
 
 def _reply_payload(deal) -> dict:
     """What an agent needs to answer *deal*'s lead: their fields, the line they were
-    piped with, and the whole conversation followed by the reply prompt — what
-    `AI_MODEL` would have read."""
-    from openoutsend.core.agents.outreach import conversation
-    from openoutsend.emails.steps.reply import REPLY_PROMPT
+    piped with, and what `AI_MODEL` would have read — the whole thread, then how to
+    answer it."""
+    from openoutsend.leads.lifecycle import TURN, machine_of
 
     lead = deal.lead
+    brief = machine_of(deal).brief(deal.pk, TURN, entity=deal)
     return {
         "lead_id": lead.public_id,
         "email": lead.email,
@@ -264,40 +294,24 @@ def _reply_payload(deal) -> dict:
         "step": "reply",
         "subject": deal.email_subject or "",
         "fields": deal.fields,
-        "prompt": conversation(deal, REPLY_PROMPT),
+        "prompt": brief.prompt,
     }
 
 
-def _close_ended(result: PassResult, sequence: str | None) -> None:
-    """End the deals past their last touch, and the ones that can never become due.
-
-    Closing costs no send, so it is not gated on a box at all — a deal is closed
-    whatever the pool's capacity.
-    """
-    from openoutsend.leads.lifecycle import GIVE_UP, MISSED, Plan, close_missed, give_up
-    from openoutsend.planner import exhausted_touches, missed_enrolments
-
-    for deal in exhausted_touches(sequence):
-        _fire(deal, give_up, Plan(GIVE_UP))
-        result.gave_up += 1
-
-    for deal in missed_enrolments(sequence):
-        logger.info("%s arrived with every step past its grace — closing", deal.lead.public_id)
-        _fire(deal, close_missed, Plan(MISSED))
-        result.missed += 1
+# ── The sends ─────────────────────────────────────────────────────
 
 
-def _send_cold(result: PassResult, sequence: str | None, reached: set,
-               prompt_line_name: str | None = None, agent_draft: AgentDraft = OFF) -> None:
-    """Send every cold email the guards allow now — openers, later steps, follow-ups.
+def _send_due(result: PassResult, sequence: str | None, reached: set,
+              prompt_line_name: str | None = None, agent_draft: AgentDraft = OFF) -> None:
+    """Send every due step the guards allow now.
 
-    One queue, oldest due first, in the planner's order (``planner.cold_sends_due``).
-    Its bound is the guards themselves: a send rewrites its box's spacing clock, so a
-    box takes itself out of the pool on its way past. The pass therefore ends on its
-    own, usually after one send per box, and **never sleeps**: whether a closed pool is
-    worth waiting out is `send_job.py`'s question, asked with the whole pass in hand.
+    One queue, longest due first, in the planner's order (``planner.sends_due``). Its
+    bound is the guards themselves: a send rewrites its box's spacing clock, so a box
+    takes itself out of the pool on its way past. The pass therefore ends on its own,
+    usually after one send per box, and **never sleeps**: whether a closed pool is worth
+    waiting out is `send_job.py`'s question, asked with the whole pass in hand.
 
-    A failed send **stops the cold sends for this pass** rather than moving to the next.
+    A failed send **stops the sends for this pass** rather than moving to the next.
     The spacing clock is written after a successful send, so a box that just refused
     one is still "free" — retrying inside the same pass would hammer a box that has
     already said no, and would not terminate. **Except when the refusal ended the
@@ -305,38 +319,53 @@ def _send_cold(result: PassResult, sequence: str | None, reached: set,
     the box, its deal is closed and cannot come round again, and stopping on it would
     put the same dead address at the head of every later pass.
 
-    **The draw happens per send, not per pass.** Drawing once outside the loop would
-    make a pass a block of one move, and the log would then carry the pass's shape
-    rather than the move's — the comparison would be between days, not between lines.
-    A name given on the command line pins them all deliberately, which is the one case
-    where a block is what the operator asked for.
+    **The prompt line is drawn per send, not per pass.** Drawing once outside the loop
+    would make a pass a block of one move, and the log would then carry the pass's shape
+    rather than the move's. A name given on the command line pins them all deliberately,
+    which is the one case where a block is what the operator asked for.
 
-    ``agent_draft.active`` hands the openers and later steps to ``_send_agent_draft``
-    instead — a calling agent answering in its own context rather than a second,
-    separately keyed `AI_MODEL` call. Follow-ups go as they always do.
+    ``agent_draft.active`` hands the prompt steps to ``_send_agent_draft`` instead — a
+    calling agent answering in its own context rather than a second, separately keyed
+    `AI_MODEL` call. Email steps go as they always do.
 
     ``reached`` holds the leads this pass has already written to, and gains every one
-    written here: one message per address per pass (``planner.cold_sends_due``).
+    written here: one message per address per pass (``planner.sends_due``).
     """
-    from openoutsend.planner import cold_sends_due
+    from openoutsend.core.prompt_lines import choose
+    from openoutsend.emails.steps.send import Plan
+    from openoutsend.planner import machines, sends_due
 
-    for send, box in cold_sends_due(sequence=sequence, agent_drafted=agent_draft.active,
-                                    reached=reached):
+    machine_of = machines()
+    for deal, box in sends_due(sequence=sequence, agent_drafted=agent_draft.active,
+                               reached=reached):
+        plan = Plan(box, prompt_line=choose(prompt_line_name))
         try:
-            _fire_cold_send(send, box, prompt_line_name)
+            _send(result, machine_of(deal), deal, plan)
         except Exception as exc:
-            if _address_ended(exc, send.deal):
+            if _address_ended(exc, deal):
                 logger.warning("%s to %s refused: the address is undeliverable, suppressed",
-                               send.kind, send.deal.lead.public_id)
+                               deal.due_step.path.name, deal.lead.public_id)
                 result.undeliverable += 1
                 continue
-            logger.exception("%s to %s failed", send.kind, send.deal.lead.public_id)
+            logger.exception("%s to %s failed", deal.due_step.path.name, deal.lead.public_id)
             result.failed += 1
             return
-        _count(result, send.kind)
 
     if agent_draft.active:
         _send_agent_draft(result, agent_draft, sequence, reached)
+
+
+def _send(result: PassResult, machine, deal, plan) -> None:
+    """Fire *deal*'s due send with *plan*, and count it as a thread opened or a later step."""
+    from openoutsend.leads.lifecycle import send_name
+
+    opens = deal.thread_id is None
+    if _fire(machine, deal, send_name(deal.due_step.number), plan=plan) is None:
+        return
+    if opens:
+        result.opened += 1
+    else:
+        result.stepped += 1
 
 
 def _address_ended(exc: Exception, deal) -> bool:
@@ -347,37 +376,13 @@ def _address_ended(exc: Exception, deal) -> bool:
     return isinstance(exc, Refused) and is_suppressed(deal.lead.email)
 
 
-def _fire_cold_send(send, box, prompt_line_name: str | None) -> None:
-    """Fire the deal machine's step for one due send's kind, with the box and line chosen here."""
-    from openoutsend.core.prompt_lines import choose
-    from openoutsend.leads.lifecycle import Plan, follow_up, send_opener, send_step
-    from openoutsend.planner import OPENER, STEP
-
-    step = {OPENER: send_opener, STEP: send_step}.get(send.kind, follow_up)
-    prompt_line = choose(prompt_line_name) if send.kind in (OPENER, STEP) else None
-    _fire(send.deal, step, Plan(send.kind, step=send.step, box=box, prompt_line=prompt_line))
-
-
-def _count(result: PassResult, kind: str) -> None:
-    """Add one send of *kind* to the pass's counts."""
-    from openoutsend.planner import OPENER, STEP
-
-    if kind == OPENER:
-        result.opened += 1
-    elif kind == STEP:
-        result.stepped += 1
-    else:
-        result.followed_up += 1
-
-
 def _send_agent_draft(result: PassResult, agent_draft: AgentDraft, sequence: str | None,
                       reached: set) -> None:
-    """Answer the one deal already handed to the calling agent, or hand one back.
+    """Send the one prompt step already handed to the calling agent, or hand one back.
 
-    The deal is owed either its opener or the next step of its sequence, whichever was
-    due first. Mirrors OpenOutFind's ``_resume_agent_qualification``: the pending deal
-    does not go through selection again on a resume — the whole point of remembering it
-    is that a second invocation answers *this* deal, not whichever one is oldest now.
+    Mirrors OpenOutFind's ``_resume_agent_qualification``: the pending deal does not go
+    through selection again on a resume — the whole point of remembering it is that a
+    second invocation answers *this* deal, not whichever one is oldest now.
 
     **An answer is stored the moment it arrives, sent only once a mailbox is free.**
     A box's spacing clock, daily ceiling and sending window can hold it up for hours —
@@ -385,166 +390,153 @@ def _send_agent_draft(result: PassResult, agent_draft: AgentDraft, sequence: str
     because nothing was free to send it through yet.
     """
     from openoutsend.leads.models import PendingDraft
+    from openoutsend.leads.states import CONVERSING
+    from openoutsend.planner import due_deals
 
-    pending = PendingDraft.objects.select_related("deal__lead", "deal__mailbox")
+    pending = PendingDraft.objects.select_related("deal__lead")
     if sequence is not None:
         pending = pending.filter(deal__sequence=sequence)
     pending = pending.first()
     if pending is None:
         _hand_back_oldest_due(sequence)
         return
+    if pending.deal.state == CONVERSING:
+        return  # a reply's draft: `_answer_drafted_reply` holds it
 
-    deal = pending.deal
-    send = _owed_send(deal)
-    if send is None:
-        # Stopped, replied to or closed since it was handed over: nothing is owed now,
+    deal = next((due for due in due_deals(pending.deal.sequence) if due.pk == pending.deal_id),
+                None)
+    if deal is None:
+        # Stopped, suppressed or closed since it was handed over: nothing is owed now,
         # and an answer to it must not go out.
-        logger.info("%s is no longer owed a send — dropping its draft", deal.lead.public_id)
+        logger.info("%s is no longer owed a send — dropping its draft",
+                    pending.deal.lead.public_id)
         pending.delete()
         return
-    _store_answer(pending, agent_draft, send)
+    _store_answer(pending, agent_draft, deal)
     if not pending.answered:
         # A bare re-run with nothing answered yet — re-ask rather than silently
         # doing nothing, so the caller always gets a `draft_pending` to act on.
-        raise DraftPending(f"{deal.lead.public_id} is still waiting on {send.step.path.name}",
-                           payload=_draft_payload(send))
+        raise DraftPending(f"{deal.lead.public_id} is still waiting on {deal.due_step.path.name}",
+                           payload=_draft_payload(deal))
 
-    if _send_answer(result, pending, send, reached):
+    if _send_answer(result, pending, deal, reached):
         pending.delete()
 
 
 def _hand_back_oldest_due(sequence: str | None) -> None:
-    """Remember the oldest-due opener or step written from a prompt, and raise it to the
-    calling agent. An email step is not one: it is already written, and goes with the pass."""
+    """Remember the longest-due step written from a prompt, and raise it to the calling
+    agent. An email step is not one: it is already written, and goes with the pass."""
     from openoutsend.leads.models import PendingDraft
-    from openoutsend.planner import openers_due, steps_due
+    from openoutsend.planner import due_deals
 
-    due = sorted((send for send in steps_due(sequence=sequence) + openers_due(sequence=sequence)
-                  if not send.step.is_email),
-                 key=lambda send: send.due_at)
-    if not due:
+    deal = next((due for due in due_deals(sequence) if not due.due_step.is_email), None)
+    if deal is None:
         return
-    send = due[0]
-    PendingDraft.objects.create(deal=send.deal)
-    raise DraftPending(f"{send.deal.lead.public_id} needs {send.step.path.name}",
-                       payload=_draft_payload(send))
+    PendingDraft.objects.create(deal=deal)
+    raise DraftPending(f"{deal.lead.public_id} needs {deal.due_step.path.name}",
+                       payload=_draft_payload(deal))
 
 
-def _owed_send(deal):
-    """The opener or step *deal* is owed now, asked again rather than remembered.
-
-    A reply stops the remaining steps (``planner.steps_due``), so a deal written back
-    to is owed none, and is told so before any sequence is loaded: `outsend reply`
-    names no sequence folder, and could not load the others' to ask.
-    """
-    from openoutsend.core.sequences import for_deal
-    from openoutsend.emails.models import Direction
-    from openoutsend.planner import OPENER, DueSend, opening_step, steps_due
-
-    if deal.step is None:
-        opening = opening_step(deal, for_deal(deal))
-        return DueSend(OPENER, deal, *opening) if opening else None
-    if deal.thread_id and deal.thread.turns().filter(direction=Direction.INBOUND).exists():
-        return None
-    return next((send for send in steps_due(sequence=deal.sequence) if send.deal.pk == deal.pk),
-                None)
-
-
-def _store_answer(pending, agent_draft: AgentDraft, send) -> None:
+def _store_answer(pending, agent_draft: AgentDraft, deal) -> None:
     """Keep the answer given on this run, unless one is already kept.
 
-    An opener opens a thread and needs a subject; a later step goes under the thread's.
+    A deal's first email opens a thread and needs a subject; a later step goes under
+    the thread's.
     """
     from openoutsend.errors import OutsendError
-    from openoutsend.planner import OPENER
 
     if not agent_draft.answered or pending.answered:
         return
-    if send.kind == OPENER and not agent_draft.subject:
-        raise OutsendError(f"{send.step.path.name} opens the thread — answer it with "
+    if deal.thread_id is None and not agent_draft.subject:
+        raise OutsendError(f"{deal.due_step.path.name} opens the thread — answer it with "
                            "--subject as well as --body")
     pending.subject = agent_draft.subject or ""
     pending.body = agent_draft.body
     pending.save(update_fields=["subject", "body"])
 
 
-def _send_answer(result: PassResult, pending, send, reached: set) -> bool:
+def _send_answer(result: PassResult, pending, deal, reached: set) -> bool:
     """Send the kept answer if its box is free. True once it is sent; a failed send keeps
     it for the next pass, as a failed `AI_MODEL` send is retried."""
-    from openoutsend.core.sending_window import lead_timezone
-    from openoutsend.leads.lifecycle import Plan, send_opener, send_step
-    from openoutsend.planner import OPENER, STEP, free_for_first_email, free_thread_box
+    from openoutsend.emails.steps.send import Plan
+    from openoutsend.planner import free_box, machines
 
-    deal = pending.deal
-    opener = send.kind == OPENER
-    box = (free_for_first_email(deal.sequence, lead_timezone(deal.lead)) if opener
-           else free_thread_box(deal))
+    box = free_box(deal)
     if box is None or deal.lead_id in reached:
         # Answered, but no box is free right now, or this lead was already written
         # to this pass — the same "nothing to do this pass" every other step reports
         # quietly. The answer stays on `pending`.
         return False
 
+    plan = Plan(box, subject=pending.subject, body=pending.body, prompt=_rendered(deal))
     try:
-        if opener:
-            _fire(deal, send_opener, Plan(OPENER, step=send.step, box=box,
-                                          subject=pending.subject, body=pending.body))
-            result.opened += 1
-        else:
-            _fire(deal, send_step, Plan(STEP, step=send.step, box=box,
-                                        body=pending.body, prompt=_rendered(send)))
-            result.stepped += 1
+        _send(result, machines()(deal), deal, plan)
     except Exception:
-        logger.exception("%s to %s failed", send.kind, deal.lead.public_id)
+        logger.exception("%s to %s failed", deal.due_step.path.name, deal.lead.public_id)
         result.failed += 1
         return False
     reached.add(deal.lead_id)
     return True
 
 
-def _draft_payload(send) -> dict:
-    """What an agent needs to write *send*: the lead's own fields, the same ones
-    `AI_MODEL` sees, the step's file and its rendered prompt, and, for a later step,
-    the thread's subject it goes under."""
-    lead = send.deal.lead
+def _draft_payload(deal) -> dict:
+    """What an agent needs to write *deal*'s due step: the lead's own fields, the same
+    ones `AI_MODEL` sees, the step's file and its rendered prompt, and, for a later
+    step, the thread's subject it goes under."""
+    lead = deal.lead
     return {
         "lead_id": lead.public_id,
         "profile_text": lead.profile_text,
         "full_name": f"{lead.first_name} {lead.last_name}".strip(),
         "title": lead.title,
         "company": lead.company,
-        "step": send.step.path.name,
-        "subject": send.deal.email_subject or "",
-        "prompt": _rendered(send),
+        "step": deal.due_step.path.name,
+        "subject": deal.email_subject or "",
+        "prompt": _rendered(deal),
     }
 
 
-def _rendered(send) -> str:
-    """*send*'s step prompt, rendered for its deal with no prompt line drawn."""
+def _rendered(deal) -> str:
+    """*deal*'s due step, rendered for it with no prompt line drawn."""
     from openoutsend.emails.steps.send import step_fields
 
-    return send.step.render(**step_fields(send.deal, None))
+    return deal.due_step.render(**step_fields(deal, None))
 
 
-def _fire(deal, step, plan) -> None:
-    """Fire the deal machine's *step* on *deal* with *plan*, in the machine's one transaction.
+# ── Firing ────────────────────────────────────────────────────────
+
+
+def _scoped(deals, sequence: str | None):
+    """*deals* in *sequence* alone, or all of them when no sequence is named."""
+    return deals if sequence is None else deals.filter(sequence=sequence)
+
+
+def _try(result: PassResult, doing: str, deal, machine, step: str, **options):
+    """``_fire``, with a failure logged and counted instead of raised. Returns the move."""
+    try:
+        return _fire(machine, deal, step, **options)
+    except Exception:
+        logger.exception("%s %s failed", doing, deal.lead.public_id)
+        result.failed += 1
+        return None
+
+
+def _fire(machine, deal, step: str, *, plan=None, answer=None):
+    """Fire *machine*'s *step* on *deal*, in the machine's one transaction. Returns the move.
 
     The machine locks the deal's state, runs the step and writes the move in one
     transaction, so the mail-log row, the transport call, the deal's fields and its new
     state commit together, after the send: a pass killed before the commit leaves nothing
     half-recorded — no row, the deal where it was, and the step due again on the next
-    pass. A second process firing the same deal waits for this one. A step returning
-    ``None`` stayed put (a reply sent, a lead suppressed while the agent was writing),
-    and its writes are saved just the same. A refusal rolls the transaction back too,
-    so its row and failure event are written again outside it, because the bounce rate
-    counts refusals.
+    pass. A second process firing the same deal waits for this one. ``None`` means the
+    step said "not now". A refusal rolls the transaction back too, so its row and
+    failure event are written again outside it, because the bounce rate counts refusals.
     """
     from openoutsend.emails.sender import Refused
-    from openoutsend.leads.lifecycle import deals
 
     deal.plan = plan
     try:
-        deals.fire(deal.pk, step, entity=deal)
+        return machine.fire(deal.pk, step, entity=deal, answer=answer)
     except Refused as refused:
         refused.record_again()
         raise
@@ -557,16 +549,13 @@ def _what_is_holding(sequence: str | None) -> str:
     nothing. A boolean, or a silent zero, tells them nothing at all — and a pass that
     does nothing looks exactly like a pass with nothing to do.
     """
-    from openoutsend.core.conf import REPLIES_HOLD, replies
     from openoutsend.core.sending_window import lead_timezone, within_sending_window
     from openoutsend.emails.models import Mailbox
-    from openoutsend.planner import emailable_deals, unanswered_replies
+    from openoutsend.planner import conversations_waiting, waiting_to_open
 
-    pool = emailable_deals(sequence)
-    waiting = pool.count()
-    to_answer = unanswered_replies().count()
-    held = " (held for an agent)" if to_answer and replies() == REPLIES_HOLD else ""
-    counts = f"{waiting} waiting to be emailed · {to_answer} reply(ies) to answer{held}"
+    pool = waiting_to_open(sequence)
+    counts = (f"{pool.count()} waiting to be emailed · "
+              f"{len(conversations_waiting())} reply(ies) to answer")
 
     if not Mailbox.objects.exists():
         return f"{counts} · no mailbox connected, so nothing can be sent — run `outsend check`"

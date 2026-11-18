@@ -4,8 +4,9 @@
 The frame (``frame.j2``) is the system prompt around every message: who is writing,
 the product, what we know about the lead. Its one rule is the one every message shares:
 carry something genuine from the past with this person. Every other rule comes with
-each prompt (a step file, the follow-up, the reply), so one frame serves every kind of
-message. ``core.agents.outreach`` puts the history and the prompt after it.
+each prompt (a step file, a sequence's conversation prompt), so one frame serves every
+kind of message. ``core.agents.outreach`` puts the history and a step's prompt after
+it; a conversation's turn reads it ahead of its own prompt (``leads/conversing.py``).
 """
 from __future__ import annotations
 

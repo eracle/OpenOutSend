@@ -5,7 +5,7 @@ import pytest
 from django.apps import apps
 
 from openoutsend.leads.models import Deal
-from openoutsend.tests.factories import DealFactory, LeadFactory
+from openoutsend.tests.factories import LeadFactory
 
 pytestmark = pytest.mark.django_db
 
@@ -14,8 +14,17 @@ by_name = import_module("openoutsend.leads.migrations.0006_deal_sequence_by_name
 OLD_PATH = "/app/openoutreach-hub/openoutreach_pipeline/sequences/relaunch"
 
 
+def _deal(sequence: str, lead=None) -> Deal:
+    """A deal's row as the migration met it: the sequence it records, and no machine yet.
+
+    Not started, because starting a deal reads its sequence's folder, and neither the
+    old path nor `relaunch` is a folder here.
+    """
+    return Deal.objects.create(lead=lead or LeadFactory(), sequence=sequence)
+
+
 def test_a_path_becomes_the_folders_name():
-    deal = DealFactory(sequence=OLD_PATH)
+    deal = _deal(OLD_PATH)
 
     by_name(apps, None)
 
@@ -24,7 +33,7 @@ def test_a_path_becomes_the_folders_name():
 
 
 def test_names_and_cold_are_left_alone():
-    named, cold = DealFactory(sequence="relaunch"), DealFactory(sequence="cold")
+    named, cold = _deal("relaunch"), _deal("cold")
 
     by_name(apps, None)
 
@@ -34,8 +43,8 @@ def test_names_and_cold_are_left_alone():
 
 def test_a_lead_already_holding_the_name_keeps_both_deals_as_they_were():
     lead = LeadFactory()
-    by_path = DealFactory(lead=lead, sequence=OLD_PATH)
-    DealFactory(lead=lead, sequence="relaunch")
+    by_path = _deal(OLD_PATH, lead)
+    _deal("relaunch", lead)
 
     by_name(apps, None)
 

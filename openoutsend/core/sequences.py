@@ -9,14 +9,26 @@ everything the engine reads::
 - ``E<number>`` is the order. Numbers compare as numbers, so ``E10`` follows ``E9``.
 - ``<days>d`` is the gap in business days: ``E0`` counts from the deal's ``start_at``
   (the ingest time when the piped line has none), every later step from the previous
-  step's send. No segment means ``0d``. The planner reads them (``planner.opening_step``,
-  ``planner.steps_due``).
+  step's send. No segment means ``0d``. They are the waits of the deal machine
+  (``leads/lifecycle.py``).
 - ``<name>`` is for the person reading the folder.
 - ``<kind>`` is what the file renders to, and so whether a model is called:
   ``prompt`` is instructions the model writes the email from, ``email`` is the email
   itself, sent as written. An email step that opens a thread starts with a
   ``Subject: …`` line and a blank line; one sent in the thread has none, because it goes
   under the opener's subject.
+
+**A folder may also say how its conversation is held**, in one more file::
+
+    conversation[-<days>d].prompt.j2
+
+After the last step a deal rests in its conversation (``leads/lifecycle.py``), where
+the model answers whoever wrote back. This file is the prompt it answers from, rendered
+with the same fields as a step, and ``<days>d`` is how many business days of silence
+close the conversation. A folder without the file gets the built-in prompt, written for
+cold outreach (``leads/conversing.py``), and the built-in gap
+(``conf.CONVERSATION_CLOSES_AFTER_BUSINESS_DAYS``), which is also the gap of a file
+that names none.
 
 **The body is rendered by Jinja with ``StrictUndefined``.** ``{{ field }}`` is filled in
 before the model reads the prompt or the email goes, and a field the deal does not carry
@@ -59,6 +71,8 @@ EMAIL = "email"
 
 STEP_FILE = re.compile(
     r"^E(?P<number>\d+)(?:-(?P<days>\d+)d)?-(?P<name>.+)\.(?P<kind>prompt|email)\.j2$")
+
+CONVERSATION_FILE = re.compile(r"^conversation(?:-(?P<days>\d+)d)?\.prompt\.j2$")
 
 # A step under the naming before ``<kind>.j2``: refused by name rather than skipped, so a
 # folder that was never renamed fails loudly instead of losing its steps.
@@ -112,10 +126,7 @@ class Step:
         because a step sent with a blank where the reader's name should be is worse
         than a step not sent.
         """
-        try:
-            return _ENV.from_string(self.source).render(**fields).strip()
-        except jinja2.UndefinedError as exc:
-            raise SequenceError(f"{self.path}: {exc.message}") from exc
+        return _render(self.path, self.source, fields)
 
     def written(self, **fields) -> tuple[str, str]:
         """An email step's ``(subject, body)``, rendered; the subject is ``""`` in a thread."""
@@ -134,18 +145,33 @@ class Step:
 
 
 @dataclass(frozen=True)
+class ConversationPrompt:
+    """A folder's own way of holding its conversation: the prompt, and the closing gap."""
+
+    path: Path
+    source: str
+    days: int | None = None
+    """Business days of silence that close the conversation; ``None`` for the built-in gap."""
+
+    def render(self, **fields) -> str:
+        """The prompt with *fields* filled in, under a step's rule for a missing one."""
+        return _render(self.path, self.source, fields)
+
+
+@dataclass(frozen=True)
 class Sequence:
     """The steps of one sequence, in order, under the name a deal records."""
 
     name: str
     steps: tuple[Step, ...]
+    conversation: ConversationPrompt | None = None
 
     @property
     def first(self) -> Step:
         return self.steps[0]
 
     def step(self, number: int) -> Step:
-        """The step numbered *number*. A deal never records one its sequence lacks."""
+        """The step numbered *number*."""
         return self.steps[number]
 
     def after(self, number: int) -> Step | None:
@@ -167,15 +193,20 @@ def load(directory: Path, name: str) -> Sequence:
             raise SequenceError(f"{path}: rename it {path.stem}.prompt.j2 — a step file is "
                                 f"<name>.prompt.j2 (the model writes from it) or "
                                 f"<name>.email.j2 (sent as written)")
+    templates = sorted(directory.glob("*.j2"))
+    conversations = [path for path in templates if CONVERSATION_FILE.match(path.name)]
+    if len(conversations) > 1:
+        raise SequenceError(f"{conversations[1]}: a second conversation prompt")
     steps = sorted(
-        (_load_step(path) for path in directory.glob("*.j2")),
+        (_load_step(path) for path in templates if path not in conversations),
         key=lambda step: step.number,
     )
     if not steps:
         raise SequenceError(f"{directory}: no step files (expected E0-<name>.prompt.j2 "
                             f"or E0-<name>.email.j2)")
     _check_numbering(steps)
-    return Sequence(name=name, steps=tuple(steps))
+    conversation = _load_conversation(conversations[0]) if conversations else None
+    return Sequence(name=name, steps=tuple(steps), conversation=conversation)
 
 
 def cold() -> Sequence:
@@ -211,13 +242,17 @@ def key(folder: str | None) -> str:
 
 
 def for_deal(deal) -> Sequence:
-    """The sequence *deal* is enrolled in, found by its name.
+    """The sequence *deal* is enrolled in, found by its name (``named``)."""
+    return named(deal.sequence)
+
+
+def named(name: str) -> Sequence:
+    """The sequence a deal records as *name*.
 
     The folder this run named with ``--sequence`` first, then the operator's own
     folder of that name (``operator_dir``), so a pass over every sequence finds the
     ones kept there without being told.
     """
-    name = deal.sequence
     if name == COLD:
         return cold()
     folder = _FOLDERS.get(name, operator_dir() / name)
@@ -237,16 +272,9 @@ def _load_step(path: Path) -> Step:
     match = STEP_FILE.match(path.name)
     if match is None:
         raise SequenceError(f"{path}: not a step file name "
-                            f"(expected E<number>[-<days>d]-<name>.prompt.j2 or .email.j2)")
-
-    try:
-        source = path.read_text(encoding="utf-8")
-        _ENV.parse(source)
-    except OSError as exc:
-        raise SequenceError(f"{path}: {exc}") from exc
-    except jinja2.TemplateSyntaxError as exc:
-        raise SequenceError(f"{path}:{exc.lineno}: {exc.message}") from exc
-
+                            f"(expected E<number>[-<days>d]-<name>.prompt.j2 or .email.j2, "
+                            f"or conversation[-<days>d].prompt.j2)")
+    source = _read(path)
     step = Step(
         number=int(match["number"]),
         days=int(match["days"] or 0),
@@ -258,6 +286,34 @@ def _load_step(path: Path) -> Step:
     if step.is_email:
         _check_subject(step)
     return step
+
+
+def _load_conversation(path: Path) -> ConversationPrompt:
+    """The folder's conversation prompt, its body checked like a step's."""
+    days = CONVERSATION_FILE.match(path.name)["days"]
+    if days is not None and not int(days):
+        raise SequenceError(f"{path}: a conversation closes after at least 1d of silence")
+    return ConversationPrompt(path=path, source=_read(path), days=int(days) if days else None)
+
+
+def _read(path: Path) -> str:
+    """A template's source, once it compiles, or a ``SequenceError`` naming the file."""
+    try:
+        source = path.read_text(encoding="utf-8")
+        _ENV.parse(source)
+    except OSError as exc:
+        raise SequenceError(f"{path}: {exc}") from exc
+    except jinja2.TemplateSyntaxError as exc:
+        raise SequenceError(f"{path}:{exc.lineno}: {exc.message}") from exc
+    return source
+
+
+def _render(path: Path, source: str, fields: dict) -> str:
+    """*source* with *fields* filled in; a field it names and lacks is a ``SequenceError``."""
+    try:
+        return _ENV.from_string(source).render(**fields).strip()
+    except jinja2.UndefinedError as exc:
+        raise SequenceError(f"{path}: {exc.message}") from exc
 
 
 def _check_subject(step: Step) -> None:

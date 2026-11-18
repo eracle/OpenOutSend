@@ -9,14 +9,14 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from agentic_fsm import FinalState, InitialState, MachineError, State, States, TransitionError
+from agentic_fsm import FinalState, InitialState, MachineError, State, States, TransitionError, is_check
 from django.utils import timezone
 from pydantic_ai.models.test import TestModel
 
 from openoutsend.emails.models import Message, Thread
 from openoutsend.errors import OutsendError
 from openoutsend.leads.suppression import suppress_email
-from openoutsend.machines import Conversation, MailMachine, Wait, timed, turn
+from openoutsend.machines import Conversation, MailMachine, Turn, Wait, timed, turn
 from openoutsend.tests.emails import maillog
 
 pytestmark = pytest.mark.django_db
@@ -380,3 +380,222 @@ def test_a_wait_needs_a_length(rests):
 def test_a_conversation_needs_a_prompt():
     with pytest.raises(TypeError, match="prompt= must be"):
         Conversation("Talking", prompt="  ", rests=timedelta(days=1))
+
+
+def test_what_a_wait_or_a_conversation_runs_must_be_a_function():
+    with pytest.raises(TypeError, match="then= must be a function"):
+        Wait("Resting", rests=timedelta(days=1), then="close it")
+    with pytest.raises(TypeError, match="effect= must be a function"):
+        Conversation("Talking", prompt="Answer them.", rests=timedelta(days=1), effect="record it")
+    with pytest.raises(TypeError, match="schema= must be a subclass of Turn"):
+        Conversation("Talking", prompt="Answer them.", rests=timedelta(days=1), schema=dict)
+
+
+# ── A wait that records having waited in vain ──
+
+
+def shelving(table, **wait):
+    """A machine whose one wait is its initial state: a parcel shelved a day, then gone."""
+
+    class Parcel(States):
+        shelved = Wait("Shelved a day", rests=timedelta(days=1), initial=True, **wait)
+        gone = FinalState("Gone")
+
+    rows = [(Parcel.shelved, Parcel.gone, timed)]
+    return MailMachine(Parcel, rows, load=table.__getitem__, address=lambda parcel: parcel.email,
+                       name="parcel")
+
+
+def test_a_wait_may_be_the_initial_state(table):
+    parcels = shelving(table)
+
+    move = parcels.start(1)
+
+    assert parcels.initial is parcels.states.shelved
+    assert parcels.states.shelved.is_initial
+    assert (move.to_state, parcels.state_of(1)) == ("shelved", parcels.states.shelved)
+    with later(hours=23):
+        assert parcels.fire(1, "shelved_ran_out") is None
+    with later(hours=25):
+        assert parcels.fire(1, "shelved_ran_out").to_state == "gone"
+
+
+def test_a_machine_still_has_one_initial_state(table):
+    class Twice(States):
+        new = InitialState("New")
+        held = Wait("Held a day", rests=timedelta(days=1), initial=True)
+        done = FinalState("Done")
+
+    def hold(entity):
+        return Twice.held
+
+    with pytest.raises(MachineError, match="exactly one InitialState"):
+        MailMachine(Twice, [(Twice.new, Twice.held, hold), (Twice.held, Twice.done, timed)],
+                    load=table.__getitem__, address=lambda entity: entity.email)
+
+
+def test_then_runs_with_the_move_when_the_wait_runs_out_and_not_before(table):
+    forgotten = []
+    parcels = shelving(table, then=forgotten.append)
+    parcels.start(1)
+
+    with later(hours=23):
+        assert parcels.fire(1, "shelved_ran_out") is None
+        assert parcels.progress_all() == []
+    assert forgotten == []
+
+    with later(hours=25):
+        move = parcels.fire(1, "shelved_ran_out")
+
+    assert forgotten == [table["1"]]
+    assert (move.step, move.to_state, move.decided_by) == ("shelved_ran_out", "gone", "code")
+
+
+def test_a_then_that_raises_writes_no_move(table):
+    def fail(parcel):
+        raise OSError("disk full")
+
+    parcels = shelving(table, then=fail)
+    parcels.start(1)
+
+    with later(hours=25), pytest.raises(OSError, match="disk full"):
+        parcels.fire(1, "shelved_ran_out")
+
+    assert parcels.state_of(1) is parcels.states.shelved
+    assert len(parcels.history(1)) == 1
+
+
+def test_a_wait_with_a_then_writes_so_its_step_is_no_check(table):
+    """`due()` runs a check to ask whether it would move; a step that writes it only lists."""
+    forgotten = []
+    reads, writes = shelving(table), shelving(table, then=forgotten.append)
+    reads.start(1)
+
+    assert is_check(reads.steps["shelved_ran_out"])
+    assert not is_check(writes.steps["shelved_ran_out"])
+    assert reads.due() == []
+    assert writes.due() == ["1"]
+    assert forgotten == []
+
+
+# ── A conversation whose turn says more, and does more ──
+
+
+class Verdict(Turn):
+    country: str
+
+
+def talking(table, box, **conversation):
+    """A machine whose one conversation opens with a question; returns it."""
+
+    class Talk(States):
+        new = InitialState("New")
+        talking = Conversation("Talking it over", prompt=HOW_TO_ANSWER, rests=timedelta(days=5),
+                               **conversation)
+        accepted = FinalState("Their answer makes the request workable")
+        dropped = FinalState("They declined, or never answered")
+
+    def ask(request):
+        machine.send(request, "One question", "Which country do you sell in?", mailbox=box)
+        return Talk.talking
+
+    # fmt: off
+    rows = [
+        (Talk.new,     Talk.talking,  ask),
+        (Talk.talking, Talk.talking,  turn),
+        (Talk.talking, Talk.accepted, turn),
+        (Talk.talking, Talk.dropped,  timed),
+    ]
+    # fmt: on
+    machine = MailMachine(Talk, rows, load=table.__getitem__, address=lambda request: request.email,
+                          name="talk")
+    machine.start(1)
+    machine.fire(1, "ask")
+    return machine
+
+
+def test_a_turns_own_field_is_logged_with_its_move(table, box):
+    talks = talking(table, box, schema=Verdict)
+    they_wrote(Thread.objects.get(machine="talk", entity="1"))
+
+    with model_saying(to="accepted", country="Italy"):
+        (move,) = talks.progress(1)
+
+    assert (move.step, move.to_state) == ("talking_turn", "accepted")
+    assert move.decision == {"to": "accepted", "message": None, "country": "Italy"}
+
+
+def test_a_turns_own_field_is_validated(table, box):
+    talks = talking(table, box, schema=Verdict)
+    they_wrote(Thread.objects.get(machine="talk", entity="1"))
+
+    with pytest.raises(TransitionError, match="country"):
+        talks.fire(1, "talking_turn", answer={"to": "accepted"})
+    with pytest.raises(TransitionError, match="message is required"):
+        talks.fire(1, "talking_turn", answer={"to": "talking", "country": "Italy"})
+
+    assert talks.state_of(1) is talks.states.talking
+    assert "country" in talks.brief(1, "talking_turn").schema["required"]
+
+
+def test_a_sessions_turn_carries_the_field_too(table, box):
+    talks = talking(table, box, schema=Verdict)
+    they_wrote(Thread.objects.get(machine="talk", entity="1"))
+
+    move = talks.fire(1, "talking_turn", answer={"to": "talking", "message": "Only Italy?", "country": "Italy"})
+
+    assert move.decision == {"to": "talking", "message": "Only Italy?", "country": "Italy"}
+    assert move.decided_by == "agent"
+
+
+def test_the_effect_runs_for_a_turn_that_stays_after_its_message_is_sent(table, box):
+    seen = []
+
+    def record(request, decision):
+        sent = Message.objects.filter(direction="out").order_by("pk").last()
+        seen.append((request, decision.to.value, decision.message, sent.body_text))
+
+    talks = talking(table, box, effect=record)
+    they_wrote(Thread.objects.get(machine="talk", entity="1"))
+
+    with model_saying(to="talking", message="Which regions?"):
+        (move,) = talks.progress(1)
+
+    assert seen == [(table["1"], "talking", "Which regions?", "Which regions?")]
+    assert (move.from_state, move.to_state) == ("talking", "talking")
+
+
+def test_the_effect_runs_for_a_turn_that_leaves_and_nothing_is_sent(table, box):
+    seen = []
+    talks = talking(table, box, schema=Verdict,
+                    effect=lambda request, decision: seen.append((request, decision.to.value, decision.country)))
+    thread = Thread.objects.get(machine="talk", entity="1")
+    they_wrote(thread)
+
+    move = talks.fire(1, "talking_turn", answer={"to": "accepted", "country": "Italy"})
+
+    assert seen == [(table["1"], "accepted", "Italy")]
+    assert move.to_state == "accepted"
+    assert thread.messages.filter(direction="out").count() == 1
+
+
+def test_an_effect_that_raises_writes_no_move(table, box):
+    def fail(request, decision):
+        raise OSError("disk full")
+
+    talks = talking(table, box, effect=fail)
+    they_wrote(Thread.objects.get(machine="talk", entity="1"))
+
+    with pytest.raises(OSError, match="disk full"):
+        talks.fire(1, "talking_turn", answer={"to": "accepted"})
+
+    assert talks.state_of(1) is talks.states.talking
+    assert len(talks.history(1)) == 2
+
+
+def test_no_effect_runs_while_nothing_is_incoming(table, box):
+    seen = []
+    talks = talking(table, box, effect=lambda request, decision: seen.append(decision))
+
+    assert talks.fire(1, "talking_turn") is None
+    assert seen == []

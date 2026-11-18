@@ -16,7 +16,7 @@ The two are independent flags (``OUTSEND_ENFORCE_WORK_HOURS``,
 Saturday/Sunday sends but still wants the 08:00–20:00 line held turns off only
 the second — a single combined switch could not express that. The weekend flag is
 read in ``business_time.is_business_day``, so turning it off also makes the waits
-between steps and follow-ups count Saturday and Sunday.
+between steps count Saturday and Sunday.
 
 The operator's zone is derived from their country: ``pytz.country_timezones`` turns
 the one onboarding answer into a zone, and countries spanning several zones (US, BR,

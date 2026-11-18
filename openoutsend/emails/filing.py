@@ -9,7 +9,7 @@ does not, and is not asked to guess. ``outsend file`` is how it is told.
 Filing moves the message, and whatever its own thread already holds, into the
 thread of the lead's newest deal, then reads it again. In a thread we sent into it
 is a ``human_reply`` by the ordinary rule (``classify._joins_a_thread_we_started``),
-so ``outsend reply`` hands it over and a later re-classification keeps it there:
+so the deal's conversation answers it and a later re-classification keeps it there:
 nothing is stored about the filing beyond where the message now sits.
 """
 from __future__ import annotations
