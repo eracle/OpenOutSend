@@ -214,17 +214,7 @@ def _reply_subject(opener_subject: str) -> str:
 
 
 def thread_ids(deal) -> list[str]:
-    """Every Message-ID in this conversation, oldest first, bracketed for a header.
+    """Every Message-ID in this conversation, oldest first (``threads.message_ids``)."""
+    from openoutsend.emails.threads import message_ids
 
-    The whole chain, because that is what ``References`` is for: a client that
-    threads on the root and one that threads on the newest message both find their
-    anchor in it, and the last entry is the parent ``In-Reply-To`` names.
-    """
-    if not deal.thread_id:
-        return []
-    return [
-        f"<{message_id}>"
-        for message_id in deal.thread.messages.order_by("sent_at", "pk")
-        .values_list("message_id", flat=True)
-        if not message_id.startswith("sha256:")
-    ]
+    return message_ids(deal.thread) if deal.thread_id else []

@@ -61,12 +61,22 @@ class Thread(models.Model):
 
     A thread belongs to a mailbox, so a message quoting an id we sent from a
     *different* box is never folded into the wrong conversation.
+
+    ``machine`` and ``entity`` name whose conversation it is: an entity of an
+    ``agentic_fsm`` machine, as that library's tables name one (``machines/``). Both
+    are empty on a thread nobody opened through a machine. Nothing here knows what
+    the entity is, a deal or anything else.
     """
 
     mailbox = models.ForeignKey(
         "outsend_emails.Mailbox", on_delete=models.CASCADE, related_name="threads",
     )
+    machine = models.CharField(max_length=100, blank=True, default="")
+    entity = models.CharField(max_length=255, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["machine", "entity"], name="outsend_thread_entity")]
 
     def __str__(self):
         return f"thread {self.pk} on {self.mailbox_id}"

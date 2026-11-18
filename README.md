@@ -281,6 +281,7 @@ came across with the transport now assert against this side's own models.
 | `openoutsend/docs/` | how the agent and its templating work |
 | `openoutsend/sequences/` | the built-in cold sequence, one prompt file per step |
 | `openoutsend/leads/lifecycle.py` | the deal machine ([AgenticFSM](https://github.com/eracle/AgenticFSM)): every way a deal's state may change, in one list; the state and a log of each move live in the library's `agentic_fsm_*` tables. `agfsm --machine openoutsend.leads.lifecycle:deals show` prints it |
+| `openoutsend/machines/` | two kinds of state for any AgenticFSM machine whose entities have an address, a deal or not. A `Wait` rests for a time counted from the entity's newest move in the library's log, and its `timed` row is refused until then. A `Conversation` rests across the turns of an email thread: with a message waiting, the model answers in the thread (a logged move from the state to itself) or leaves by one of the state's rows, and a quiet one leaves by time. `MailMachine` builds both steps and keeps each thread against its machine and entity. The docstring of `machines/__init__.py` has an example |
 | `openoutsend/planner.py` | what is due, from which box, and when the next send can go |
 | `openoutsend/settings.py` | this repo's own Django settings — one host of the apps, not the only one |
 | `openoutsend/defaults.py` | what any host must splat: `APPS`, `state_dir()`, `app_settings()` |

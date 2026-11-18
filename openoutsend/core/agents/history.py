@@ -36,8 +36,14 @@ def history(lead, now) -> str:
     """
     from openoutsend.core.sending_window import lead_timezone
 
-    zone = lead_timezone(lead)
-    turns = _turns_with(lead)
+    return transcript(_turns_with(lead), now, lead_timezone(lead))
+
+
+def transcript(turns: list, now, zone=None) -> str:
+    """*turns*, oldest first, as the model reads them, with the silences between.
+
+    Business days are counted in *zone* (UTC when left out).
+    """
     blocks: list[str] = []
     for index, turn in enumerate(turns):
         blocks.extend(_blocks_of(turn))

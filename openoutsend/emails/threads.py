@@ -67,6 +67,21 @@ def join(message: Message, thread: Thread) -> None:
     message.save(update_fields=["thread"])
 
 
+def message_ids(thread: Thread) -> list[str]:
+    """Every Message-ID in *thread*, oldest first, bracketed for a header.
+
+    The whole chain, because that is what ``References`` is for: a client that
+    threads on the root and one that threads on the newest message both find their
+    anchor in it, and the last entry is the parent ``In-Reply-To`` names.
+    """
+    return [
+        f"<{message_id}>"
+        for message_id in thread.messages.order_by("sent_at", "pk")
+        .values_list("message_id", flat=True)
+        if not message_id.startswith("sha256:")
+    ]
+
+
 def _relatives(message: Message):
     """Messages in the same box that this one answers, or that answer it.
 
@@ -98,11 +113,18 @@ def _merge(source_id: int, target: Thread) -> None:
     """Move everything on thread *source_id* onto *target*, then drop the empty thread.
 
     Deals move first: a thread is deleted only once nothing points at it, so a
-    merge can never null a deal's conversation on its way past.
+    merge can never null a deal's conversation on its way past. The entity a thread
+    is kept against moves with it when the keeper has none, so a reply still finds
+    whoever is waiting for it.
     """
     from openoutsend.leads.models import Deal
 
     Deal.objects.filter(thread_id=source_id).update(thread=target)
+    if not target.machine:
+        source = Thread.objects.get(pk=source_id)
+        if source.machine:
+            target.machine, target.entity = source.machine, source.entity
+            target.save(update_fields=["machine", "entity"])
     moved = Message.objects.filter(thread_id=source_id).update(thread=target)
     Thread.objects.filter(pk=source_id).delete()
     logger.info("threads: merged %d into %d (%d message(s))", source_id, target.pk, moved)
