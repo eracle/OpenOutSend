@@ -51,8 +51,5 @@ recorded on the message** (`prompt_line_id`, plus a hash of the text so an edite
 not silently pooled with its older self), which is what makes comparing them later a
 question of reading the log rather than of having planned an experiment.
 
-There is no scoring yet, and none is faked. Randomly chosen and honestly recorded is the
-whole of it — see
-[`roadmap/OpenOutSend/p1-e2-sender-message-generation.md`](https://github.com/eracle/openoutreach-docs/blob/main/roadmap/OpenOutSend/p1-e2-sender-message-generation.md)
-(in `openoutreach-docs`, which carries this repo's roadmap) for the learner that reads
-this log once there is enough of it.
+There is no scoring, and none is faked. Randomly chosen and honestly recorded is the
+whole of it: the log is there for whoever has sent enough to compare the lines on it.
