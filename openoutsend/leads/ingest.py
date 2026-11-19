@@ -44,7 +44,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from openoutsend.core.sequences import named
-from openoutsend.leads.lifecycle import END_SUPPRESSED, machine_for
+from openoutsend.leads.lifecycle import machine_for
 from openoutsend.leads.models import Deal, Lead, Outcome
 from openoutsend.leads.states import COMPLETED
 from openoutsend.leads.suppression import is_suppressed, normalize
@@ -268,7 +268,7 @@ def _upsert_deal(lead: Lead, sequence: str, machine, record: dict, suppressed: b
     if (suppressed or deal.stop) and deal.state != COMPLETED:
         if suppressed:
             deal.outcome = Outcome.UNSUBSCRIBED
-        machine.fire(deal.pk, END_SUPPRESSED, entity=deal)
+        machine.fire(deal.pk, entity=deal)
     return deal
 
 

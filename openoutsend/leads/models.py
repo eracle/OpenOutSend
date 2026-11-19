@@ -99,11 +99,11 @@ class Outcome(models.TextChoices):
     useful here, to the operator and to the learner over the send log, and nowhere
     else.
 
-    **The last four are not the agent's**, which is why they are listed apart: the
-    agent may choose any of the first seven, and these four are written by the code
+    **The last five are not the agent's**, which is why they are listed apart: the
+    agent may choose any of the first seven, and these five are written by the code
     that learns the fact. They are outcomes all the same — a deal that ended because
     somebody asked to stop ended for a reason, and the reader of a funnel should not
-    have to know that four of the eleven are kept in a different column.
+    have to know that five of the twelve are kept in a different column.
     """
 
     CONVERTED = "converted"
@@ -130,6 +130,9 @@ class Outcome(models.TextChoices):
     # The producer piped the line with `stop`: whatever the sequence was for has
     # happened by other means (a payment), and only the producer knows what.
     STOPPED = "stopped"
+    # Every step went and the install holds no conversations (`core/conf.conversations`):
+    # the sequence was a broadcast, and nobody was waited on.
+    SENT = "sent"
 
 
 def _current_state():

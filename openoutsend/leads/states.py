@@ -7,7 +7,8 @@ folder, and every one has the same shape:
 
     awaiting_E<k>   waiting for step k's day            (a wait)
     sending_E<k>    step k is due, waiting for a box    (the send guards)
-    conversing      every step has gone                 (a conversation over the thread)
+    conversing      every step has gone                 (a conversation over the thread,
+                                                         in an install that holds them)
     completed       over, with `Deal.outcome` saying why
 
 **The state says where the deal is; the outcome says why it ended.** `Outcome` stays a

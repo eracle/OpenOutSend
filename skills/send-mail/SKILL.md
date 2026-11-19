@@ -73,8 +73,8 @@ outsend send --sequence DIR    # the same, narrowed to the sequence in DIR
 ```
 
 **A bare pass sends every sequence the install holds**, the built-in cold one among them, in one
-queue, at most one message per address. `--sequence DIR` narrows it to that folder. Replies are
-answered in any pass, whatever sequence the thread began in. `examples/sequences/after-a-demo/` in
+queue, at most one message per address. `--sequence DIR` narrows it to that folder. With
+`OUTSEND_CONVERSATIONS=on`, replies are answered in any pass, whatever sequence the thread began in. `examples/sequences/after-a-demo/` in
 the repo is a whole sequence to copy.
 
 A pass, in order: read the mailbox (an opt-out overnight suppresses someone before anything is
@@ -91,7 +91,8 @@ would report `send 5` as falling short at three of five — it is the same endin
 inverted, so prefer `all` to typing a count that goes stale as you type it.
 
 **Every step of a sequence goes on its day, whether or not the lead wrote back.** After the last one
-the deal rests in its conversation, where a reply is answered, one that arrived during the steps
+the deal is over, outcome `sent`, unless the install holds conversations (`OUTSEND_CONVERSATIONS=on`):
+then it rests in its conversation, where a reply is answered, one that arrived during the steps
 included. Five working days of silence close it as `unresponsive` (Monday–Friday, or every day with
 `OUTSEND_ENFORCE_WEEKEND_PAUSE=off`); a folder's own `conversation-<days>d.prompt.j2` sets another
 gap and the prompt replies are answered from. Nothing nudges between steps: a second touch is a
@@ -103,8 +104,7 @@ If you (the calling agent) are already reasoning about this lead in the conversa
 `OUTSEND_LLM_API_KEY` is a second, redundant LLM bill for emails you can write yourself. Add
 `--agent-draft` and the pass stops at the deal whose opener or next sequence step has been due
 longest, instead of calling `AI_MODEL` — and in this mode `check`/`send` never require
-`OUTSEND_AI_MODEL`/`OUTSEND_LLM_API_KEY` at all. Follow-ups still go to the model, so pair it with
-`OUTSEND_FOLLOW_UPS=off` when none is configured:
+`OUTSEND_AI_MODEL`/`OUTSEND_LLM_API_KEY` at all:
 
 ```bash
 outsend --json send --agent-draft
@@ -130,11 +130,13 @@ or the sending window is holding every box right now; a later bare `outsend send
 re-supply the same text. A deal stopped or suppressed while its draft waited is dropped, not written
 to. No count yet — `--agent-draft` is one pass at a time, like a bare `outsend send`.
 
-**A reply comes before any step.** When a lead in their conversation has written back, the
+**A reply comes before any step**, in an install that holds conversations
+(`OUTSEND_CONVERSATIONS=on`; without it a sequence ends with its last step and a reply is only
+stored). When a lead in their conversation has written back, the
 `draft_pending` is theirs, with `"step": "reply"`, their line's own fields as `fields`, and the whole
 thread followed by how to answer it as `prompt`. Answer with `--body` alone; it goes in their thread
 at once, exempt from the send clocks. Ending the conversation is not an answer this takes — tell the
-operator, who ends it with `agfsm fire deal-<sequence>:<id> conversing_turn --answer '{"to":
+operator, who ends it with `agfsm fire deal-<sequence>:<id> --answer '{"to":
 "completed", "outcome": "…"}'`.
 
 **Don't pass `--agent-draft` unless you intend to answer every `draft_pending` it raises** — a bare

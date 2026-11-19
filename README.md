@@ -113,7 +113,7 @@ Don't pass `--agent-draft` unless you intend to answer every `draft_pending` it 
 with `step: "reply"`, the line they were piped with as `fields`, and the whole thread followed by how
 to answer it as `prompt`. Answer with `--body` alone: it goes in their thread at once, whatever the
 send clocks say, and is logged as a turn decided by `agent`. Ending the conversation is not an answer
-`--agent-draft` takes: `agfsm fire deal-<sequence>:<id> conversing_turn --answer '{"to": "completed",
+`--agent-draft` takes: `agfsm fire deal-<sequence>:<id> --answer '{"to": "completed",
 "outcome": "not_interested"}'` does that for one deal.
 **`outsend file --message ID --lead ID` places a reply the headers could not**: an answer to mail this
 install did not send names nothing the store holds and is read as `unrelated`. Whoever sent that mail
@@ -135,9 +135,15 @@ a copy of the `cold/` folder at `~/.openoutsend/sequences/cold/` replaces it who
 
 **A sequence is a machine, and a deal's state is where it is in it.** Each step is two states: the
 deal waits for the step's day (`awaiting_E<k>`), then for a box the guards say is free
-(`sending_E<k>`). After the last step it rests in its conversation (`conversing`), and then it is
-`completed`, with an outcome saying why. `agfsm --machine openoutsend.leads.lifecycle:cold show`
-prints the built-in sequence's graph, and any folder under `~/.openoutsend/sequences/` by its name.
+(`sending_E<k>`). Each state has one step, which first ends a deal that must stop and then does the
+state's own work. After the last send the deal is `completed`, with an outcome saying why: `sent`
+when nothing more was owed. `agfsm --machine openoutsend.leads.lifecycle:cold show` prints the
+built-in sequence's graph, and any folder under `~/.openoutsend/sequences/` by its name.
+
+**A conversation after the last step is something an install turns on**, with
+`OUTSEND_CONVERSATIONS=on`. The deal then rests in `conversing` after its last send, in place of
+ending there. Without it a sequence is a broadcast: a reply is stored and read by a person, and no
+model writes to anyone unattended.
 
 **A reply never stops a step, and is answered in the conversation.** A sequence's steps are written
 for a list, so each goes on its day whether or not the lead wrote back. Once the last one has gone,
@@ -199,7 +205,8 @@ outsend send --sequence after-a-demo                    # or in this one alone
 - **A folder can say how its conversation is held**, in one more file,
   `conversation[-<days>d].prompt.j2`: the prompt the model answers replies from after the last step,
   rendered like a step, and the working days of silence that close the conversation. Without it the
-  built-in prompt, written for cold outreach, and five days.
+  built-in prompt, written for cold outreach, and five days. It is read only by an install that
+  holds conversations (`OUTSEND_CONVERSATIONS=on`).
 - **A step removed or renumbered while deals rest on it** leaves them in a state the folder no longer
   has. The pass names each such deal and stops, rather than guess where it belongs.
 - **Every send records** its sequence, its step, the step file's path, the prompt as rendered and,
@@ -293,9 +300,9 @@ came across with the transport now assert against this side's own models.
 | `openoutsend/core/` | app `outsend_core` — the outreach agent, its templates, the sending window, and the stored site configuration |
 | `openoutsend/docs/` | how the agent and its templating work |
 | `openoutsend/sequences/` | the built-in cold sequence, one prompt file per step |
-| `openoutsend/leads/lifecycle.py` | the deal machine ([AgenticFSM](https://github.com/eracle/AgenticFSM)): a sequence folder read as a machine, one per folder, with a wait and a send per step, then the conversation; the state and a log of each move live in the library's `agentic_fsm_*` tables under `deal-<sequence>`. `agfsm --machine openoutsend.leads.lifecycle:cold show` prints one |
+| `openoutsend/leads/lifecycle.py` | the deal machine ([AgenticFSM](https://github.com/eracle/AgenticFSM)): a sequence folder read as a machine, one per folder, with a wait and a send per step, then the conversation when the install holds them; the state and a log of each move live in the library's `agentic_fsm_*` tables under `deal-<sequence>`. `agfsm --machine openoutsend.leads.lifecycle:cold show` prints one |
 | `openoutsend/leads/conversing.py` | a deal's conversation: the prompt the model answers from, and what a turn records |
-| `openoutsend/machines/` | two kinds of state for any AgenticFSM machine whose entities have an address, a deal or not. A `Wait` rests for a time counted from the entity's newest move in the library's log, and its `timed` row is refused until then. A `Conversation` rests across the turns of an email thread: with a message waiting, the model answers in the thread (a logged move from the state to itself) or leaves by one of the state's rows, and a quiet one leaves by time. `MailMachine` builds both steps and keeps each thread against its machine and entity. The docstring of `machines/__init__.py` has an example |
+| `openoutsend/machines/` | two steps for any AgenticFSM machine whose entities have an address, a deal or not, given to a state (`State(step=)`) or handed over to by a state's function. A `Wait` says "not now" for a time counted from the entity's newest move in the library's log, then moves it on. A `Conversation` holds an email thread: with a message waiting, the model answers in the thread (a logged move from the state to itself) or moves the entity along one of the state's edges; while it is quiet, each of its `follow_ups` is sent on its day, written text or left to the model, as one logged move; after the last, silence moves the entity on. `MailMachine` runs both and keeps each thread against its machine and entity. `openoutsend.setup()` starts Django for a program that calls any of this in its own process. The docstring of `machines/__init__.py` has an example |
 | `openoutsend/planner.py` | the send guards: which box may carry a due send, and when the next can go |
 | `openoutsend/settings.py` | this repo's own Django settings — one host of the apps, not the only one |
 | `openoutsend/defaults.py` | what any host must splat: `APPS`, `state_dir()`, `app_settings()` |
@@ -333,6 +340,7 @@ The environment is the operator seam — the only way in a timer has:
 | `OUTSEND_RESEND_API_KEY` | a resend install's **full-access** key, in place of `OUTSEND_MAILBOX_PASSWORD` |
 | `OUTSEND_DAILY_CAP` | a resend install's first contacts per day; 50 by default |
 | `OUTSEND_REPLY_TO` | a resend install's reply address, on a domain whose MX is Resend Inbound; unset, replies are not read |
+| `OUTSEND_CONVERSATIONS` | `on` ends every sequence in a conversation, where the model answers whoever wrote back; off by default, and a sequence then ends with its last step |
 | `OUTSEND_HOME` / `OUTSEND_DB` | where the store lives |
 | `OUTSEND_DATABASE_URL` | `postgres://user:pass@host:5432/name` puts the store in Postgres instead of the SQLite file; install `openoutsend[postgres]` |
 

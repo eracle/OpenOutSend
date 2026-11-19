@@ -80,6 +80,28 @@ def answer(message: Message, body: str, *, prompt: str = "", unsubscribe_url: st
     )
 
 
+def follow_up(machine: str, entity: str, to_address: str, body: str, *, prompt: str = "",
+              unsubscribe_url: str = "") -> Message:
+    """Send *body* to *to_address* in the newest thread kept against *entity*, from its box.
+
+    A follow-up goes under a thread that exists: whoever puts an entity in a
+    conversation opens one first (`open_thread`).
+    """
+    from openoutsend.emails.threads import message_ids
+    from openoutsend.errors import OutsendError
+
+    thread = threads_of(machine, entity).select_related("mailbox").last()
+    if thread is None:
+        raise OutsendError(f"{machine}:{entity} has no thread to follow up in")
+    chain = message_ids(thread)
+    return _send(
+        thread.mailbox, to_address, _reply_subject(thread), body,
+        thread=thread, prompt=prompt, unsubscribe_url=unsubscribe_url,
+        in_reply_to=chain[-1] if chain else None,
+        references=" ".join(chain) or None,
+    )
+
+
 def _send(mailbox, to_address, subject, body, **options) -> Message:
     from openoutsend.core.operator import get_active_user
     from openoutsend.emails.sender import operator_bcc, send_email

@@ -31,8 +31,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import sys
+
+from openoutsend import setup
 
 USAGE = """outsend [--sequence DIR]         read JSON Lines on stdin, enrol them, exit
 outsend send [N|all] [--sequence DIR] [--prompt-line ID]
@@ -65,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     """Entry point for the `outsend` console script. Returns the exit code."""
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     _configure_logging(args.debug)
-    _boot()
+    setup()
 
     from openoutsend.errors import DraftPending, OutsendError
 
@@ -157,25 +158,6 @@ def _configure_logging(debug: bool) -> None:
         level=logging.DEBUG if debug else logging.INFO,
         format="%(message)s",
     )
-
-
-def _boot() -> None:
-    """Start Django and bring the store up to date.
-
-    Migrations run on every invocation and are a no-op once applied, so a fresh
-    install is an ingest that works rather than a traceback about a missing table.
-    Their narration is pointed at stderr for the same reason everything else is; a
-    migration that *fails* still raises, because that is a broken install and not an
-    answer.
-    """
-    import django
-
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "openoutsend.settings")
-    django.setup()
-
-    from django.core.management import call_command
-
-    call_command("migrate", verbosity=0, stdout=sys.stderr)
 
 
 # ── The pipe ──────────────────────────────────────────────────────

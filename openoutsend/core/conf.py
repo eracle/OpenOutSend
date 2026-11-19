@@ -131,6 +131,28 @@ SEND_INTERVAL_JITTER_MAX_SECONDS = 90
 CONVERSATION_CLOSES_AFTER_BUSINESS_DAYS = 5
 
 # ----------------------------------------------------------------------
+# Conversations (``OUTSEND_CONVERSATIONS``) — whether a sequence ends in one.
+#
+# **Off unless turned on.** With it on, a deal rests in `conversing` after its last
+# step, where the model answers whoever wrote back (leads/lifecycle.py). With it off
+# the sequence is a broadcast: the last step ends the deal `sent`, and a reply is
+# stored for a person to read. A model writing to people unattended is something an
+# install asks for, never something it gets by upgrading.
+#
+# **It shapes the machine**, so it is the install's and not a run's: a deal resting in
+# `conversing` has no state to be in once the flag is turned off, and is named by the
+# next pass (`planner._state_of`) until it is moved by hand or the flag comes back.
+# ----------------------------------------------------------------------
+
+
+def conversations() -> bool:
+    """Whether this install holds a conversation after a sequence's last step
+    (``OUTSEND_CONVERSATIONS``, default off)."""
+    from openoutsend.defaults import env_flag
+
+    return env_flag("OUTSEND_CONVERSATIONS", default=False)
+
+# ----------------------------------------------------------------------
 # Grace (leads/lifecycle.opening_step) — how late a deal's first step may still go.
 #
 # A lead piped in with an old `start_at` (a request from last month, exported today)

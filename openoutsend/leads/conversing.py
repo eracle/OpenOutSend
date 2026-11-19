@@ -1,7 +1,8 @@
 """A deal's conversation: what the model answers from, and what a turn records.
 
-Once every step of a sequence has gone, its deal rests in `conversing`
-(`leads/lifecycle.py`), a conversation over its thread (`machines/`). The model reads
+In an install that holds conversations (`core/conf.conversations`), a deal whose every
+step has gone rests in `conversing` (`leads/lifecycle.py`), where a `Conversation`
+(`machines/`) holds its thread. The model reads
 everything that passed and takes one turn: it answers and the deal stays, or it ends
 the conversation and says why.
 

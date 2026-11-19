@@ -65,7 +65,7 @@ def test_a_record_becomes_a_lead_and_a_deal():
     assert lead.profile_text == "cto at acme, milan, 50 employees"
     deal = Deal.objects.get(lead=lead)
     assert deal.state == awaiting(0)
-    assert [(m.step, m.to_state) for m in machine_of(deal).history(deal.pk)] == [(None, "awaiting_E0")]
+    assert [(m.from_state, m.to_state) for m in machine_of(deal).history(deal.pk)] == [(None, "awaiting_E0")]
     assert deal.reason.startswith("runs the platform team")
     assert deal.qualified_at.isoformat() == "2026-08-20T09:00:00+00:00"
 
@@ -258,8 +258,8 @@ def test_a_line_arriving_with_stop_ends_its_deal_stopped():
     deal = Deal.objects.get()
     assert (result.stored, result.suppressed) == (1, 0)
     assert (deal.state, deal.outcome) == (COMPLETED, Outcome.STOPPED)
-    assert [(m.step, m.to_state) for m in machine_of(deal).history(deal.pk)] == \
-        [(None, "awaiting_E0"), ("end_suppressed", "completed")]
+    assert [(m.from_state, m.to_state) for m in machine_of(deal).history(deal.pk)] == \
+        [(None, "awaiting_E0"), ("awaiting_E0", "completed")]
 
 
 @pytest.mark.parametrize("state", [awaiting(0), sending(0), CONVERSING])
@@ -272,7 +272,7 @@ def test_a_re_ingest_with_stop_ends_an_open_deal_wherever_it_is(state):
     deal = Deal.objects.get()
     move = machine_of(deal).history(deal.pk)[-1]
     assert (deal.state, deal.outcome) == (COMPLETED, Outcome.STOPPED)
-    assert (move.step, move.from_state, move.to_state) == ("end_suppressed", state, "completed")
+    assert (move.decided_by, move.from_state, move.to_state) == ("code", state, "completed")
 
 
 def test_stop_ends_the_deal_of_the_sequence_it_was_piped_into_and_no_other(relaunch):
@@ -369,8 +369,8 @@ def test_a_suppressed_address_arrives_unsendable():
     assert (result.stored, result.suppressed) == (1, 1)
     deal = Deal.objects.get()
     assert (deal.state, deal.outcome) == (COMPLETED, Outcome.UNSUBSCRIBED)
-    assert [(m.step, m.to_state) for m in machine_of(deal).history(deal.pk)] == \
-        [(None, "awaiting_E0"), ("end_suppressed", "completed")]
+    assert [(m.from_state, m.to_state) for m in machine_of(deal).history(deal.pk)] == \
+        [(None, "awaiting_E0"), ("awaiting_E0", "completed")]
 
 
 def test_an_opt_out_follows_the_lead_into_a_new_sequence(relaunch):

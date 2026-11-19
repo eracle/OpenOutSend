@@ -32,6 +32,13 @@ def never_ping_a_real_provider():
 
 
 @pytest.fixture(autouse=True)
+def conversations_on(monkeypatch):
+    """Most of the suite is about a sequence that ends in its conversation, which an
+    install turns on (``OUTSEND_CONVERSATIONS``). A test about a broadcast turns it off."""
+    monkeypatch.setenv("OUTSEND_CONVERSATIONS", "on")
+
+
+@pytest.fixture(autouse=True)
 def forget_sequence_folders():
     """Each test is its own run, so it starts knowing no `--sequence` folder.
 

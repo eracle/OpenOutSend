@@ -86,5 +86,5 @@ def put_in_state(deal, state: str, at=None) -> None:
     at = at or timezone.now()
     machine = machine_name(deal.sequence)
     CurrentState.objects.filter(machine=machine, entity=str(deal.pk)).update(state=state, updated_at=at)
-    LogEntry.objects.create(machine=machine, entity=str(deal.pk), step=None, from_state=None,
+    LogEntry.objects.create(machine=machine, entity=str(deal.pk), from_state=None,
                             to_state=state, decided_by="code", at=at)

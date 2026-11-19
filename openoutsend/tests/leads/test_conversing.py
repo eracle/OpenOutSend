@@ -18,11 +18,11 @@ from openoutsend.core.agents.outreach import render_frame
 from openoutsend.core.sequences import SequenceError, key
 from openoutsend.emails.models import Thread
 from openoutsend.leads import conversing
-from openoutsend.leads.lifecycle import RAN_QUIET, TURN, machine_of
+from openoutsend.leads.lifecycle import machine_of
 from openoutsend.leads.models import Deal, Outcome
 from openoutsend.leads.states import COMPLETED, CONVERSING, awaiting, machine_name
 from openoutsend.leads.suppression import is_suppressed
-from openoutsend.machines.machine import _ModelTurn
+from openoutsend.machines.steps import ModelTurn
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.factories import DealFactory, LeadFactory, put_in_state
 
@@ -117,7 +117,7 @@ def test_with_nothing_incoming_the_turn_says_not_now(deal):
     machine = machine_of(deal)
 
     assert machine.incoming(deal) is None
-    assert machine.fire(deal.pk, TURN) is None
+    assert machine.fire(deal.pk) is None
     assert machine.progress(deal.pk) == []
     assert len(sent_in(deal)) == 1
 
@@ -126,7 +126,7 @@ def test_the_models_answer_is_sent_in_the_deals_thread(deal):
     reply = they_wrote(deal)
 
     with model_saying(to="conversing", message="Thanks. Where did she go?"):
-        machine_of(deal).fire(deal.pk, TURN)
+        machine_of(deal).fire(deal.pk)
 
     _, answer = sent_in(deal)
     assert answer.body_text == "Thanks. Where did she go?"
@@ -143,7 +143,7 @@ def test_an_answer_is_logged_as_a_move_from_the_conversation_to_itself(deal):
         (move,) = machine_of(deal).progress(deal.pk)
 
     deal.refresh_from_db()
-    assert (move.step, move.from_state, move.to_state) == ("conversing_turn", "conversing", "conversing")
+    assert (move.from_state, move.to_state) == ("conversing", "conversing")
     assert move.decided_by == "llm:test:test"
     assert move.decision == {"to": "conversing", "message": "Thanks. Where did she go?", "outcome": None}
     assert (deal.state, deal.outcome) == (CONVERSING, "")
@@ -153,10 +153,10 @@ def test_the_model_ending_with_an_outcome_writes_it_and_sends_nothing(deal):
     they_wrote(deal, body="We already use something for this, thanks.")
 
     with model_saying(to="completed", outcome="has_solution"):
-        move = machine_of(deal).fire(deal.pk, TURN)
+        move = machine_of(deal).fire(deal.pk)
 
     deal.refresh_from_db()
-    assert (move.step, move.from_state, move.to_state) == ("conversing_turn", "conversing", "completed")
+    assert (move.decided_by, move.from_state, move.to_state) == ("llm:test:test", "conversing", "completed")
     assert move.decision == {"to": "completed", "message": None, "outcome": "has_solution"}
     assert (deal.state, deal.outcome) == (COMPLETED, Outcome.HAS_SOLUTION)
     assert len(sent_in(deal)) == 1
@@ -169,7 +169,7 @@ def test_ending_without_an_outcome_is_refused(deal):
     moves_before = len(machine.history(deal.pk))
 
     with pytest.raises(TransitionError, match="outcome is required when the conversation ends"):
-        machine.fire(deal.pk, TURN, answer={"to": "completed"})
+        machine.fire(deal.pk, answer={"to": "completed"})
 
     deal.refresh_from_db()
     assert (deal.state, deal.outcome) == (CONVERSING, "")
@@ -181,7 +181,7 @@ def test_an_outcome_that_is_not_the_models_to_give_is_refused(deal):
     they_wrote(deal)
 
     with pytest.raises(TransitionError, match="outcome"):
-        machine_of(deal).fire(deal.pk, TURN, answer={"to": "completed", "outcome": "stopped"})
+        machine_of(deal).fire(deal.pk, answer={"to": "completed", "outcome": "stopped"})
 
     assert deal.state == CONVERSING
 
@@ -190,7 +190,7 @@ def test_staying_with_nothing_to_send_is_refused(deal):
     they_wrote(deal)
 
     with pytest.raises(TransitionError, match="message is required"):
-        machine_of(deal).fire(deal.pk, TURN, answer={"to": "conversing"})
+        machine_of(deal).fire(deal.pk, answer={"to": "conversing"})
 
     assert len(sent_in(deal)) == 1
 
@@ -203,14 +203,14 @@ def test_unsubscribed_suppresses_the_address_and_ends_the_leads_other_open_deals
     they_wrote(deal, body="Please don't email me again.")
 
     with model_saying(to="completed", outcome="unsubscribed"):
-        machine_of(deal).fire(deal.pk, TURN)
+        machine_of(deal).fire(deal.pk)
 
     deal.refresh_from_db()
     other.refresh_from_db()
     assert is_suppressed(LEAD)
     assert (deal.state, deal.outcome) == (COMPLETED, Outcome.UNSUBSCRIBED)
     assert (other.state, other.outcome) == (COMPLETED, Outcome.UNSUBSCRIBED)
-    assert machine_of(other).history(other.pk)[-1].step == "end_suppressed"
+    assert machine_of(other).history(other.pk)[-1].decided_by == "code"
     assert len(sent_in(deal)) == 1
 
 
@@ -218,10 +218,10 @@ def test_the_deal_that_read_the_request_is_ended_once_by_the_turns_move(deal):
     they_wrote(deal, body="Take me off your list.")
 
     with model_saying(to="completed", outcome="unsubscribed"):
-        machine_of(deal).fire(deal.pk, TURN)
+        machine_of(deal).fire(deal.pk)
 
     ends = [move for move in machine_of(deal).history(deal.pk) if move.to_state == COMPLETED]
-    assert [(move.step, move.from_state) for move in ends] == [("conversing_turn", "conversing")]
+    assert [(move.decided_by, move.from_state) for move in ends] == [("llm:test:test", "conversing")]
 
 
 def test_any_other_ending_leaves_the_leads_other_deals_open(deal, lead, tmp_path):
@@ -229,7 +229,7 @@ def test_any_other_ending_leaves_the_leads_other_deals_open(deal, lead, tmp_path
     they_wrote(deal, body="Not for us.")
 
     with model_saying(to="completed", outcome="not_interested"):
-        machine_of(deal).fire(deal.pk, TURN)
+        machine_of(deal).fire(deal.pk)
 
     assert (deal.state, other.state) == (COMPLETED, awaiting(0))
     assert not is_suppressed(LEAD)
@@ -241,7 +241,7 @@ def test_any_other_ending_leaves_the_leads_other_deals_open(deal, lead, tmp_path
 def test_a_sessions_answer_is_sent_and_logged_as_decided_by_the_agent(deal):
     reply = they_wrote(deal)
 
-    move = machine_of(deal).fire(deal.pk, TURN, answer={"to": "conversing", "message": "Where did she go?"})
+    move = machine_of(deal).fire(deal.pk, answer={"to": "conversing", "message": "Where did she go?"})
 
     _, answer = sent_in(deal)
     assert (move.from_state, move.to_state, move.decided_by) == ("conversing", "conversing", "agent")
@@ -252,7 +252,7 @@ def test_a_sessions_answer_is_sent_and_logged_as_decided_by_the_agent(deal):
 def test_a_session_ends_the_conversation_as_the_model_would(deal):
     they_wrote(deal, body="Booked for Tuesday.")
 
-    move = machine_of(deal).fire(deal.pk, TURN, answer={"to": "completed", "outcome": "converted"})
+    move = machine_of(deal).fire(deal.pk, answer={"to": "completed", "outcome": "converted"})
 
     deal.refresh_from_db()
     assert (move.to_state, move.decided_by) == ("completed", "agent")
@@ -269,13 +269,12 @@ def test_silence_closes_it_unresponsive_after_the_built_in_gap(deal):
     machine = machine_of(deal)
 
     with on(november(19, 23)):
-        assert machine.fire(deal.pk, RAN_QUIET) is None
+        assert machine.fire(deal.pk) is None
     with on(november(20, 1)):
-        move = machine.fire(deal.pk, RAN_QUIET)
+        move = machine.fire(deal.pk)
 
     deal.refresh_from_db()
-    assert (move.step, move.from_state, move.to_state, move.decided_by) == \
-        ("conversing_ran_out", "conversing", "completed", "code")
+    assert (move.from_state, move.to_state, move.decided_by) == ("conversing", "completed", "code")
     assert (deal.state, deal.outcome) == (COMPLETED, Outcome.UNRESPONSIVE)
     assert not is_suppressed(LEAD)
     assert len(sent_in(deal)) == 1
@@ -286,13 +285,13 @@ def test_silence_is_counted_from_the_last_turn(deal):
     put_in_state(deal, CONVERSING, at=november(2))
     they_wrote(deal)
     machine = machine_of(deal)
-    machine.fire(deal.pk, TURN, answer={"to": "conversing", "message": "Where did she go?"})
+    machine.fire(deal.pk, answer={"to": "conversing", "message": "Where did she go?"})
     last_move_was_at(deal, november(13))
 
     with on(november(19, 23)):
-        assert machine.fire(deal.pk, RAN_QUIET) is None
+        assert machine.fire(deal.pk) is None
     with on(november(20, 1)):
-        assert machine.fire(deal.pk, RAN_QUIET).to_state == "completed"
+        assert machine.fire(deal.pk).to_state == "completed"
 
     assert Deal.objects.get(pk=deal.pk).outcome == Outcome.UNRESPONSIVE
 
@@ -305,9 +304,9 @@ def test_a_folders_own_gap_closes_its_conversation(box, lead, tmp_path):
     machine = machine_of(deal)
 
     with on(november(23, 23)):
-        assert machine.fire(deal.pk, RAN_QUIET) is None
+        assert machine.fire(deal.pk) is None
     with on(november(24, 1)):
-        assert machine.fire(deal.pk, RAN_QUIET).to_state == "completed"
+        assert machine.fire(deal.pk).to_state == "completed"
 
     assert Deal.objects.get(pk=deal.pk).outcome == Outcome.UNRESPONSIVE
 
@@ -319,20 +318,20 @@ def test_a_folders_prompt_naming_no_gap_closes_after_the_built_in_one(box, lead,
     machine = machine_of(deal)
 
     with on(november(19, 23)):
-        assert machine.fire(deal.pk, RAN_QUIET) is None
+        assert machine.fire(deal.pk) is None
     with on(november(20, 1)):
-        assert machine.fire(deal.pk, RAN_QUIET).to_state == "completed"
+        assert machine.fire(deal.pk).to_state == "completed"
 
 
 def test_nobody_owed_an_answer_is_closed_for_silence(deal):
     put_in_state(deal, CONVERSING, at=november(2))
     they_wrote(deal)
 
-    with on(november(30)):
-        assert machine_of(deal).fire(deal.pk, RAN_QUIET) is None
+    with on(november(30)), model_saying(to="conversing", message="Sorry for the wait. Where did she go?"):
+        move = machine_of(deal).fire(deal.pk)
 
     deal.refresh_from_db()
-    assert (deal.state, deal.outcome) == (CONVERSING, "")
+    assert (move.to_state, deal.state, deal.outcome) == (CONVERSING, CONVERSING, "")
 
 
 # ── What the model answers from ──
@@ -344,8 +343,8 @@ def given_to_the_model(deal) -> str:
     def answer(turn, prompt, entity, schema):
         return schema.model_validate({"to": "conversing", "message": "Noted."})
 
-    with model_saying(), patch.object(_ModelTurn, "ask", autospec=True, side_effect=answer) as ask:
-        machine_of(deal).fire(deal.pk, TURN)
+    with model_saying(), patch.object(ModelTurn,"ask", autospec=True, side_effect=answer) as ask:
+        machine_of(deal).fire(deal.pk)
     return ask.call_args.args[1]
 
 
@@ -377,7 +376,7 @@ def test_a_folders_conversation_prompt_is_rendered_with_the_deals_fields(box, le
 def test_a_session_is_briefed_with_what_the_model_would_be_given(deal):
     they_wrote(deal)
 
-    brief = machine_of(deal).brief(deal.pk, TURN)
+    brief = machine_of(deal).brief(deal.pk)
 
     assert brief.prompt == given_to_the_model(deal)
     assert [value for value, _ in brief.choices] == ["conversing", "completed"]
@@ -388,7 +387,7 @@ def test_the_answer_records_the_prompt_it_was_written_from(deal):
     they_wrote(deal)
 
     with model_saying(to="conversing", message="Where did she go?"):
-        machine_of(deal).fire(deal.pk, TURN)
+        machine_of(deal).fire(deal.pk)
 
     assert sent_in(deal)[-1].prompt == conversing.prompt_for(deal, sequences.cold())
 
@@ -399,7 +398,7 @@ def test_a_field_the_folders_prompt_names_and_the_deal_lacks_stops_the_turn(box,
     they_wrote(deal)
 
     with model_saying(to="conversing", message="Noted."), pytest.raises(SequenceError, match="product"):
-        machine_of(deal).fire(deal.pk, TURN)
+        machine_of(deal).fire(deal.pk)
 
     assert deal.state == CONVERSING
     assert len(sent_in(deal)) == 1

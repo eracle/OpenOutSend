@@ -6,8 +6,8 @@ send 5` is a *goal*, and `send_job.py` reaches it by running this repeatedly and
 out the clock in between. Nothing here waits, so the pass stays the thing a timer can
 also fire on its own.
 
-Every move is a step of a deal's machine (`leads/lifecycle.py`); the pass only says
-which steps to try, in an order where each feeds the next:
+Every move is made by the step of a deal's state (`leads/lifecycle.py`); the pass only
+says which deals to fire, in an order where each feeds the next:
 
     read      IMAP → rows → kinds → events, suppression   (`emails/mail_pass.py`)
     measure   each box's warm capacity for today, once     (`emails/warmth.py`)
@@ -131,7 +131,6 @@ def _end_stopped(result: PassResult, sequence: str | None) -> None:
     """
     from django.db.models import Q
 
-    from openoutsend.leads.lifecycle import END_SUPPRESSED
     from openoutsend.leads.models import Deal, Suppression
     from openoutsend.planner import machines
 
@@ -140,7 +139,7 @@ def _end_stopped(result: PassResult, sequence: str | None) -> None:
         Q(stop=True) | Q(lead__email__in=Suppression.objects.values("email"))
     ).select_related("lead")
     for deal in stopped:
-        _try(result, "ending", deal, machine_of(deal), END_SUPPRESSED)
+        _try(result, "ending", deal, machine_of(deal))
 
 
 def _run_out_waits(result: PassResult, sequence: str | None) -> None:
@@ -149,9 +148,9 @@ def _run_out_waits(result: PassResult, sequence: str | None) -> None:
     from agentic_fsm import ProgressError
 
     from openoutsend.core.sequences import named
-    from openoutsend.leads.lifecycle import CLOSE_MISSED, machine_for
-    from openoutsend.leads.models import Deal
-    from openoutsend.leads.states import WAITING
+    from openoutsend.leads.lifecycle import machine_for
+    from openoutsend.leads.models import Deal, Outcome
+    from openoutsend.leads.states import COMPLETED, WAITING
 
     open_sequences = (_scoped(Deal.objects.open(), sequence)
                       .values_list("sequence", flat=True).distinct())
@@ -163,7 +162,8 @@ def _run_out_waits(result: PassResult, sequence: str | None) -> None:
             for entity, failure in error.failures.items():
                 logger.error("deal %s of %s could not be moved: %s", entity, name, failure)
             result.failed += len(error.failures)
-        result.missed += sum(move.step == CLOSE_MISSED for move in moves)
+        closed = [move.entity for move in moves if move.to_state == COMPLETED]
+        result.missed += Deal.objects.filter(pk__in=closed, outcome=Outcome.MISSED).count()
 
 
 # ── The conversations ─────────────────────────────────────────────
@@ -183,7 +183,6 @@ def _converse(result: PassResult, agent_draft: AgentDraft) -> set:
 
     A calling agent takes the turn instead of `AI_MODEL` under ``--agent-draft``.
     """
-    from openoutsend.leads.lifecycle import TURN
     from openoutsend.leads.states import CONVERSING
     from openoutsend.planner import conversations_waiting, machines
 
@@ -194,7 +193,7 @@ def _converse(result: PassResult, agent_draft: AgentDraft) -> set:
         reached = set()
         for deal in conversations_waiting():
             reached.add(deal.lead_id)
-            move = _try(result, "answer", deal, machine_of(deal), TURN)
+            move = _try(result, "answer", deal, machine_of(deal))
             if move is not None:
                 _count_turn(result, move.to_state == CONVERSING)
     _close_quiet(result)
@@ -211,16 +210,20 @@ def _count_turn(result: PassResult, stayed: bool) -> None:
 def _close_quiet(result: PassResult) -> None:
     """Close each conversation whose closing gap of silence has run out.
 
-    The step refuses while a message waits for an answer, so nobody owed one is closed.
+    A conversation with a message waiting is left alone: nobody owed an answer is
+    closed, and firing it here would take its turn, which is `_converse`'s to take or
+    to hand to a calling agent.
     """
-    from openoutsend.leads.lifecycle import RAN_QUIET
     from openoutsend.leads.models import Deal
     from openoutsend.leads.states import CONVERSING
     from openoutsend.planner import machines
 
     machine_of = machines()
     for deal in Deal.objects.in_state(CONVERSING).select_related("lead", "mailbox", "thread"):
-        if _try(result, "closing", deal, machine_of(deal), RAN_QUIET) is not None:
+        machine = machine_of(deal)
+        if machine.incoming(deal) is not None:
+            continue
+        if _try(result, "closing", deal, machine) is not None:
             logger.info("%s went quiet — closing the conversation", deal.lead.public_id)
             result.gave_up += 1
 
@@ -236,7 +239,6 @@ def _answer_drafted_reply(result: PassResult, agent_draft: AgentDraft) -> set:
     the conversation to itself, decided by `agent`. An answer is exempt from every send
     guard, so it goes the pass it arrives. Returns every lead owed an answer, as reached.
     """
-    from openoutsend.leads.lifecycle import TURN
     from openoutsend.leads.models import PendingDraft
     from openoutsend.leads.states import CONVERSING
     from openoutsend.planner import conversations_waiting, machines
@@ -270,7 +272,7 @@ def _answer_drafted_reply(result: PassResult, agent_draft: AgentDraft) -> set:
                            payload=_reply_payload(deal))
 
     answer = {"to": CONVERSING, "message": pending.body}
-    if _try(result, "answer", deal, machines()(deal), TURN, answer=answer) is not None:
+    if _try(result, "answer", deal, machines()(deal), answer=answer) is not None:
         result.answered += 1
         pending.delete()
     return reached
@@ -280,10 +282,10 @@ def _reply_payload(deal) -> dict:
     """What an agent needs to answer *deal*'s lead: their fields, the line they were
     piped with, and what `AI_MODEL` would have read — the whole thread, then how to
     answer it."""
-    from openoutsend.leads.lifecycle import TURN, machine_of
+    from openoutsend.leads.lifecycle import machine_of
 
     lead = deal.lead
-    brief = machine_of(deal).brief(deal.pk, TURN, entity=deal)
+    brief = machine_of(deal).brief(deal.pk, entity=deal)
     return {
         "lead_id": lead.public_id,
         "email": lead.email,
@@ -357,10 +359,8 @@ def _send_due(result: PassResult, sequence: str | None, reached: set,
 
 def _send(result: PassResult, machine, deal, plan) -> None:
     """Fire *deal*'s due send with *plan*, and count it as a thread opened or a later step."""
-    from openoutsend.leads.lifecycle import send_name
-
     opens = deal.thread_id is None
-    if _fire(machine, deal, send_name(deal.due_step.number), plan=plan) is None:
+    if _fire(machine, deal, plan=plan) is None:
         return
     if opens:
         result.opened += 1
@@ -511,18 +511,18 @@ def _scoped(deals, sequence: str | None):
     return deals if sequence is None else deals.filter(sequence=sequence)
 
 
-def _try(result: PassResult, doing: str, deal, machine, step: str, **options):
+def _try(result: PassResult, doing: str, deal, machine, **options):
     """``_fire``, with a failure logged and counted instead of raised. Returns the move."""
     try:
-        return _fire(machine, deal, step, **options)
+        return _fire(machine, deal, **options)
     except Exception:
         logger.exception("%s %s failed", doing, deal.lead.public_id)
         result.failed += 1
         return None
 
 
-def _fire(machine, deal, step: str, *, plan=None, answer=None):
-    """Fire *machine*'s *step* on *deal*, in the machine's one transaction. Returns the move.
+def _fire(machine, deal, *, plan=None, answer=None):
+    """Run the step of *deal*'s state, in *machine*'s one transaction. Returns the move.
 
     The machine locks the deal's state, runs the step and writes the move in one
     transaction, so the mail-log row, the transport call, the deal's fields and its new
@@ -536,7 +536,7 @@ def _fire(machine, deal, step: str, *, plan=None, answer=None):
 
     deal.plan = plan
     try:
-        return machine.fire(deal.pk, step, entity=deal, answer=answer)
+        return machine.fire(deal.pk, entity=deal, answer=answer)
     except Refused as refused:
         refused.record_again()
         raise

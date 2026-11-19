@@ -1,35 +1,46 @@
-"""Two kinds of state for an `agentic_fsm` machine: one that waits, one that converses.
+"""Two steps for an `agentic_fsm` machine: one that waits, one that converses.
 
-    from agentic_fsm import FinalState, InitialState, States
-    from openoutsend.machines import Conversation, MailMachine, timed, turn
+    from datetime import timedelta
+    from agentic_fsm import FinalState, InitialState, State, States, check
+    from openoutsend.machines import Conversation, MailMachine
+
+    talking = Conversation(
+        prompt="They were asked to narrow the request. ...",
+        follow_ups=[timedelta(days=2), timedelta(days=4)],   # written by the model
+        rests=timedelta(days=5), to="dropped",               # silence after the last one
+    )
+
+    @check
+    def asked(request):
+        if request.withdrawn:
+            return Request.dropped       # a fact moves it at once
+        return talking                   # otherwise the conversation has it
 
     class Request(States):
-        received = InitialState("Just arrived")
-        asked    = Conversation("We asked them a question and are talking it over",
-                                prompt="They were asked to narrow the request. ...",
-                                rests=timedelta(days=5))
+        received = InitialState("Just arrived", step=ask)    # calls requests.send(...)
+        asked    = State("We asked them a question and are talking it over", step=asked)
         accepted = FinalState("Their answer makes the request workable")
-        dropped  = FinalState("They declined, or never answered")
+        dropped  = FinalState("They declined, withdrew, or never answered")
 
-    ROWS = [
-        (Request.received, Request.asked,    ask),      # a function that calls requests.send(...)
-        (Request.asked,    Request.asked,    turn),     # answer and stay
-        (Request.asked,    Request.accepted, turn),
-        (Request.asked,    Request.dropped,  turn),
-        (Request.asked,    Request.dropped,  timed),    # five quiet days
+    EDGES = [
+        (Request.received, Request.asked),
+        (Request.asked,    Request.asked),      # an answer or a follow-up: it stays
+        (Request.asked,    Request.accepted),
+        (Request.asked,    Request.dropped),
     ]
-    requests = MailMachine(Request, ROWS, load=get_request, address=lambda r: r.email)
+    requests = MailMachine(Request, EDGES, load=get_request, address=lambda r: r.email)
 
 `agentic_fsm` keeps no clock and knows no channel: when a move is tried is its caller's
 job. Scheduling and the thread are this package's, built from what the library has: a
-step that says "not now", a row from a state to itself, and a log whose newest row for
-an entity is the move that brought it where it is. Nothing here runs a clock either: a
-pass (`progress_all`) moves what is due when it is called.
+step that says "not now", an edge from a state to itself, and a log whose newest row
+for an entity is the move that brought it where it is. Nothing here runs a clock
+either: a pass (`progress_all`) moves what is due when it is called, and paces what it
+sends with a tag and a limit.
 
 Which conversations exist, what their prompts say and where they lead is declared by
 whoever builds the machine. None is declared here.
 """
 from openoutsend.machines.machine import MailMachine
-from openoutsend.machines.states import Conversation, Turn, Wait, timed, turn
+from openoutsend.machines.steps import Conversation, FollowUp, FollowUpTurn, Turn, Wait
 
-__all__ = ["Conversation", "MailMachine", "Turn", "Wait", "timed", "turn"]
+__all__ = ["Conversation", "FollowUp", "FollowUpTurn", "MailMachine", "Turn", "Wait"]

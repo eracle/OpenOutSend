@@ -15,7 +15,7 @@ from openoutsend.emails.filing import file_message
 from openoutsend.emails.models import Kind, Message, Thread
 from openoutsend.emails.sync import mirror
 from openoutsend.errors import OutsendError
-from openoutsend.leads.lifecycle import TURN, machine_of
+from openoutsend.leads.lifecycle import machine_of
 from openoutsend.leads.states import CONVERSING, awaiting, machine_name
 from openoutsend.planner import conversations_waiting
 from openoutsend.tests.emails import maillog
@@ -140,7 +140,7 @@ class TestFiling:
 
         with patch("openoutsend.emails.sender.send_email") as send:
             move = machine_of(deal).fire(
-                deal.pk, TURN, entity=deal,
+                deal.pk, entity=deal,
                 answer={"to": CONVERSING, "message": "Thanks — here is your order link."},
             )
 

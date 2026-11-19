@@ -15,14 +15,7 @@ from openoutsend.core.sequences import SequenceError, key
 from openoutsend.emails.models import Message, Thread
 from openoutsend.emails.steps.send import Plan
 from openoutsend.leads import lifecycle
-from openoutsend.leads.lifecycle import (
-    CLOSE_MISSED,
-    END_SUPPRESSED,
-    OPEN_LATER,
-    machine_for,
-    machine_of,
-    send_name,
-)
+from openoutsend.leads.lifecycle import machine_for, machine_of
 from openoutsend.leads.models import Deal, Outcome, Suppression
 from openoutsend.leads.states import COMPLETED, CONVERSING, awaiting, machine_name, sending
 from openoutsend.planner import due_deals
@@ -95,9 +88,13 @@ def _written_to(deal, box, state: str) -> Deal:
     """*deal* with its first email sent from *box*, then placed in *state*."""
     put_in_state(deal, sending(0))
     deal.plan = Plan(box)
-    machine_of(deal).fire(deal.pk, send_name(0), entity=deal)
+    machine_of(deal).fire(deal.pk, entity=deal)
     put_in_state(deal, state)
     return deal
+
+
+def no_box_is_free():
+    return patch("openoutsend.planner.free_for_first_email", return_value=None)
 
 
 # ── The graph ──
@@ -115,43 +112,90 @@ def test_a_folder_becomes_two_states_a_step_then_the_conversation_and_the_end(ma
     assert [state.kind for state in graph.states].count("final") == 1
 
 
-def test_every_step_is_on_the_graph(machine):
-    transitions = machine.graph().transitions
+def test_every_state_has_its_one_step_and_its_edges(machine):
+    graph = machine.graph()
 
-    assert {step for _, _, step in transitions} == {
-        "end_suppressed", "open_later", "close_missed",
-        "awaiting_E0_ran_out", "send_E0", "awaiting_E1_ran_out", "send_E1",
-        "awaiting_E2_ran_out", "send_E2", "conversing_turn", "conversing_ran_out",
-    }
-    for row in [
-        ("awaiting_E0", "sending_E0", "awaiting_E0_ran_out"),
-        ("sending_E0", "awaiting_E1", "send_E0"),
-        ("sending_E2", "conversing", "send_E2"),
-        ("awaiting_E0", "awaiting_E1", "open_later"),
-        ("awaiting_E0", "awaiting_E2", "open_later"),
-        ("awaiting_E0", "completed", "close_missed"),
-        ("conversing", "conversing", "conversing_turn"),
-        ("conversing", "completed", "conversing_turn"),
-        ("conversing", "completed", "conversing_ran_out"),
-    ]:
-        assert row in transitions
+    assert [state.step for state in graph.states] == [
+        "Awaiting", "Sending", "Awaiting", "Sending", "Awaiting", "Sending", "Conversing", None,
+    ]
+    assert sorted(graph.edges) == sorted([
+        ("awaiting_E0", "sending_E0"), ("awaiting_E0", "awaiting_E1"), ("awaiting_E0", "awaiting_E2"),
+        ("sending_E0", "awaiting_E1"),
+        ("awaiting_E1", "sending_E1"), ("sending_E1", "awaiting_E2"),
+        ("awaiting_E2", "sending_E2"), ("sending_E2", "conversing"),
+        ("conversing", "conversing"),
+        *[(state, "completed") for state in OPEN_STATES],
+    ])
 
 
 def test_every_open_state_can_be_ended_and_nothing_leaves_completed(machine):
-    transitions = machine.graph().transitions
+    edges = machine.graph().edges
 
-    assert [source for source, _, step in transitions if step == "end_suppressed"] == OPEN_STATES
-    assert not [row for row in transitions if row[0] == "completed"]
+    assert sorted(source for source, target in edges if target == "completed") == sorted(OPEN_STATES)
+    assert not [edge for edge in edges if edge[0] == "completed"]
 
 
-def test_a_one_step_folder_has_no_step_to_open_later_with(tmp_path):
+def test_a_one_step_folder_has_no_later_step_to_open_with(tmp_path):
     single = machine_for(sequences.named(_folder(tmp_path, "single", {"E0-a.prompt.j2": "Write."})))
 
     graph = single.graph()
 
     assert [state.value for state in graph.states] == ["awaiting_E0", "sending_E0", "conversing", "completed"]
-    assert "open_later" not in {step for _, _, step in graph.transitions}
-    assert ("sending_E0", "conversing", "send_E0") in graph.transitions
+    assert ("sending_E0", "conversing") in graph.edges
+    assert [target for source, target in graph.edges if source == "awaiting_E0"] == ["sending_E0", "completed"]
+
+
+# ── A folder with no conversation ──
+
+
+@pytest.fixture
+def broadcast(monkeypatch, relaunch):
+    """The three-step folder's machine in an install that holds no conversations."""
+    monkeypatch.setenv("OUTSEND_CONVERSATIONS", "off")
+    return machine_for(sequences.named(relaunch))
+
+
+def test_conversations_are_off_unless_the_install_turns_them_on(monkeypatch, machine, relaunch):
+    monkeypatch.delenv("OUTSEND_CONVERSATIONS")
+
+    unset = machine_for(sequences.named(relaunch))
+
+    assert unset is not machine
+    assert "conversing" not in [state.value for state in unset.graph().states]
+    assert "conversing" in [state.value for state in machine.graph().states]
+
+
+def test_a_folder_with_no_conversation_ends_at_its_last_send(broadcast):
+    graph = broadcast.graph()
+
+    assert [state.value for state in graph.states] == [
+        "awaiting_E0", "sending_E0", "awaiting_E1", "sending_E1", "awaiting_E2", "sending_E2", "completed",
+    ]
+    assert [target for source, target in graph.edges if source == "sending_E2"] == ["completed"]
+
+
+def test_the_last_send_of_a_broadcast_ends_the_deal_sent(broadcast, relaunch, box):
+    deal = _written_to(_deal(relaunch), box, sending(2))
+    deal.plan = Plan(box)
+
+    move = broadcast.fire(deal.pk, entity=deal)
+
+    deal.refresh_from_db()
+    assert (move.from_state, move.to_state) == ("sending_E2", "completed")
+    assert (deal.state, deal.outcome) == (COMPLETED, Outcome.SENT)
+    assert deal.thread.messages.order_by("pk").last().body_text == "Last note, Asha."
+
+
+def test_a_broadcast_deal_that_must_stop_is_ended_stopped_and_not_sent(broadcast, relaunch, box):
+    deal = _written_to(_deal(relaunch), box, sending(2))
+    deal.stop = True
+    deal.plan = Plan(box)
+
+    broadcast.fire(deal.pk, entity=deal)
+
+    deal.refresh_from_db()
+    assert (deal.state, deal.outcome) == (COMPLETED, Outcome.STOPPED)
+    assert deal.thread.messages.count() == 1
 
 
 # ── Reading the state ──
@@ -184,9 +228,9 @@ def test_the_first_step_waits_its_days_counted_from_start_at(machine, relaunch):
     deal = _deal(relaunch, start_at=november(13), created_at=november(13))
 
     with on(november(16, 23)):
-        assert machine.fire(deal.pk, "awaiting_E0_ran_out") is None
+        assert machine.fire(deal.pk) is None
     with on(november(17, 1)):
-        move = machine.fire(deal.pk, "awaiting_E0_ran_out")
+        move = machine.fire(deal.pk)
 
     assert (move.from_state, move.to_state, move.decided_by) == ("awaiting_E0", "sending_E0", "code")
     assert deal.state == sending(0)
@@ -202,9 +246,9 @@ def test_a_later_step_waits_its_business_days_from_the_move_that_sent_the_one_be
 
     assert machine.entered_at(deal.pk) == november(13)
     with on(november(17, 23)):
-        assert machine.fire(deal.pk, "awaiting_E1_ran_out") is None
+        assert machine.fire(deal.pk) is None
     with on(november(18, 1)):
-        move = machine.fire(deal.pk, "awaiting_E1_ran_out")
+        move = machine.fire(deal.pk)
 
     assert (move.from_state, move.to_state) == ("awaiting_E1", "sending_E1")
 
@@ -213,7 +257,7 @@ def test_a_wait_running_out_sends_nothing(machine, relaunch):
     deal = _deal(relaunch, start_at=november(13), created_at=november(13))
 
     with on(november(17, 1)):
-        machine.fire(deal.pk, "awaiting_E0_ran_out")
+        machine.fire(deal.pk)
 
     assert not Message.objects.exists()
 
@@ -225,8 +269,8 @@ def test_a_send_with_no_free_box_says_not_now(machine, relaunch):
     """A fire with no deal in hand asks the planner, and with no box free nothing goes."""
     deal = _deal(relaunch, state=sending(0))
 
-    with patch("openoutsend.planner.free_for_first_email", return_value=None):
-        assert machine.fire(deal.pk, send_name(0)) is None
+    with no_box_is_free():
+        assert machine.fire(deal.pk) is None
 
     assert deal.state == sending(0)
     assert not Message.objects.exists()
@@ -236,10 +280,9 @@ def test_a_send_with_a_planned_box_sends_and_moves_to_the_next_wait(machine, rel
     deal = _deal(relaunch, state=sending(0))
     deal.plan = Plan(box)
 
-    move = machine.fire(deal.pk, send_name(0), entity=deal)
+    move = machine.fire(deal.pk, entity=deal)
 
-    assert (move.step, move.from_state, move.to_state, move.decided_by) == \
-        ("send_E0", "sending_E0", "awaiting_E1", "code")
+    assert (move.from_state, move.to_state, move.decided_by) == ("sending_E0", "awaiting_E1", "code")
     (sent,) = Message.objects.all()
     assert (sent.to_address, sent.subject, sent.step, sent.sequence) == \
         ("asha@example.com", "Your ten leads", 0, relaunch)
@@ -255,7 +298,7 @@ def test_a_send_fired_with_no_deal_in_hand_takes_the_box_the_planner_picks(machi
     deal = _deal(relaunch, state=sending(0))
 
     with patch("openoutsend.planner.free_for_first_email", return_value=box):
-        move = machine.fire(deal.pk, send_name(0))
+        move = machine.fire(deal.pk)
 
     assert move.to_state == awaiting(1)
     assert Message.objects.get().mailbox == box
@@ -265,7 +308,7 @@ def test_a_later_send_goes_in_the_deals_thread(machine, relaunch, box):
     deal = _written_to(_deal(relaunch), box, sending(1))
     deal.plan = Plan(box)
 
-    move = machine.fire(deal.pk, send_name(1), entity=deal)
+    move = machine.fire(deal.pk, entity=deal)
 
     assert (move.from_state, move.to_state) == ("sending_E1", "awaiting_E2")
     first, second = deal.thread.messages.order_by("pk")
@@ -277,19 +320,19 @@ def test_the_last_send_moves_the_deal_to_its_conversation(machine, relaunch, box
     deal = _written_to(_deal(relaunch), box, sending(2))
     deal.plan = Plan(box)
 
-    move = machine.fire(deal.pk, send_name(2), entity=deal)
+    move = machine.fire(deal.pk, entity=deal)
 
-    assert (move.step, move.from_state, move.to_state) == ("send_E2", "sending_E2", "conversing")
-    assert deal.state == CONVERSING
+    assert (move.from_state, move.to_state) == ("sending_E2", "conversing")
+    assert (deal.state, Deal.objects.get(pk=deal.pk).outcome) == (CONVERSING, "")
     assert deal.thread.messages.order_by("pk").last().body_text == "Last note, Asha."
 
 
-def test_a_send_does_not_leave_a_state_that_is_not_its_own(machine, relaunch, box):
-    deal = _deal(relaunch)
+def test_a_deal_still_waiting_is_not_sent_even_with_a_box_in_hand(machine, relaunch, box):
+    deal = _deal(relaunch, start_at=november(13), created_at=november(13))
     deal.plan = Plan(box)
 
-    with pytest.raises(TransitionError, match="doesn't leave awaiting_E0"):
-        machine.fire(deal.pk, send_name(0), entity=deal)
+    with on(november(13)):
+        assert machine.fire(deal.pk, entity=deal) is None
 
     assert not Message.objects.exists()
 
@@ -302,11 +345,10 @@ def test_a_deal_that_arrived_with_every_step_past_its_grace_is_closed_missed(mac
     on the 30th."""
     deal = _deal(relaunch, start_at=november(2), created_at=november(30))
 
-    assert machine.fire(deal.pk, OPEN_LATER) is None
-    move = machine.fire(deal.pk, CLOSE_MISSED)
+    move = machine.fire(deal.pk)
 
     deal.refresh_from_db()
-    assert (move.step, move.from_state, move.to_state) == ("close_missed", "awaiting_E0", "completed")
+    assert (move.decided_by, move.from_state, move.to_state) == ("code", "awaiting_E0", "completed")
     assert (deal.state, deal.outcome) == (COMPLETED, Outcome.MISSED)
     assert not Message.objects.exists()
 
@@ -316,18 +358,23 @@ def test_a_deal_with_a_step_still_in_its_grace_is_not_closed(machine, relaunch):
     late = _deal(relaunch, lead=LeadFactory(email="bo@example.com"),
                  start_at=november(2), created_at=november(13))
 
-    assert machine.fire(on_time.pk, CLOSE_MISSED) is None
-    assert machine.fire(late.pk, CLOSE_MISSED) is None
-    assert (on_time.state, late.state) == (awaiting(0), awaiting(0))
+    with on(november(13)):
+        assert machine.fire(on_time.pk) is None
+        machine.fire(late.pk)
+
+    assert (on_time.state, late.state) == (awaiting(0), awaiting(2))
+    assert not Deal.objects.exclude(outcome="").exists()
 
 
 def test_a_deal_whose_first_step_is_in_its_grace_does_not_open_later(machine, relaunch):
     """`E0` was due on Wednesday the 4th and the deal arrived on Friday the 6th, two
-    business days late."""
+    business days late: it is sent its first step, which is due already."""
     deal = _deal(relaunch, start_at=november(2), created_at=november(6))
 
-    assert machine.fire(deal.pk, OPEN_LATER) is None
-    assert deal.state == awaiting(0)
+    with on(november(6)):
+        move = machine.fire(deal.pk)
+
+    assert (move.from_state, move.to_state) == ("awaiting_E0", "sending_E0")
 
 
 def test_a_late_deal_skips_to_the_first_step_not_past_its_grace(machine, relaunch):
@@ -335,9 +382,9 @@ def test_a_late_deal_skips_to_the_first_step_not_past_its_grace(machine, relaunc
     Friday the 13th, both are past their grace and `E2`, due on Monday the 16th, is not."""
     deal = _deal(relaunch, start_at=november(2), created_at=november(13))
 
-    move = machine.fire(deal.pk, OPEN_LATER)
+    move = machine.fire(deal.pk)
 
-    assert (move.step, move.from_state, move.to_state) == ("open_later", "awaiting_E0", "awaiting_E2")
+    assert (move.decided_by, move.from_state, move.to_state) == ("code", "awaiting_E0", "awaiting_E2")
     assert deal.state == awaiting(2)
 
 
@@ -346,24 +393,24 @@ def test_the_step_a_late_deal_opens_with_is_due_as_counted_from_when_the_skipped
     """`E2` is due on the 16th, five business days after `E1` was due, not five after the
     deal came to wait for it."""
     deal = _deal(relaunch, start_at=november(2), created_at=november(13))
-    machine.fire(deal.pk, OPEN_LATER)
+    machine.fire(deal.pk)
 
     with on(november(15, 23)):
-        assert machine.fire(deal.pk, "awaiting_E2_ran_out") is None
+        assert machine.fire(deal.pk) is None
     with on(november(16, 1)):
-        move = machine.fire(deal.pk, "awaiting_E2_ran_out")
+        move = machine.fire(deal.pk)
 
     assert (move.from_state, move.to_state) == ("awaiting_E2", "sending_E2")
 
 
 def test_progress_carries_a_late_deal_to_the_step_it_opens_with(machine, relaunch):
-    """The rows are tried in order: nothing to end, then the skip, then its wait."""
+    """One state's step at a time: the skip, then that step's wait, then a send with no box."""
     deal = _deal(relaunch, start_at=november(2), created_at=november(13))
 
-    with on(november(16, 1)), patch("openoutsend.planner.free_for_first_email", return_value=None):
+    with on(november(16, 1)), no_box_is_free():
         moves = machine.progress(deal.pk)
 
-    assert [move.step for move in moves] == ["open_later", "awaiting_E2_ran_out"]
+    assert [move.to_state for move in moves] == ["awaiting_E2", "sending_E2"]
     assert deal.state == sending(2)
 
 
@@ -375,10 +422,10 @@ def test_a_deal_whose_address_is_suppressed_is_ended_from_every_open_state(machi
     deal = _deal(relaunch, state=state)
     Suppression.objects.create(email="asha@example.com")
 
-    move = machine.fire(deal.pk, END_SUPPRESSED, entity=deal)
+    move = machine.fire(deal.pk, entity=deal)
 
     deal.refresh_from_db()
-    assert (move.step, move.from_state, move.to_state) == ("end_suppressed", state, "completed")
+    assert (move.decided_by, move.from_state, move.to_state) == ("code", state, "completed")
     assert (deal.state, deal.outcome) == (COMPLETED, Outcome.UNSUBSCRIBED)
 
 
@@ -386,7 +433,7 @@ def test_a_deal_whose_address_is_suppressed_is_ended_from_every_open_state(machi
 def test_a_deal_whose_line_says_stop_is_ended_stopped_from_every_open_state(machine, relaunch, state):
     deal = _deal(relaunch, state=state, stop=True)
 
-    move = machine.fire(deal.pk, END_SUPPRESSED)
+    move = machine.fire(deal.pk)
 
     deal.refresh_from_db()
     assert (move.from_state, move.to_state) == (state, "completed")
@@ -399,7 +446,7 @@ def test_an_outcome_set_before_the_end_is_kept(machine, relaunch):
     Suppression.objects.create(email="asha@example.com")
     deal.outcome = Outcome.UNDELIVERABLE
 
-    machine.fire(deal.pk, END_SUPPRESSED, entity=deal)
+    machine.fire(deal.pk, entity=deal)
 
     deal.refresh_from_db()
     assert (deal.state, deal.outcome) == (COMPLETED, Outcome.UNDELIVERABLE)
@@ -409,7 +456,7 @@ def test_a_suppressed_address_comes_before_the_lines_stop(machine, relaunch):
     deal = _deal(relaunch, stop=True)
     Suppression.objects.create(email="asha@example.com")
 
-    machine.fire(deal.pk, END_SUPPRESSED)
+    machine.fire(deal.pk)
 
     deal.refresh_from_db()
     assert deal.outcome == Outcome.UNSUBSCRIBED
@@ -417,9 +464,11 @@ def test_a_suppressed_address_comes_before_the_lines_stop(machine, relaunch):
 
 @pytest.mark.parametrize("state", OPEN_STATES)
 def test_a_deal_neither_suppressed_nor_stopped_is_not_ended(machine, relaunch, state):
+    """Its state's step does its own work, which here finds nothing due and no box free."""
     deal = _deal(relaunch, state=state)
 
-    assert machine.fire(deal.pk, END_SUPPRESSED) is None
+    with no_box_is_free():
+        assert machine.fire(deal.pk) is None
 
     deal.refresh_from_db()
     assert (deal.state, deal.outcome) == (state, "")
@@ -428,8 +477,8 @@ def test_a_deal_neither_suppressed_nor_stopped_is_not_ended(machine, relaunch, s
 def test_an_ended_deal_cannot_be_ended_again(machine, relaunch):
     deal = _deal(relaunch, state=COMPLETED, stop=True)
 
-    with pytest.raises(TransitionError, match="doesn't leave completed"):
-        machine.fire(deal.pk, END_SUPPRESSED)
+    with pytest.raises(TransitionError, match="a final state"):
+        machine.fire(deal.pk)
 
 
 # ── One machine per folder ──
@@ -454,7 +503,7 @@ def test_a_deal_of_one_folder_is_not_seen_by_the_other(tmp_path, relaunch):
     assert other.state_of(deal.pk) is None
     assert other.history(deal.pk) == [] and other.progress_all() == []
     with pytest.raises(TransitionError, match="hasn't started"):
-        other.fire(deal.pk, END_SUPPRESSED)
+        other.fire(deal.pk)
     assert deal.state == awaiting(0)
 
 

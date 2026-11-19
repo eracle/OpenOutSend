@@ -419,8 +419,8 @@ def _turn_answering(message: str):
         prompts.append(prompt)
         return schema.model_validate({"to": CONVERSING, "message": message})
 
-    with patch("openoutsend.machines.machine._ModelTurn.ask", autospec=True, side_effect=ask), \
-            patch("openoutsend.machines.machine._ModelTurn.decided_by", "llm:test:test"):
+    with patch("openoutsend.machines.steps.ModelTurn.ask", autospec=True, side_effect=ask), \
+            patch("openoutsend.machines.steps.ModelTurn.decided_by", "llm:test:test"):
         yield prompts
 
 

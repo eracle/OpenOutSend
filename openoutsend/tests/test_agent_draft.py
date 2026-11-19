@@ -19,7 +19,7 @@ from openoutsend.core.agents.outreach import Email
 from openoutsend.core.sequences import key
 from openoutsend.emails.models import Direction, Message, Thread
 from openoutsend.errors import DraftPending, OutsendError
-from openoutsend.leads.lifecycle import TURN, machine_of
+from openoutsend.leads.lifecycle import machine_of
 from openoutsend.leads.models import Outcome, PendingDraft
 from openoutsend.leads.states import COMPLETED, CONVERSING, awaiting, machine_name, sending
 from openoutsend.send_pass import run_send_pass
@@ -72,7 +72,7 @@ def no_mail():
 def no_model():
     """Neither model — the one that writes a step, the one that takes a turn — may be asked."""
     with patch("openoutsend.core.agents.outreach.write_email") as writes, \
-            patch("openoutsend.machines.machine._ModelTurn.ask") as turns:
+            patch("openoutsend.machines.steps.ModelTurn.ask") as turns:
         yield
     writes.assert_not_called()
     turns.assert_not_called()
@@ -353,7 +353,7 @@ class TestAReply:
             run_send_pass(agent_draft=AgentDraft(active=True, body="Which ones?"))
 
         move = machine_of(deal).history(deal.pk)[-1]
-        assert (move.step, move.from_state, move.to_state) == (TURN, CONVERSING, CONVERSING)
+        assert (move.from_state, move.to_state) == (CONVERSING, CONVERSING)
         assert move.decided_by == "agent"
         assert deal.state == CONVERSING
 

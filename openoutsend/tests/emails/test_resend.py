@@ -215,7 +215,7 @@ def test_the_step_sends_the_link_its_line_was_piped_with(operator):
 
 @pytest.mark.django_db
 def test_an_answer_in_the_conversation_sends_the_link_its_line_was_piped_with(operator):
-    from openoutsend.leads.lifecycle import TURN, machine_of
+    from openoutsend.leads.lifecycle import machine_of
 
     box = _resend_box()
     sent = maillog.outbound(box, to="lead@corp.com", subject="Ten leads",
@@ -227,7 +227,7 @@ def test_an_answer_in_the_conversation_sends_the_link_its_line_was_piped_with(op
         machine=machine_name(deal.sequence), entity=str(deal.pk))
     maillog.inbound(box, thread=sent.thread, sender="lead@corp.com")
     with patch.object(resend, "send", return_value="em_1") as post:
-        machine_of(deal).fire(deal.pk, TURN, entity=deal,
+        machine_of(deal).fire(deal.pk, entity=deal,
                               answer={"to": CONVERSING, "message": "Thanks, here's the link."})
     payload = post.call_args.args[1]
     assert payload["headers"]["List-Unsubscribe"] == f"<{UNSUBSCRIBE}>"

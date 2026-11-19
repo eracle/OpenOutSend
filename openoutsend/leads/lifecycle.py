@@ -8,20 +8,25 @@ machine per folder under the folder's name (`leads/states.machine_name`):
     awaiting_E<k>   a wait: step k's gap, after the deal's `start_at` for the step it
                     opens with, in business days after step k-1 went for the rest
     sending_E<k>    step k is due and waits for a box the send guards say is free
-    conversing      after the last step: the model answers whoever wrote back, and
-                    silence closes the deal
+    conversing      after the last step, when the install holds conversations
+                    (``OUTSEND_CONVERSATIONS``, `core/conf.py`): the model answers
+                    whoever wrote back, and silence closes the deal
     completed       over, with `Deal.outcome` saying why
 
 A deal's state is kept by `agentic_fsm` (its Django backend's two tables, in this
-store): one current-state row per deal and an append-only log of every move, with the
-step that made it. Nothing writes a deal's state except a step of its machine, so a
-folder's rows are its whole graph, and a move's time in the log is what the next wait
+store): one current-state row per deal and an append-only log of every move. Each state
+has one step, declared below, and nothing writes a deal's state except that step, so a
+folder's edges are its whole graph, and a move's time in the log is what the next wait
 counts from. Nothing about timing is kept on the deal.
+
+**Every state's step first ends a deal that must stop**: one whose address is
+suppressed, or whose line was piped with `stop`. Then it does its own work.
 
 **Neither half of a step decides.** The wait runs out, the send sends: an email
 template as written, a prompt template through the model, and the deal moves on either
 way. A reply never stops or skips a step. A deal that wrote back is answered in
-`conversing`, where the model reads the whole thread.
+`conversing`, where the model reads the whole thread; an install that holds no
+conversations ends the deal `sent` with its last step, and a reply is only stored.
 
 **Which box sends is chosen before the send runs.** The send guards (warm capacity,
 pacing, the sending window) are the caller's: the send pass (`send_pass.py`) sets what
@@ -38,7 +43,7 @@ from __future__ import annotations
 import types
 from functools import lru_cache
 
-from agentic_fsm import FinalState, State, States, check
+from agentic_fsm import FinalState, InitialState, State, States, Step
 
 from openoutsend.leads.states import (
     COMPLETED,
@@ -50,21 +55,6 @@ from openoutsend.leads.states import (
     sending,
 )
 
-END_SUPPRESSED = "end_suppressed"
-CLOSE_MISSED = "close_missed"
-OPEN_LATER = "open_later"
-TURN = f"{CONVERSING}_turn"
-RAN_QUIET = f"{CONVERSING}_ran_out"
-
-
-class Sending(State):
-    """A deal whose ``step`` is due: it rests here until a box may send it."""
-
-    def __init__(self, description: str, *, step, **options):
-        super().__init__(description, **options)
-        self.step = step
-
-
 # ── Finding a deal's machine ──
 
 
@@ -75,14 +65,20 @@ def machine_of(deal):
     return machine_for(for_deal(deal))
 
 
-@lru_cache(maxsize=64)
 def machine_for(sequence):
     """The machine a sequence folder is, built once per folder as it reads now."""
+    from openoutsend.core.conf import conversations
+
+    return _machine(sequence, conversations())
+
+
+@lru_cache(maxsize=64)
+def _machine(sequence, converses: bool):
     from openoutsend.machines import MailMachine
 
-    states = _states(sequence)
+    states = _states(sequence, converses)
     return MailMachine(
-        states, _rows(sequence, states),
+        states, _edges(sequence, states, converses),
         load=load_deal,
         address=lambda deal: deal.lead.email,
         unsubscribe_url=_unsubscribe_url,
@@ -182,38 +178,123 @@ def _quiet_until(sequence):
     return closes_at
 
 
-# ── The states ──
+# ── The steps ──
 
 
-def _states(sequence) -> type[States]:
-    """The folder's states: a wait and a send per step, the conversation, the end."""
-    from openoutsend.leads import conversing
-    from openoutsend.machines import Conversation, Wait
+class DealStep(Step):
+    """A deal state's step: end a deal that must stop, else do the state's own work.
 
-    def declare(namespace):
-        for step in sequence.steps:
-            number = step.number
-            namespace[awaiting(number)] = Wait(
-                f"Waiting for the day {step.path.name} is due.",
-                rests=_step_due(sequence, step), initial=number == 0, tags={WAITING},
-            )
-            namespace[sending(number)] = Sending(
-                f"{step.path.name} is due, and goes when the send guards have a box free. "
-                "A deal with no address rests here until one arrives.",
-                step=step, tags={SENDING},
-            )
-        namespace[CONVERSING] = Conversation(
-            "Every step has gone. The model answers whoever wrote back, and reads the "
-            "whole thread to do it; silence closes the deal.",
+    A subclass says what the state does (``proceed``) and why a deal it ends itself is
+    over (``closes_as``). The outcome is written with the move, as the step's effect.
+    """
+
+    reads_only = True
+    closes_as = ""
+
+    def run(self, deal, targets: tuple):
+        if _must_stop(deal):
+            return _target(targets, COMPLETED)
+        return self.proceed(deal, targets)
+
+    def proceed(self, deal, targets: tuple):
+        raise NotImplementedError
+
+    def effect(self, deal, result) -> None:
+        if result != COMPLETED:
+            return
+        deal.outcome = _stopped_as(deal) or self.closes_as
+        deal.save()
+
+
+class Awaiting(DealStep):
+    """Waiting for a step's day. The first one also places a deal that arrived late:
+    at the first step not past its grace, or at the end when every step was."""
+
+    def __init__(self, sequence, step):
+        from openoutsend.leads.models import Outcome
+        from openoutsend.machines import Wait
+
+        self.sequence = sequence
+        self.number = step.number
+        self.wait = Wait(rests=_step_due(sequence, step), to=sending(step.number))
+        self.closes_as = Outcome.MISSED
+
+    def proceed(self, deal, targets: tuple):
+        if self.number == 0:
+            opening = opening_step(deal, self.sequence)
+            if opening is None:
+                return _target(targets, COMPLETED)
+            if opening[0].number != 0:
+                return _target(targets, awaiting(opening[0].number))
+        return self.wait
+
+
+class Sending(DealStep):
+    """Sending a step that is due: as written, or through the model when it is a prompt.
+
+    ``file`` is the step of the sequence it sends. With no box free it says "not now".
+    """
+
+    reads_only = False
+
+    def __init__(self, step, after: str):
+        from openoutsend.leads.models import Outcome
+
+        self.file = step
+        self.after = after
+        self.closes_as = Outcome.SENT
+
+    def proceed(self, deal, targets: tuple):
+        from openoutsend.emails.steps.send import send_step
+        from openoutsend.planner import plan_for
+
+        plan = getattr(deal, "plan", None) or plan_for(deal)
+        if plan is None or not send_step(deal, self.file, plan):
+            return None
+        deal.save()
+        return _target(targets, self.after)
+
+
+class Conversing(DealStep):
+    """Every step has gone: the conversation over the deal's thread has it."""
+
+    def __init__(self, sequence):
+        from openoutsend.leads import conversing
+        from openoutsend.machines import Conversation
+
+        self.conversation = Conversation(
             prompt=lambda deal: conversing.prompt_for(deal, sequence),
             rests=_quiet_until(sequence),
+            to=COMPLETED,
             then=_close_unresponsive,
             schema=conversing.DealTurn,
             effect=conversing.record_turn,
         )
-        namespace[COMPLETED] = FinalState("Over, with the deal's outcome saying why.")
 
-    return types.new_class("DealState", (States,), exec_body=declare)
+    def proceed(self, deal, targets: tuple):
+        return self.conversation
+
+
+def _must_stop(deal) -> bool:
+    """Whether *deal* is over whatever its state: its address suppressed, or its line
+    piped with `stop`."""
+    from openoutsend.leads.suppression import is_suppressed
+
+    return deal.stop or is_suppressed(deal.lead.email)
+
+
+def _stopped_as(deal) -> str:
+    """Why a deal that must stop is over, or ``""`` for one that need not.
+
+    Whoever suppressed the address sets the outcome first (`unsubscribed` or
+    `undeliverable`); one fired with none is taken for an opt-out.
+    """
+    from openoutsend.leads.models import Outcome
+    from openoutsend.leads.suppression import is_suppressed
+
+    if is_suppressed(deal.lead.email):
+        return deal.outcome or Outcome.UNSUBSCRIBED
+    return Outcome.STOPPED if deal.stop else ""
 
 
 def _close_unresponsive(deal) -> None:
@@ -225,100 +306,62 @@ def _close_unresponsive(deal) -> None:
     deal.save(update_fields=["outcome", "updated_at"])
 
 
-# ── The rows ──
+def _target(targets: tuple, name: str):
+    """The state called *name* among a step's *targets*."""
+    return next(target for target in targets if target == name)
 
 
-def _rows(sequence, states) -> list:
-    """The folder's graph. The order of a state's rows is the order they are tried in."""
-    from openoutsend.machines import timed, turn
+# ── The states ──
 
+
+def _states(sequence, converses: bool) -> type[States]:
+    """The folder's states: a wait and a send per step, the conversation, the end."""
+    last = CONVERSING if converses else COMPLETED
+
+    def declare(namespace):
+        for step in sequence.steps:
+            number = step.number
+            following = sequence.after(number)
+            kind = InitialState if number == 0 else State
+            namespace[awaiting(number)] = kind(
+                f"Waiting for the day {step.path.name} is due.",
+                step=Awaiting(sequence, step), tags={WAITING},
+            )
+            namespace[sending(number)] = State(
+                f"{step.path.name} is due, and goes when the send guards have a box free. "
+                "A deal with no address rests here until one arrives.",
+                step=Sending(step, awaiting(following.number) if following else last), tags={SENDING},
+            )
+        if converses:
+            namespace[CONVERSING] = State(
+                "Every step has gone. The model answers whoever wrote back, and reads the "
+                "whole thread to do it; silence closes the deal.",
+                step=Conversing(sequence),
+            )
+        namespace[COMPLETED] = FinalState("Over, with the deal's outcome saying why.")
+
+    return types.new_class("DealState", (States,), exec_body=declare)
+
+
+# ── The edges ──
+
+
+def _edges(sequence, states, converses: bool) -> list:
+    """The folder's graph: where each state's step may send a deal."""
     steps = sequence.steps
-    first, completed, in_conversation = states(awaiting(0)), states(COMPLETED), states(CONVERSING)
+    completed = states(COMPLETED)
     still_open = tuple(state for state in states if state is not completed)
-    rows = [(still_open, completed, _end_suppressed(completed))]
-    if len(steps) > 1:
-        open_later = _open_later(sequence, states)
-        rows += [(first, states(awaiting(step.number)), open_later) for step in steps[1:]]
-    rows.append((first, completed, _close_missed(sequence, completed)))
+    edges = []
     for step in steps:
         following = sequence.after(step.number)
-        after = states(awaiting(following.number)) if following else in_conversation
-        waiting, due = states(awaiting(step.number)), states(sending(step.number))
-        rows.append((waiting, due, timed))
-        rows.append((due, after, _send(step, after)))
-    rows += [
-        (in_conversation, in_conversation, turn),
-        (in_conversation, completed, turn),
-        (in_conversation, completed, timed),
-    ]
-    return rows
-
-
-def _end_suppressed(completed):
-    def end_suppressed(deal):
-        """End an open deal whose address is suppressed, or whose line was piped with `stop`.
-
-        Sends nothing. Whoever suppressed the address sets the outcome first
-        (`unsubscribed` or `undeliverable`); one fired with none is taken for an opt-out.
-        """
-        from openoutsend.leads.models import Outcome
-        from openoutsend.leads.suppression import is_suppressed
-
-        if is_suppressed(deal.lead.email):
-            deal.outcome = deal.outcome or Outcome.UNSUBSCRIBED
-        elif deal.stop:
-            deal.outcome = Outcome.STOPPED
-        else:
-            return None
-        deal.save()
-        return completed
-
-    return end_suppressed
-
-
-def _open_later(sequence, states):
-    @check
-    def open_later(deal):
-        """Skip the steps already past their grace when the deal arrived: wait for the
-        first one that was not."""
-        opening = opening_step(deal, sequence)
-        if opening is None or opening[0].number == 0:
-            return None
-        return states(awaiting(opening[0].number))
-
-    return open_later
-
-
-def _close_missed(sequence, completed):
-    def close_missed(deal):
-        """End a deal every step of whose sequence was past its grace when it arrived."""
-        from openoutsend.leads.models import Outcome
-
-        if opening_step(deal, sequence) is not None:
-            return None
-        deal.outcome = Outcome.MISSED
-        deal.save()
-        return completed
-
-    return close_missed
-
-
-def _send(step, after):
-    def send(deal):
-        from openoutsend.emails.steps.send import send_step
-        from openoutsend.planner import plan_for
-
-        plan = getattr(deal, "plan", None) or plan_for(deal)
-        if plan is None or not send_step(deal, step, plan):
-            return None
-        deal.save()
-        return after
-
-    send.__name__ = send_name(step.number)
-    send.__doc__ = f"Send {step.path.name}: as written, or through the model when it is a prompt."
-    return send
-
-
-def send_name(number: int) -> str:
-    """The name of the step that sends step *number*."""
-    return f"send_E{number}"
+        due = states(sending(step.number))
+        edges.append((states(awaiting(step.number)), due))
+        if following:
+            edges.append((due, states(awaiting(following.number))))
+        elif converses:
+            edges.append((due, states(CONVERSING)))
+    edges += [(states(awaiting(0)), states(awaiting(step.number))) for step in steps[1:]]
+    if converses:
+        edges.append((states(CONVERSING), states(CONVERSING)))
+    edges.append((still_open, completed))
+    return edges

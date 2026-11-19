@@ -83,14 +83,14 @@ def suppress_email(
 
 
 def _end_open_deals(email: str, outcome: str, leaving) -> int:
-    """Fire `end_suppressed` on each open deal of *email*, with *outcome*. Returns how many ended.
+    """Fire each open deal of *email*, whose state's step ends it with *outcome*. Returns how many ended.
 
     A deal whose sequence folder this run cannot find is left open and said so: the
     address is on the list, so nothing can be sent to it, and the deal is ended by the
     next pass that has its folder.
     """
     from openoutsend.core.sequences import SequenceError
-    from openoutsend.leads.lifecycle import END_SUPPRESSED, machine_of
+    from openoutsend.leads.lifecycle import machine_of
 
     ended = 0
     open_deals = Deal.objects.filter(lead__email__iexact=email).open().select_related("lead")
@@ -99,7 +99,7 @@ def _end_open_deals(email: str, outcome: str, leaving) -> int:
     for deal in open_deals:
         deal.outcome = outcome
         try:
-            move = machine_of(deal).fire(deal.pk, END_SUPPRESSED, entity=deal)
+            move = machine_of(deal).fire(deal.pk, entity=deal)
         except SequenceError as error:
             logger.error("%s is suppressed, and its deal in %r stays open until a run "
                          "has that folder: %s", email, deal.sequence, error)

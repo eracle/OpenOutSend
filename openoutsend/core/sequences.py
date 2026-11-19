@@ -22,8 +22,9 @@ everything the engine reads::
 
     conversation[-<days>d].prompt.j2
 
-After the last step a deal rests in its conversation (``leads/lifecycle.py``), where
-the model answers whoever wrote back. This file is the prompt it answers from, rendered
+In an install that holds conversations (``conf.conversations``), a deal rests in its
+conversation after the last step (``leads/lifecycle.py``), where the model answers
+whoever wrote back. This file is the prompt it answers from, rendered
 with the same fields as a step, and ``<days>d`` is how many business days of silence
 close the conversation. A folder without the file gets the built-in prompt, written for
 cold outreach (``leads/conversing.py``), and the built-in gap

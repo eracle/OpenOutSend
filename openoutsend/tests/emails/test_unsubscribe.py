@@ -41,7 +41,7 @@ from openoutsend.emails.sender import (
 )
 from openoutsend.emails.steps.send import Plan, send_step
 from openoutsend.errors import OutsendError
-from openoutsend.leads.lifecycle import TURN, machine_of
+from openoutsend.leads.lifecycle import machine_of
 from openoutsend.leads.models import Outcome, Suppression
 from openoutsend.leads.states import COMPLETED, CONVERSING, awaiting, machine_name, sending
 from openoutsend.leads.suppression import suppress_email
@@ -232,7 +232,7 @@ def _model_turn(answer=None):
         return schema(to=COMPLETED, outcome="not_interested")
 
     answer = answer or end_it
-    return patch("openoutsend.machines.machine._ModelTurn.ask",
+    return patch("openoutsend.machines.steps.ModelTurn.ask",
                  side_effect=lambda prompt, entity, schema: answer(entity, schema))
 
 
@@ -342,7 +342,7 @@ def model_saying(**fields):
 
 
 def _take_turn(deal):
-    return machine_of(deal).fire(deal.pk, TURN, entity=deal)
+    return machine_of(deal).fire(deal.pk, entity=deal)
 
 
 @pytest.mark.django_db
@@ -357,7 +357,7 @@ class TestWordedUnsubscribe:
              patch("openoutsend.emails.sender.send_email") as send:
             move = _take_turn(deal)
 
-        assert (move.step, move.to_state) == (TURN, COMPLETED)
+        assert (move.decided_by, move.to_state) == ("llm:test:test", COMPLETED)
         deal.refresh_from_db()
         assert (deal.state, deal.outcome) == (COMPLETED, Outcome.UNSUBSCRIBED)
         assert suppressed(deal.lead)
@@ -375,7 +375,7 @@ class TestWordedUnsubscribe:
             _take_turn(deal)
 
         moves = machine_of(deal).history(deal.pk)
-        assert [move.step for move in moves if move.to_state == COMPLETED] == [TURN]
+        assert [move.decided_by for move in moves if move.to_state == COMPLETED] == ["llm:test:test"]
 
     def test_an_ordinary_ending_still_completes(self, site_config):
         """The reading above must not swallow the other seven outcomes."""

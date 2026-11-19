@@ -47,8 +47,8 @@ def steps(site_config):
 
     with patch("openoutsend.emails.mail_pass.run_mail_pass") as mail, \
             patch("openoutsend.emails.warmth.measure_pool") as measure, \
-            patch("openoutsend.machines.machine._ModelTurn.ask", autospec=True) as turn, \
-            patch("openoutsend.machines.machine._ModelTurn.decided_by", "llm:test:test"), \
+            patch("openoutsend.machines.steps.ModelTurn.ask", autospec=True) as turn, \
+            patch("openoutsend.machines.steps.ModelTurn.decided_by", "llm:test:test"), \
             patch("openoutsend.emails.steps.send.send_step") as send_step, \
             patch("openoutsend.core.agents.outreach.write_email",
                   return_value=Email(subject="Hi", message="Body")), \
@@ -162,6 +162,32 @@ def test_a_deal_whose_wait_ran_out_is_made_due_and_sent_in_the_same_pass(steps):
 
     assert result.opened == 1
     assert deal.state == CONVERSING
+
+
+def test_an_install_holding_no_conversations_ends_the_deal_with_its_last_send(steps, monkeypatch):
+    monkeypatch.setenv("OUTSEND_CONVERSATIONS", "off")
+    box = maillog.mailbox()
+    deal = _waiting()
+
+    with _free(box):
+        result = run_send_pass()
+
+    deal.refresh_from_db()
+    assert result.opened == 1
+    assert (deal.state, deal.outcome) == (COMPLETED, Outcome.SENT)
+
+
+def test_a_reply_to_a_broadcast_is_stored_and_nobody_answers_it(steps, monkeypatch):
+    monkeypatch.setenv("OUTSEND_CONVERSATIONS", "off")
+    box = maillog.mailbox()
+    deal = _in_thread(box, COMPLETED)
+    reply = maillog.inbound(box, thread=deal.thread, sender=deal.lead.email)
+
+    result = run_send_pass()
+
+    assert (result.answered, result.ended, result.failed) == (0, 0, 0)
+    assert not steps.turn.called
+    assert deal.thread.messages.order_by("pk").last() == reply
 
 
 def test_a_wait_that_ran_out_rests_as_due_when_no_box_is_free(steps):

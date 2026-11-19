@@ -190,7 +190,7 @@ def test_file_refuses_what_is_not_its_own(argv):
 def test_a_refused_filing_is_one_error_line(db, capsys):
     from openoutsend.__main__ import main
 
-    with patch("openoutsend.__main__._boot"):
+    with patch("openoutsend.__main__.setup"):
         assert main(["file", "--message", "ghost@corp.com", "--lead", "sample-7"]) == 1
 
     assert "error: no received message ghost@corp.com" in capsys.readouterr().err
@@ -200,7 +200,7 @@ def test_draft_pending_renders_as_one_typed_line(connected, capsys):
     from openoutsend.errors import DraftPending
     from openoutsend.__main__ import main
 
-    with patch("openoutsend.__main__._boot"), \
+    with patch("openoutsend.__main__.setup"), \
             patch("openoutsend.send_pass.run_send_pass",
                  side_effect=DraftPending("needs an opener", payload={"company": "Acme"})):
         code = main(["send", "--agent-draft"])
@@ -215,7 +215,7 @@ def test_draft_pending_carries_its_payload_under_json(connected, capsys):
     from openoutsend.errors import DraftPending
     from openoutsend.__main__ import main
 
-    with patch("openoutsend.__main__._boot"), \
+    with patch("openoutsend.__main__.setup"), \
             patch("openoutsend.send_pass.run_send_pass",
                  side_effect=DraftPending("needs an opener", payload={"company": "Acme"})):
         code = main(["send", "--agent-draft", "--json"])

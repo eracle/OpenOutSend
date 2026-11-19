@@ -14,8 +14,8 @@ In cold outreach both are doing **Mom Test research, not selling**: the goal of 
 ```
 awaiting_E<k>  ── the step's day comes ──▶  sending_E<k>  ── a box is free ──▶  awaiting_E<k+1> … conversing
                                                  │                                                  │
-                                    send_step(deal, step, plan)                        conversing_turn (a message waits)
-                                      ← emails/steps/send.py                             ← machines/machine.py
+                                    send_step(deal, step, plan)                        a turn (a message waits)
+                                      ← emails/steps/send.py                             ← machines/steps.py
                                                  │                                                  │
                           .email.j2: sent as written, no model call               the model reads the thread and the
                           .prompt.j2: write_email(deal, prompt, opener=)          conversation prompt, returns a DealTurn
@@ -64,7 +64,7 @@ Each send records its rendered prompt on the `Message` (`prompt`, `prompt_path`,
 | `conversing` | `message` | The message is sent in the thread (`References` = every Message-ID in it, `In-Reply-To` = the last), and the turn is logged as a move from `conversing` to itself. |
 | `completed` | `outcome` | Nothing is sent. The deal is closed with that outcome. `unsubscribed` also puts the address on the account-wide list, which ends the lead's other open deals. |
 
-A session can take a turn in the model's place, with no model key: `outsend send --agent-draft` hands the reply over, and `agfsm fire deal-<sequence>:<id> conversing_turn --agent` then `--answer` does the same for one deal. Its message is sent the same way, and the move is logged as decided by `agent`.
+A session can take a turn in the model's place, with no model key: `outsend send --agent-draft` hands the reply over, and `agfsm fire deal-<sequence>:<id> --agent` then `--answer` does the same for one deal. Its message is sent the same way, and the move is logged as decided by `agent`.
 
 ## What the model knows about the lead
 

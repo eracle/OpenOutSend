@@ -52,7 +52,7 @@ def test_each_deal_is_ended_by_its_own_logged_move(deal):
     suppress_email("anna@example.com", reason="asked to stop")
 
     move = machine_of(deal).history(deal.pk)[-1]
-    assert (move.step, move.from_state, move.to_state) == ("end_suppressed", "conversing", "completed")
+    assert (move.decided_by, move.from_state, move.to_state) == ("code", "conversing", "completed")
 
 
 def test_it_reaches_every_lead_holding_the_address(deal):
@@ -72,7 +72,7 @@ def test_it_reaches_the_leads_deal_in_every_sequence(deal, relaunch):
 
     other.refresh_from_db()
     assert (other.state, other.outcome) == (COMPLETED, Outcome.UNSUBSCRIBED)
-    assert machine_of(other).history(other.pk)[-1].step == "end_suppressed"
+    assert machine_of(other).history(other.pk)[-1].decided_by == "code"
 
 
 def test_an_ended_deal_says_why_it_ended(deal):

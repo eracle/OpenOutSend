@@ -147,7 +147,7 @@ def test_a_lead_owed_an_answer_is_not_closed_for_silence(written):
     _they_wrote("We do this by hand today.")
     let_days_pass(14)
 
-    with patch("openoutsend.machines.machine._ModelTurn.ask", side_effect=RuntimeError("model down")):
+    with patch("openoutsend.machines.steps.ModelTurn.ask", side_effect=RuntimeError("model down")):
         result = run_send_pass()
 
     assert (result.answered, result.gave_up, result.failed) == (0, 0, 1)
