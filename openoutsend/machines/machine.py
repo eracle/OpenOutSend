@@ -1,7 +1,7 @@
 """`MailMachine`: an `agentic_fsm.Machine` whose entities have an address, so its handlers
 may wait and converse.
 
-A `Wait` or a `Conversation` (`machines/handlers.py`) is given to a state as its handler, or
+A `Wait` or a `Recheck` (`machines/handlers.py`) is given to a state as its handler, or
 handed over to by a state's function. Either way it runs with nothing but the entity,
 so it asks the machine that is running it (`running()`) for the rest: since when the
 entity has rested where it is, what is waiting in its threads, and the send.
@@ -22,7 +22,7 @@ from django.utils import timezone
 
 from openoutsend.errors import OutsendError
 from openoutsend.machines import channel
-from openoutsend.machines.handlers import Conversation, Wait
+from openoutsend.machines.handlers import Recheck, Wait
 
 DJANGO_BACKEND = "agentic_fsm.backends.django"
 
@@ -38,7 +38,7 @@ def running() -> MailMachine:
     """The machine whose call is running the handler that asks."""
     machine = _RUNNING.get()
     if machine is None:
-        raise OutsendError("a Wait or a Conversation runs only as a handler of a MailMachine")
+        raise OutsendError("a Wait or a Recheck runs only as a handler of a MailMachine")
     return machine
 
 
@@ -169,9 +169,16 @@ class MailMachine(Machine):
             raise OutsendError(f"{self.name}:{self.key(entity)} has no message waiting for an answer")
         return channel.answer(message, body, prompt=prompt, unsubscribe_url=self.unsubscribe_url(entity))
 
-    def follow_up(self, entity, body: str, *, prompt: str = ""):
-        """Send *body* in *entity*'s newest thread, with nothing of theirs to answer."""
+    def follow_up(self, entity, body: str, *, prompt: str = "", subject: str | None = None, mailbox=None):
+        """Send *body* in *entity*'s newest thread, with nothing of theirs to answer.
+
+        With *subject* and *mailbox*, an entity that has no thread yet gets one opened
+        by this email; without them a follow-up with no thread to go in raises.
+        """
         to_address = self._sendable_address(entity)
+        if subject is not None and not channel.threads_of(self.name, self.key(entity)).exists():
+            return channel.open_thread(self.name, self.key(entity), mailbox, to_address, subject, body,
+                                       prompt=prompt, unsubscribe_url=self.unsubscribe_url(entity))
         return channel.follow_up(self.name, self.key(entity), to_address, body, prompt=prompt,
                                  unsubscribe_url=self.unsubscribe_url(entity))
 
@@ -195,8 +202,8 @@ def _check_mail_handlers(states: type[States], targets: dict) -> None:
         handler = state.handler
         if not isinstance(handler, Wait):
             continue
-        if isinstance(handler, Conversation) and state not in targets[state]:
-            raise MachineError(f"{state.name} holds a Conversation but has no edge back to itself")
+        if isinstance(handler, Recheck) and state not in targets[state]:
+            raise MachineError(f"{state.name} holds a Recheck but has no edge back to itself")
         try:
             handler.target(state, targets[state])
         except OutsendError as error:

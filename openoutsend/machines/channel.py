@@ -7,17 +7,26 @@ a thread's newest turn of theirs with no answer of ours after it.
 """
 from __future__ import annotations
 
-from openoutsend.emails.models import Direction, Message, Thread
-from openoutsend.emails.models.maillog import TURN_KINDS
+from typing import TYPE_CHECKING
+
+# The models are imported where they are used: a host declares its machines when its
+# modules load, before it has started Django (`openoutsend.setup()`).
+if TYPE_CHECKING:
+    from openoutsend.emails.models import Message
 
 
 def threads_of(machine: str, entity: str):
     """The threads kept against *entity* of *machine*, oldest first."""
+    from openoutsend.emails.models import Thread
+
     return Thread.objects.filter(machine=machine, entity=str(entity)).order_by("pk")
 
 
 def turns_of(machine: str, entity: str) -> list[Message]:
     """Every turn in the entity's threads, in the order it happened."""
+    from openoutsend.emails.models import Message
+    from openoutsend.emails.models.maillog import TURN_KINDS
+
     return list(
         Message.objects
         .filter(thread__in=threads_of(machine, entity), kind__in=TURN_KINDS)
@@ -61,6 +70,8 @@ def open_thread(machine: str, entity: str, mailbox, to_address: str, subject: st
     send raises (`sender.Refused`) inside the caller's transaction, which takes the
     thread back with it.
     """
+    from openoutsend.emails.models import Thread
+
     thread = Thread.objects.create(mailbox=mailbox, machine=machine, entity=str(entity))
     return _send(mailbox, to_address, subject, body, thread=thread, prompt=prompt,
                  unsubscribe_url=unsubscribe_url)
@@ -113,6 +124,8 @@ def _send(mailbox, to_address, subject, body, **options) -> Message:
 
 def _reply_subject(thread) -> str:
     """``Re:`` the subject the thread opened with, without stacking a second ``Re:``."""
+    from openoutsend.emails.models import Direction
+
     opener = thread.turns().filter(direction=Direction.OUTBOUND).first()
     subject = opener.subject if opener else ""
     return subject if subject.lower().startswith("re:") else f"Re: {subject}"

@@ -260,9 +260,9 @@ class Conversing(DealHandler):
 
     def __init__(self, sequence):
         from openoutsend.leads import conversing
-        from openoutsend.machines import Conversation
+        from openoutsend.machines import Recheck
 
-        self.conversation = Conversation(
+        self.conversation = Recheck(
             prompt=lambda deal: conversing.prompt_for(deal, sequence),
             rests=_quiet_until(sequence),
             to=COMPLETED,

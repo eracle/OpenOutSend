@@ -1,4 +1,5 @@
-"""The handlers: one that waits, one that converses, and what a conversation logs."""
+"""The handlers: `Wait`, which rests, and `Recheck`, which follows up and answers over
+an email thread, with what a turn and a follow-up log."""
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
@@ -30,7 +31,7 @@ class Turn(Decision):
     """One turn of a conversation: stay with a message, or leave.
 
     A conversation whose turn carries more (why it ended) declares a subclass with the
-    fields it adds (``Conversation(schema=)``); the whole turn is logged with its move.
+    fields it adds (``Recheck(schema=)``); the whole turn is logged with its move.
     """
 
     to: States
@@ -125,8 +126,9 @@ class Wait(Handler):
         return others[0]
 
 
-class Conversation(Wait):
-    """A handler that holds an email thread with the entity, and may follow up while it is quiet.
+class Recheck(Wait):
+    """A handler that comes back to the entity by email: it follows up while they are
+    quiet, and answers when they write.
 
     In this order, each time it runs:
 
@@ -147,6 +149,11 @@ class Conversation(Wait):
     the entity and the turn or follow-up, run after its message is sent and before its
     move is written.
 
+    ``subject`` and ``mailbox`` let the first follow-up open the thread, for an entity
+    nobody has written to through this store yet: the subject it opens under (text, or
+    a function of the entity) and a function of the entity that returns the box it
+    leaves from. Without them, a follow-up with no thread to go in raises.
+
     The state it is given to needs an edge to itself. A function may hand over to one
     (``return nudging``) after checking its facts; the function is then marked
     ``@check``, so a session can take the turn (``brief``, ``fire(answer=)``).
@@ -154,8 +161,18 @@ class Conversation(Wait):
 
     def __init__(self, *, prompt: str | Callable[[object], str], rests, to=None, then=None,
                  follow_ups: Iterable = (), schema: type[Turn] = Turn,
-                 effect: Callable[[object, Decision], None] | None = None):
+                 effect: Callable[[object, Decision], None] | None = None,
+                 subject: str | Callable[[object], str] | None = None,
+                 mailbox: Callable[[object], object] | None = None):
         super().__init__(rests=rests, to=to, then=then)
+        if (subject is None) != (mailbox is None):
+            raise TypeError("subject= and mailbox= go together: what the first follow-up opens a thread with")
+        if subject is not None and not callable(subject) and not (isinstance(subject, str) and subject.strip()):
+            raise TypeError(f"subject= must be text or a function of the entity, got {subject!r}")
+        if mailbox is not None and not callable(mailbox):
+            raise TypeError(f"mailbox= must be a function of the entity, got {mailbox!r}")
+        self.subject = subject
+        self.mailbox = mailbox
         if not callable(prompt) and not (isinstance(prompt, str) and prompt.strip()):
             raise TypeError(f"prompt= must be text or a function of the entity, got {prompt!r}")
         if not (isinstance(schema, type) and issubclass(schema, Turn)):
@@ -224,7 +241,8 @@ class Conversation(Wait):
         if follow_up:
             asked += (f"\n\nNothing has arrived since the last message above. "
                       f"Write follow-up {follow_up} of {len(self.follow_ups)}.")
-        return f"## Everything so far\n\n{running().transcript(entity)}\n\n## Decide now\n\n{asked}"
+        thread = running().transcript(entity) or "Nothing has been sent to them through this thread yet."
+        return f"## Everything so far\n\n{thread}\n\n## Decide now\n\n{asked}"
 
     def _sent(self, entity, decision, state) -> None:
         """Send what *decision* wrote in *state*, then run the conversation's own effect."""
@@ -233,11 +251,18 @@ class Conversation(Wait):
         machine = running()
         prompt = self.prompt_for(entity)
         if isinstance(decision, FollowUpTurn):
-            machine.follow_up(entity, decision.message, prompt=prompt)
+            machine.follow_up(entity, decision.message, prompt=prompt, **self._opening(entity))
         elif decision.to == state:
             machine.answer(entity, decision.message, prompt=prompt)
         if self.on_turn is not None:
             self.on_turn(entity, decision)
+
+    def _opening(self, entity) -> dict:
+        """What a follow-up opens a thread with, for an entity that has none."""
+        if self.subject is None:
+            return {}
+        subject = self.subject(entity) if callable(self.subject) else self.subject
+        return {"subject": subject, "mailbox": self.mailbox(entity)}
 
 
 class ModelTurn(Decide):

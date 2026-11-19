@@ -1,10 +1,12 @@
-"""Two handlers for an `agentic_fsm` machine: one that waits, one that converses.
+"""Two handlers for an `agentic_fsm` machine: `Wait`, which rests for a time, and
+`Recheck`, which comes back to someone by email, following up while they are quiet and
+answering when they write.
 
     from datetime import timedelta
     from agentic_fsm import FinalState, InitialState, State, States, check
-    from openoutsend.machines import Conversation, MailMachine
+    from openoutsend.machines import Recheck, MailMachine
 
-    talking = Conversation(
+    talking = Recheck(
         prompt="They were asked to narrow the request. ...",
         follow_ups=[timedelta(days=2), timedelta(days=4)],   # written by the model
         rests=timedelta(days=5), to="dropped",               # silence after the last one
@@ -41,6 +43,6 @@ Which conversations exist, what their prompts say and where they lead is declare
 whoever builds the machine. None is declared here.
 """
 from openoutsend.machines.machine import MailMachine
-from openoutsend.machines.handlers import Conversation, FollowUp, FollowUpTurn, Turn, Wait
+from openoutsend.machines.handlers import Recheck, FollowUp, FollowUpTurn, Turn, Wait
 
-__all__ = ["Conversation", "FollowUp", "FollowUpTurn", "MailMachine", "Turn", "Wait"]
+__all__ = ["Recheck", "FollowUp", "FollowUpTurn", "MailMachine", "Turn", "Wait"]

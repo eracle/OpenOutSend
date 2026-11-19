@@ -17,7 +17,7 @@ from pydantic_ai.models.test import TestModel
 from openoutsend.emails.models import Message, Thread
 from openoutsend.errors import OutsendError
 from openoutsend.leads.suppression import suppress_email
-from openoutsend.machines import Conversation, FollowUp, MailMachine, Turn, Wait
+from openoutsend.machines import Recheck, FollowUp, MailMachine, Turn, Wait
 from openoutsend.machines.machine import running
 from openoutsend.tests.emails import maillog
 
@@ -41,7 +41,7 @@ class Request(States):
     held = State("Held a day before anything is asked", handler=Wait(rests=timedelta(days=1)))
     asking = State("Due its question", handler=ask)
     asked = State("Asked a question, talking it over",
-                  handler=Conversation(prompt=HOW_TO_ANSWER, rests=timedelta(days=5), to="dropped"))
+                  handler=Recheck(prompt=HOW_TO_ANSWER, rests=timedelta(days=5), to="dropped"))
     accepted = FinalState("Their answer makes the request workable")
     dropped = FinalState("They declined, or never answered")
 
@@ -336,7 +336,7 @@ def test_somebody_suppressed_is_owed_none_and_leaves_by_time(requests):
 # ── A conversation that waits for an action and follows up ──
 
 
-nudging = Conversation(
+nudging = Recheck(
     prompt="They were sent a quote. Answer what they ask.",
     follow_ups=[FollowUp(timedelta(days=1), "Did the quote reach you?"), timedelta(days=4)],
     rests=timedelta(days=5),
@@ -494,7 +494,7 @@ def test_nobody_suppressed_is_followed_up(visitors):
 
 def test_a_follow_up_needs_a_thread_to_go_in(table):
     class Guest(States):
-        waiting = InitialState("Waiting", handler=Conversation(
+        waiting = InitialState("Waiting", handler=Recheck(
             prompt="Answer them.", follow_ups=[FollowUp(timedelta(days=1), "Hello?")], rests=timedelta(days=5)))
         gone = FinalState("Gone")
 
@@ -505,6 +505,31 @@ def test_a_follow_up_needs_a_thread_to_go_in(table):
         guests.fire(1)
 
     assert len(guests.history(1)) == 1
+
+
+def test_the_first_follow_up_opens_the_thread_when_given_a_subject_and_a_box(table, box):
+    class Guest(States):
+        waiting = InitialState("Waiting", handler=Recheck(
+            prompt="Answer them.", follow_ups=[FollowUp(timedelta(days=1), "Hello?"), timedelta(days=2)],
+            rests=timedelta(days=5), subject="Your visit", mailbox=lambda guest: guest.box))
+        gone = FinalState("Gone")
+
+    guests = mail_machine(Guest, [(Guest.waiting, Guest.waiting), (Guest.waiting, Guest.gone)], table, name="guest")
+    guests.start(1)
+
+    with later(days=1, minutes=1):
+        guests.fire(1)
+    with later(days=3, minutes=2), model_saying(to="waiting", message="Still there?"):
+        guests.fire(1)
+
+    opener, second = Thread.objects.get(machine="guest", entity="1").messages.order_by("pk")
+    assert (opener.to_address, opener.subject, opener.thread.mailbox) == (ASKER, "Your visit", box)
+    assert (second.subject, second.in_reply_to) == ("Re: Your visit", opener.message_id)
+
+
+def test_a_subject_and_a_box_to_open_a_thread_go_together():
+    with pytest.raises(TypeError, match="subject= and mailbox= go together"):
+        Recheck(prompt="Answer them.", rests=timedelta(days=5), subject="Your visit")
 
 
 # ── The thread finds its entity ──
@@ -532,7 +557,7 @@ def talk(table, edges=(("talking", "talking"), ("talking", "done"), ("talking", 
     """A machine whose one state holds a conversation, with *edges* given by name."""
 
     class Talk(States):
-        talking = InitialState("Talking", handler=Conversation(
+        talking = InitialState("Talking", handler=Recheck(
             prompt="Answer them.", rests=timedelta(days=5), **conversation))
         done = FinalState("Done")
         dropped = FinalState("Dropped")
@@ -541,7 +566,7 @@ def talk(table, edges=(("talking", "talking"), ("talking", "done"), ("talking", 
 
 
 def test_a_conversation_needs_an_edge_back_to_itself(table):
-    with pytest.raises(MachineError, match="talking holds a Conversation but has no edge back to itself"):
+    with pytest.raises(MachineError, match="talking holds a Recheck but has no edge back to itself"):
         talk(table, edges=[("talking", "done"), ("talking", "dropped")], to="dropped")
 
 
@@ -562,16 +587,16 @@ def test_a_wait_needs_a_length(rests):
 
 def test_a_conversation_needs_a_prompt():
     with pytest.raises(TypeError, match="prompt= must be"):
-        Conversation(prompt="  ", rests=timedelta(days=1))
+        Recheck(prompt="  ", rests=timedelta(days=1))
 
 
 def test_what_a_wait_or_a_conversation_runs_must_be_a_function():
     with pytest.raises(TypeError, match="then= must be a function"):
         Wait(rests=timedelta(days=1), then="close it")
     with pytest.raises(TypeError, match="effect= must be a function"):
-        Conversation(prompt="Answer them.", rests=timedelta(days=1), effect="record it")
+        Recheck(prompt="Answer them.", rests=timedelta(days=1), effect="record it")
     with pytest.raises(TypeError, match="schema= must be a subclass of Turn"):
-        Conversation(prompt="Answer them.", rests=timedelta(days=1), schema=dict)
+        Recheck(prompt="Answer them.", rests=timedelta(days=1), schema=dict)
 
 
 def test_a_follow_up_needs_a_gap_and_real_text():
@@ -656,7 +681,7 @@ def talking(table, **conversation):
 
     class Talk(States):
         new = InitialState("New", handler=ask)
-        talking = State("Talking it over", handler=Conversation(
+        talking = State("Talking it over", handler=Recheck(
             prompt=HOW_TO_ANSWER, rests=timedelta(days=5), to="dropped", **conversation))
         accepted = FinalState("Their answer makes the request workable")
         dropped = FinalState("They declined, or never answered")
