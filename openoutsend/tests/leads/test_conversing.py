@@ -22,7 +22,7 @@ from openoutsend.leads.lifecycle import machine_of
 from openoutsend.leads.models import Deal, Outcome
 from openoutsend.leads.states import COMPLETED, CONVERSING, awaiting, machine_name
 from openoutsend.leads.suppression import is_suppressed
-from openoutsend.machines.steps import ModelTurn
+from openoutsend.machines.handlers import ModelTurn
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.factories import DealFactory, LeadFactory, put_in_state
 

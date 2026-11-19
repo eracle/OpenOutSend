@@ -1,7 +1,7 @@
 """OpenOutSend: the sending half of OpenOutreach, as a command (`outsend`) and as a library.
 
 A program that calls it in its own process (`leads.ingest.ingest`,
-`send_pass.run_send_pass`, the steps in `machines/`) calls `setup()` once first.
+`send_pass.run_send_pass`, the handlers in `machines/`) calls `setup()` once first.
 """
 import os
 import sys

@@ -15,7 +15,7 @@ In cold outreach both are doing **Mom Test research, not selling**: the goal of 
 awaiting_E<k>  ── the step's day comes ──▶  sending_E<k>  ── a box is free ──▶  awaiting_E<k+1> … conversing
                                                  │                                                  │
                                     send_step(deal, step, plan)                        a turn (a message waits)
-                                      ← emails/steps/send.py                             ← machines/steps.py
+                                      ← emails/steps/send.py                             ← machines/handlers.py
                                                  │                                                  │
                           .email.j2: sent as written, no model call               the model reads the thread and the
                           .prompt.j2: write_email(deal, prompt, opener=)          conversation prompt, returns a DealTurn

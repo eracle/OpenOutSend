@@ -72,7 +72,7 @@ def no_mail():
 def no_model():
     """Neither model — the one that writes a step, the one that takes a turn — may be asked."""
     with patch("openoutsend.core.agents.outreach.write_email") as writes, \
-            patch("openoutsend.machines.steps.ModelTurn.ask") as turns:
+            patch("openoutsend.machines.handlers.ModelTurn.ask") as turns:
         yield
     writes.assert_not_called()
     turns.assert_not_called()

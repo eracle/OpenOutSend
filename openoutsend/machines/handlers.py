@@ -1,10 +1,10 @@
-"""The steps: one that waits, one that converses, and what a conversation logs."""
+"""The handlers: one that waits, one that converses, and what a conversation logs."""
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from datetime import datetime, timedelta
 
-from agentic_fsm import Decide, Decision, States, Step
+from agentic_fsm import Decide, Decision, States, Handler
 from pydantic import Field, create_model, model_validator
 from pydantic_ai import Agent
 
@@ -71,8 +71,8 @@ class FollowUp:
         return self.text(entity) if callable(self.text) else self.text
 
 
-class Wait(Step):
-    """A step that leaves an entity resting for a time.
+class Wait(Handler):
+    """A handler that leaves an entity resting for a time.
 
     ``rests`` is how long: a ``timedelta``, or a function of the entity and the moment
     it entered that returns when the wait runs out (business days, a date the entity
@@ -85,7 +85,7 @@ class Wait(Step):
     ``then`` is a function of the entity, run with the move when the wait runs out,
     under the entity's lock: what the entity records about having waited in vain.
 
-    The step only reads, so ``due()`` asks it; ``then`` runs as its effect.
+    The handler only reads, so ``due()`` asks it; ``then`` runs as its effect.
     """
 
     reads_only = True
@@ -126,7 +126,7 @@ class Wait(Step):
 
 
 class Conversation(Wait):
-    """A step that holds an email thread with the entity, and may follow up while it is quiet.
+    """A handler that holds an email thread with the entity, and may follow up while it is quiet.
 
     In this order, each time it runs:
 
@@ -192,7 +192,7 @@ class Conversation(Wait):
         return self.target(rest.state, targets)
 
     def effect(self, entity, result) -> None:
-        """What goes with a result this step returned itself: a written follow-up is
+        """What goes with a result this handler returned itself: a written follow-up is
         sent, a wait that ran out runs ``then``."""
         if isinstance(result, FollowUpTurn):
             self._sent(entity, result, result.to)

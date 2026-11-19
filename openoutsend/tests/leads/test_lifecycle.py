@@ -112,10 +112,10 @@ def test_a_folder_becomes_two_states_a_step_then_the_conversation_and_the_end(ma
     assert [state.kind for state in graph.states].count("final") == 1
 
 
-def test_every_state_has_its_one_step_and_its_edges(machine):
+def test_every_state_has_its_one_handler_and_its_edges(machine):
     graph = machine.graph()
 
-    assert [state.step for state in graph.states] == [
+    assert [state.handler for state in graph.states] == [
         "Awaiting", "Sending", "Awaiting", "Sending", "Awaiting", "Sending", "Conversing", None,
     ]
     assert sorted(graph.edges) == sorted([
@@ -404,7 +404,7 @@ def test_the_step_a_late_deal_opens_with_is_due_as_counted_from_when_the_skipped
 
 
 def test_progress_carries_a_late_deal_to_the_step_it_opens_with(machine, relaunch):
-    """One state's step at a time: the skip, then that step's wait, then a send with no box."""
+    """One state's handler at a time: the skip, then that step's wait, then a send with no box."""
     deal = _deal(relaunch, start_at=november(2), created_at=november(13))
 
     with on(november(16, 1)), no_box_is_free():
@@ -464,7 +464,7 @@ def test_a_suppressed_address_comes_before_the_lines_stop(machine, relaunch):
 
 @pytest.mark.parametrize("state", OPEN_STATES)
 def test_a_deal_neither_suppressed_nor_stopped_is_not_ended(machine, relaunch, state):
-    """Its state's step does its own work, which here finds nothing due and no box free."""
+    """Its state's handler does its own work, which here finds nothing due and no box free."""
     deal = _deal(relaunch, state=state)
 
     with no_box_is_free():

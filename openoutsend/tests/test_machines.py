@@ -37,11 +37,11 @@ def ask(request):
 
 
 class Request(States):
-    received = InitialState("Just arrived", step=hold)
-    held = State("Held a day before anything is asked", step=Wait(rests=timedelta(days=1)))
-    asking = State("Due its question", step=ask)
+    received = InitialState("Just arrived", handler=hold)
+    held = State("Held a day before anything is asked", handler=Wait(rests=timedelta(days=1)))
+    asking = State("Due its question", handler=ask)
     asked = State("Asked a question, talking it over",
-                  step=Conversation(prompt=HOW_TO_ANSWER, rests=timedelta(days=5), to="dropped"))
+                  handler=Conversation(prompt=HOW_TO_ANSWER, rests=timedelta(days=5), to="dropped"))
     accepted = FinalState("Their answer makes the request workable")
     dropped = FinalState("They declined, or never answered")
 
@@ -144,9 +144,9 @@ def test_a_wait_counts_from_the_move_that_brought_the_entity_there(requests):
 
 def test_a_wait_may_say_when_it_runs_out_from_the_entity(table):
     class Parcel(States):
-        packed = InitialState("Packed", step=lambda parcel: Parcel.stored)
+        packed = InitialState("Packed", handler=lambda parcel: Parcel.stored)
         stored = State("Stored until its pickup date",
-                       step=Wait(rests=lambda parcel, entered_at: parcel.pickup_at))
+                       handler=Wait(rests=lambda parcel, entered_at: parcel.pickup_at))
         gone = FinalState("Picked up")
 
     parcels = mail_machine(Parcel, [(Parcel.packed, Parcel.stored), (Parcel.stored, Parcel.gone)], table)
@@ -162,21 +162,21 @@ def test_a_wait_may_say_when_it_runs_out_from_the_entity(table):
 
 def test_a_wait_runs_only_in_a_mail_machine(table):
     class Parcel(States):
-        stored = InitialState("Stored a day", step=Wait(rests=timedelta(days=1)))
+        stored = InitialState("Stored a day", handler=Wait(rests=timedelta(days=1)))
         gone = FinalState("Picked up")
 
     parcels = Machine(Parcel, [(Parcel.stored, Parcel.gone)], load=table.__getitem__,
                       backend="agentic_fsm.backends.locmem")
     parcels.start(1)
 
-    with pytest.raises(OutsendError, match="only as a step of a MailMachine"):
+    with pytest.raises(OutsendError, match="only as a handler of a MailMachine"):
         parcels.fire(1)
 
 
 # ── Asking by email ──
 
 
-def test_a_step_opens_a_thread_kept_against_the_entity(requests, nothing_leaves_the_machine):
+def test_a_handler_opens_a_thread_kept_against_the_entity(requests, nothing_leaves_the_machine):
     thread = asked(requests)
 
     assert requests.state_of(1) is Request.asked
@@ -357,8 +357,8 @@ def quoted(visitor):
 
 
 class Visitor(States):
-    new = InitialState("Asked for a quote", step=quote)
-    quoted = State("Sent a quote; we wait for the payment", step=quoted)
+    new = InitialState("Asked for a quote", handler=quote)
+    quoted = State("Sent a quote; we wait for the payment", handler=quoted)
     ordered = FinalState("Paid; set only when a payment arrived")
     handed = FinalState("Passed to a person")
     quiet = FinalState("Never paid, never answered")
@@ -494,7 +494,7 @@ def test_nobody_suppressed_is_followed_up(visitors):
 
 def test_a_follow_up_needs_a_thread_to_go_in(table):
     class Guest(States):
-        waiting = InitialState("Waiting", step=Conversation(
+        waiting = InitialState("Waiting", handler=Conversation(
             prompt="Answer them.", follow_ups=[FollowUp(timedelta(days=1), "Hello?")], rests=timedelta(days=5)))
         gone = FinalState("Gone")
 
@@ -532,7 +532,7 @@ def talk(table, edges=(("talking", "talking"), ("talking", "done"), ("talking", 
     """A machine whose one state holds a conversation, with *edges* given by name."""
 
     class Talk(States):
-        talking = InitialState("Talking", step=Conversation(
+        talking = InitialState("Talking", handler=Conversation(
             prompt="Answer them.", rests=timedelta(days=5), **conversation))
         done = FinalState("Done")
         dropped = FinalState("Dropped")
@@ -551,7 +551,7 @@ def test_a_wait_with_several_ways_out_says_which(table):
     with pytest.raises(MachineError, match="no edge to 'gone'"):
         talk(table, to="gone")
 
-    assert talk(table, to="dropped").states.talking.step.to == "dropped"
+    assert talk(table, to="dropped").states.talking.handler.to == "dropped"
 
 
 @pytest.mark.parametrize("rests", [5, "a week", None])
@@ -588,13 +588,13 @@ def shelving(table, **wait):
     """A machine whose one wait is its initial state: a parcel shelved a day, then gone."""
 
     class Parcel(States):
-        shelved = InitialState("Shelved a day", step=Wait(rests=timedelta(days=1), **wait))
+        shelved = InitialState("Shelved a day", handler=Wait(rests=timedelta(days=1), **wait))
         gone = FinalState("Gone")
 
     return mail_machine(Parcel, [(Parcel.shelved, Parcel.gone)], table, name="parcel")
 
 
-def test_a_wait_may_be_the_initial_states_step(table):
+def test_a_wait_may_be_the_initial_states_handler(table):
     parcels = shelving(table)
 
     move = parcels.start(1)
@@ -655,8 +655,8 @@ def talking(table, **conversation):
         return Talk.talking
 
     class Talk(States):
-        new = InitialState("New", step=ask)
-        talking = State("Talking it over", step=Conversation(
+        new = InitialState("New", handler=ask)
+        talking = State("Talking it over", handler=Conversation(
             prompt=HOW_TO_ANSWER, rests=timedelta(days=5), to="dropped", **conversation))
         accepted = FinalState("Their answer makes the request workable")
         dropped = FinalState("They declined, or never answered")

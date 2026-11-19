@@ -6,7 +6,7 @@ send 5` is a *goal*, and `send_job.py` reaches it by running this repeatedly and
 out the clock in between. Nothing here waits, so the pass stays the thing a timer can
 also fire on its own.
 
-Every move is made by the step of a deal's state (`leads/lifecycle.py`); the pass only
+Every move is made by the handler of a deal's state (`leads/lifecycle.py`); the pass only
 says which deals to fire, in an order where each feeds the next:
 
     read      IMAP → rows → kinds → events, suppression   (`emails/mail_pass.py`)
@@ -522,9 +522,9 @@ def _try(result: PassResult, doing: str, deal, machine, **options):
 
 
 def _fire(machine, deal, *, plan=None, answer=None):
-    """Run the step of *deal*'s state, in *machine*'s one transaction. Returns the move.
+    """Run the handler of *deal*'s state, in *machine*'s one transaction. Returns the move.
 
-    The machine locks the deal's state, runs the step and writes the move in one
+    The machine locks the deal's state, runs the handler and writes the move in one
     transaction, so the mail-log row, the transport call, the deal's fields and its new
     state commit together, after the send: a pass killed before the commit leaves nothing
     half-recorded — no row, the deal where it was, and the step due again on the next

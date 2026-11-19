@@ -15,11 +15,11 @@ machine per folder under the folder's name (`leads/states.machine_name`):
 
 A deal's state is kept by `agentic_fsm` (its Django backend's two tables, in this
 store): one current-state row per deal and an append-only log of every move. Each state
-has one step, declared below, and nothing writes a deal's state except that step, so a
+has one handler, declared below, and nothing writes a deal's state except it, so a
 folder's edges are its whole graph, and a move's time in the log is what the next wait
 counts from. Nothing about timing is kept on the deal.
 
-**Every state's step first ends a deal that must stop**: one whose address is
+**Every state's handler first ends a deal that must stop**: one whose address is
 suppressed, or whose line was piped with `stop`. Then it does its own work.
 
 **Neither half of a step decides.** The wait runs out, the send sends: an email
@@ -34,7 +34,7 @@ they chose on the deal as its `plan` and fires with the deal in hand. A fire wit
 deal in hand (the `agfsm` CLI, `progress`) asks the planner for that one deal, so a
 send made from the CLI is one the pass could have made right now, and no other.
 
-**A step saves the deal itself**, the fields its send wrote and the outcome, and the
+**A handler saves the deal itself**, the fields its send wrote and the outcome, and the
 fire runs in one transaction that holds the deal's state row from read to move, so the
 send's row, the deal and the move commit together.
 """
@@ -43,7 +43,7 @@ from __future__ import annotations
 import types
 from functools import lru_cache
 
-from agentic_fsm import FinalState, InitialState, State, States, Step
+from agentic_fsm import FinalState, InitialState, Handler, State, States
 
 from openoutsend.leads.states import (
     COMPLETED,
@@ -103,7 +103,7 @@ def __getattr__(name: str):
 
 
 def load_deal(deal_id: str):
-    """The deal with its lead and box, as every step reads it."""
+    """The deal with its lead and box, as every handler reads it."""
     from openoutsend.leads.models import Deal
 
     return Deal.objects.select_related("lead", "mailbox", "thread").get(pk=deal_id)
@@ -178,14 +178,14 @@ def _quiet_until(sequence):
     return closes_at
 
 
-# ── The steps ──
+# ── The handlers ──
 
 
-class DealStep(Step):
-    """A deal state's step: end a deal that must stop, else do the state's own work.
+class DealHandler(Handler):
+    """A deal state's handler: end a deal that must stop, else do the state's own work.
 
     A subclass says what the state does (``proceed``) and why a deal it ends itself is
-    over (``closes_as``). The outcome is written with the move, as the step's effect.
+    over (``closes_as``). The outcome is written with the move, as the handler's effect.
     """
 
     reads_only = True
@@ -206,7 +206,7 @@ class DealStep(Step):
         deal.save()
 
 
-class Awaiting(DealStep):
+class Awaiting(DealHandler):
     """Waiting for a step's day. The first one also places a deal that arrived late:
     at the first step not past its grace, or at the end when every step was."""
 
@@ -229,7 +229,7 @@ class Awaiting(DealStep):
         return self.wait
 
 
-class Sending(DealStep):
+class Sending(DealHandler):
     """Sending a step that is due: as written, or through the model when it is a prompt.
 
     ``file`` is the step of the sequence it sends. With no box free it says "not now".
@@ -255,7 +255,7 @@ class Sending(DealStep):
         return _target(targets, self.after)
 
 
-class Conversing(DealStep):
+class Conversing(DealHandler):
     """Every step has gone: the conversation over the deal's thread has it."""
 
     def __init__(self, sequence):
@@ -307,7 +307,7 @@ def _close_unresponsive(deal) -> None:
 
 
 def _target(targets: tuple, name: str):
-    """The state called *name* among a step's *targets*."""
+    """The state called *name* among a handler's *targets*."""
     return next(target for target in targets if target == name)
 
 
@@ -325,18 +325,19 @@ def _states(sequence, converses: bool) -> type[States]:
             kind = InitialState if number == 0 else State
             namespace[awaiting(number)] = kind(
                 f"Waiting for the day {step.path.name} is due.",
-                step=Awaiting(sequence, step), tags={WAITING},
+                handler=Awaiting(sequence, step), tags={WAITING},
             )
             namespace[sending(number)] = State(
                 f"{step.path.name} is due, and goes when the send guards have a box free. "
                 "A deal with no address rests here until one arrives.",
-                step=Sending(step, awaiting(following.number) if following else last), tags={SENDING},
+                handler=Sending(step, awaiting(following.number) if following else last),
+                tags={SENDING},
             )
         if converses:
             namespace[CONVERSING] = State(
                 "Every step has gone. The model answers whoever wrote back, and reads the "
                 "whole thread to do it; silence closes the deal.",
-                step=Conversing(sequence),
+                handler=Conversing(sequence),
             )
         namespace[COMPLETED] = FinalState("Over, with the deal's outcome saying why.")
 
@@ -347,7 +348,7 @@ def _states(sequence, converses: bool) -> type[States]:
 
 
 def _edges(sequence, states, converses: bool) -> list:
-    """The folder's graph: where each state's step may send a deal."""
+    """The folder's graph: where each state's handler may send a deal."""
     steps = sequence.steps
     completed = states(COMPLETED)
     still_open = tuple(state for state in states if state is not completed)

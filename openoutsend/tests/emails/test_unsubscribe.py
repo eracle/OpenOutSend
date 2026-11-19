@@ -232,7 +232,7 @@ def _model_turn(answer=None):
         return schema(to=COMPLETED, outcome="not_interested")
 
     answer = answer or end_it
-    return patch("openoutsend.machines.steps.ModelTurn.ask",
+    return patch("openoutsend.machines.handlers.ModelTurn.ask",
                  side_effect=lambda prompt, entity, schema: answer(entity, schema))
 
 

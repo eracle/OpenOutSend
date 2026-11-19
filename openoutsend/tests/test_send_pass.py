@@ -47,8 +47,8 @@ def steps(site_config):
 
     with patch("openoutsend.emails.mail_pass.run_mail_pass") as mail, \
             patch("openoutsend.emails.warmth.measure_pool") as measure, \
-            patch("openoutsend.machines.steps.ModelTurn.ask", autospec=True) as turn, \
-            patch("openoutsend.machines.steps.ModelTurn.decided_by", "llm:test:test"), \
+            patch("openoutsend.machines.handlers.ModelTurn.ask", autospec=True) as turn, \
+            patch("openoutsend.machines.handlers.ModelTurn.decided_by", "llm:test:test"), \
             patch("openoutsend.emails.steps.send.send_step") as send_step, \
             patch("openoutsend.core.agents.outreach.write_email",
                   return_value=Email(subject="Hi", message="Body")), \

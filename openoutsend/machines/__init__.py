@@ -1,4 +1,4 @@
-"""Two steps for an `agentic_fsm` machine: one that waits, one that converses.
+"""Two handlers for an `agentic_fsm` machine: one that waits, one that converses.
 
     from datetime import timedelta
     from agentic_fsm import FinalState, InitialState, State, States, check
@@ -17,8 +17,8 @@
         return talking                   # otherwise the conversation has it
 
     class Request(States):
-        received = InitialState("Just arrived", step=ask)    # calls requests.send(...)
-        asked    = State("We asked them a question and are talking it over", step=asked)
+        received = InitialState("Just arrived", handler=ask)    # calls requests.send(...)
+        asked    = State("We asked them a question and are talking it over", handler=asked)
         accepted = FinalState("Their answer makes the request workable")
         dropped  = FinalState("They declined, withdrew, or never answered")
 
@@ -32,7 +32,7 @@
 
 `agentic_fsm` keeps no clock and knows no channel: when a move is tried is its caller's
 job. Scheduling and the thread are this package's, built from what the library has: a
-step that says "not now", an edge from a state to itself, and a log whose newest row
+handler that says "not now", an edge from a state to itself, and a log whose newest row
 for an entity is the move that brought it where it is. Nothing here runs a clock
 either: a pass (`progress_all`) moves what is due when it is called, and paces what it
 sends with a tag and a limit.
@@ -41,6 +41,6 @@ Which conversations exist, what their prompts say and where they lead is declare
 whoever builds the machine. None is declared here.
 """
 from openoutsend.machines.machine import MailMachine
-from openoutsend.machines.steps import Conversation, FollowUp, FollowUpTurn, Turn, Wait
+from openoutsend.machines.handlers import Conversation, FollowUp, FollowUpTurn, Turn, Wait
 
 __all__ = ["Conversation", "FollowUp", "FollowUpTurn", "MailMachine", "Turn", "Wait"]

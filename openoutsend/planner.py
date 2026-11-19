@@ -65,7 +65,7 @@ def due_deals(sequence: str | None = None) -> list:
     for deal in waiting:
         state = _state_of(deal, machine_of(deal))
         if SENDING in state.tags:
-            deal.due_step = state.step.file
+            deal.due_step = state.handler.file
             due.append(deal)
     return due
 

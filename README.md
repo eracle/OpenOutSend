@@ -135,7 +135,7 @@ a copy of the `cold/` folder at `~/.openoutsend/sequences/cold/` replaces it who
 
 **A sequence is a machine, and a deal's state is where it is in it.** Each step is two states: the
 deal waits for the step's day (`awaiting_E<k>`), then for a box the guards say is free
-(`sending_E<k>`). Each state has one step, which first ends a deal that must stop and then does the
+(`sending_E<k>`). Each state has one handler, which first ends a deal that must stop and then does the
 state's own work. After the last send the deal is `completed`, with an outcome saying why: `sent`
 when nothing more was owed. `agfsm --machine openoutsend.leads.lifecycle:cold show` prints the
 built-in sequence's graph, and any folder under `~/.openoutsend/sequences/` by its name.
@@ -302,7 +302,7 @@ came across with the transport now assert against this side's own models.
 | `openoutsend/sequences/` | the built-in cold sequence, one prompt file per step |
 | `openoutsend/leads/lifecycle.py` | the deal machine ([AgenticFSM](https://github.com/eracle/AgenticFSM)): a sequence folder read as a machine, one per folder, with a wait and a send per step, then the conversation when the install holds them; the state and a log of each move live in the library's `agentic_fsm_*` tables under `deal-<sequence>`. `agfsm --machine openoutsend.leads.lifecycle:cold show` prints one |
 | `openoutsend/leads/conversing.py` | a deal's conversation: the prompt the model answers from, and what a turn records |
-| `openoutsend/machines/` | two steps for any AgenticFSM machine whose entities have an address, a deal or not, given to a state (`State(step=)`) or handed over to by a state's function. A `Wait` says "not now" for a time counted from the entity's newest move in the library's log, then moves it on. A `Conversation` holds an email thread: with a message waiting, the model answers in the thread (a logged move from the state to itself) or moves the entity along one of the state's edges; while it is quiet, each of its `follow_ups` is sent on its day, written text or left to the model, as one logged move; after the last, silence moves the entity on. `MailMachine` runs both and keeps each thread against its machine and entity. `openoutsend.setup()` starts Django for a program that calls any of this in its own process. The docstring of `machines/__init__.py` has an example |
+| `openoutsend/machines/` | two handlers for any AgenticFSM machine whose entities have an address, a deal or not, given to a state (`State(handler=)`) or handed over to by a state's function. A `Wait` says "not now" for a time counted from the entity's newest move in the library's log, then moves it on. A `Conversation` holds an email thread: with a message waiting, the model answers in the thread (a logged move from the state to itself) or moves the entity along one of the state's edges; while it is quiet, each of its `follow_ups` is sent on its day, written text or left to the model, as one logged move; after the last, silence moves the entity on. `MailMachine` runs both and keeps each thread against its machine and entity. `openoutsend.setup()` starts Django for a program that calls any of this in its own process. The docstring of `machines/__init__.py` has an example |
 | `openoutsend/planner.py` | the send guards: which box may carry a due send, and when the next can go |
 | `openoutsend/settings.py` | this repo's own Django settings — one host of the apps, not the only one |
 | `openoutsend/defaults.py` | what any host must splat: `APPS`, `state_dir()`, `app_settings()` |

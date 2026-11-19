@@ -83,7 +83,7 @@ def suppress_email(
 
 
 def _end_open_deals(email: str, outcome: str, leaving) -> int:
-    """Fire each open deal of *email*, whose state's step ends it with *outcome*. Returns how many ended.
+    """Fire each open deal of *email*, whose state's handler ends it with *outcome*. Returns how many ended.
 
     A deal whose sequence folder this run cannot find is left open and said so: the
     address is on the list, so nothing can be sent to it, and the deal is ended by the

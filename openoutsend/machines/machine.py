@@ -1,7 +1,7 @@
-"""`MailMachine`: an `agentic_fsm.Machine` whose entities have an address, so its steps
+"""`MailMachine`: an `agentic_fsm.Machine` whose entities have an address, so its handlers
 may wait and converse.
 
-A `Wait` or a `Conversation` (`machines/steps.py`) is given to a state as its step, or
+A `Wait` or a `Conversation` (`machines/handlers.py`) is given to a state as its handler, or
 handed over to by a state's function. Either way it runs with nothing but the entity,
 so it asks the machine that is running it (`running()`) for the rest: since when the
 entity has rested where it is, what is waiting in its threads, and the send.
@@ -22,7 +22,7 @@ from django.utils import timezone
 
 from openoutsend.errors import OutsendError
 from openoutsend.machines import channel
-from openoutsend.machines.steps import Conversation, Wait
+from openoutsend.machines.handlers import Conversation, Wait
 
 DJANGO_BACKEND = "agentic_fsm.backends.django"
 
@@ -35,10 +35,10 @@ def now() -> datetime:
 
 
 def running() -> MailMachine:
-    """The machine whose call is running the step that asks."""
+    """The machine whose call is running the handler that asks."""
     machine = _RUNNING.get()
     if machine is None:
-        raise OutsendError("a Wait or a Conversation runs only as a step of a MailMachine")
+        raise OutsendError("a Wait or a Conversation runs only as a handler of a MailMachine")
     return machine
 
 
@@ -77,7 +77,7 @@ class MailMachine(Machine):
         self.key = key
         self.unsubscribe_url = unsubscribe_url
         super().__init__(states, edges, load=load, backend=backend, name=name)
-        _check_mail_steps(states, self._targets)
+        _check_mail_handlers(states, self._targets)
 
     # ── Running ──
 
@@ -152,7 +152,7 @@ class MailMachine(Machine):
     def send(self, entity, subject: str, body: str, *, mailbox, prompt: str = ""):
         """Open a thread kept against *entity* with one email from *mailbox*; returns its row.
 
-        For a step to call, so the send commits with the step's move. ``prompt`` is what
+        For a handler to call, so the send commits with the handler's move. ``prompt`` is what
         the email was written from, recorded for the history a later turn reads.
         """
         to_address = self._sendable_address(entity)
@@ -185,19 +185,19 @@ class MailMachine(Machine):
 # ── Build-time checks ──
 
 
-def _check_mail_steps(states: type[States], targets: dict) -> None:
+def _check_mail_handlers(states: type[States], targets: dict) -> None:
     """A wait must know where it runs out to; a conversation needs a way to stay.
 
-    Only the steps given to a state are seen here. One a function hands over to is
+    Only the handlers given to a state are seen here. One a function hands over to is
     checked when it runs.
     """
     for state in states:
-        step = state.step
-        if not isinstance(step, Wait):
+        handler = state.handler
+        if not isinstance(handler, Wait):
             continue
-        if isinstance(step, Conversation) and state not in targets[state]:
+        if isinstance(handler, Conversation) and state not in targets[state]:
             raise MachineError(f"{state.name} holds a Conversation but has no edge back to itself")
         try:
-            step.target(state, targets[state])
+            handler.target(state, targets[state])
         except OutsendError as error:
             raise MachineError(str(error)) from None
