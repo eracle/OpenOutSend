@@ -64,9 +64,9 @@ and exits 0 when every line became a row. Its database is
 `OUTSEND_DATABASE_URL` puts it in Postgres) and it migrates itself on first run, so a fresh install
 is an ingest that works rather than a traceback.
 
-**`outsend send` is one pass**: it reads the mail, answers every thread the lead has replied in, writes
-again to the ones who went quiet, opens as many first emails as the guards allow *right now*, and
-exits. Reading first is what makes the rest honest — an opt-out that arrived overnight suppresses the
+**`outsend send` is one pass**: it reads the mail, answers every conversation with a reply waiting
+(in an install that holds them), sends every later step whose day has come, opens as many first
+emails as the guards allow *right now*, and exits. Reading first is what makes the rest honest — an opt-out that arrived overnight suppresses the
 person before anything is written to them. That is the form a timer wants, and it is what the cron
 line fires.
 
@@ -109,19 +109,23 @@ sending window is holding every box right now). No count yet — it is one pass 
 Don't pass `--agent-draft` unless you intend to answer every `draft_pending` it raises; without it,
 `AI_MODEL` writes every opener and step as before.
 
-**Replies come first.** A lead in their conversation who wrote back is handed over before any step,
+**Replies come first**, in an install that holds conversations (`OUTSEND_CONVERSATIONS=on`). A lead
+in their conversation who wrote back is handed over before any step,
 with `step: "reply"`, the line they were piped with as `fields`, and the whole thread followed by how
 to answer it as `prompt`. Answer with `--body` alone: it goes in their thread at once, whatever the
 send clocks say, and is logged as a turn decided by `agent`. Ending the conversation is not an answer
 `--agent-draft` takes: `agfsm fire deal-<sequence>:<id> --answer '{"to": "completed",
 "outcome": "not_interested"}'` does that for one deal.
-**`outsend file --message ID --lead ID` places a reply the headers could not**: an answer to mail this
-install did not send names nothing the store holds and is read as `unrelated`. Whoever sent that mail
-knows whose answer it is, and filing puts it, with its own thread, into that lead's newest conversation,
-where it is answered. Only `unrelated` mail is filed, and only into a lead that has a thread.
+
 **`--agent-draft` also drops the model out of
 `outsend check`'s requirements for that run** — `OUTSEND_AI_MODEL`/`OUTSEND_LLM_API_KEY` are never
 checked or pinged, since a key that will never be spent is not a reason to stop.
+
+**`outsend file --message ID --lead ID` places a reply the headers could not**: an answer to mail this
+install did not send names nothing the store holds and is read as `unrelated`. Whoever sent that mail
+knows whose answer it is, and filing puts it, with its own thread, into that lead's newest conversation,
+where it is answered. Only `unrelated` mail is filed, and only into a lead that has a thread. It sends
+nothing.
 
 So `find N emails --json | outsend && outsend send N` needs no cron entry at all: the second command
 returns when the conversations are open, whether that takes four minutes or spans a weekend. A timer
@@ -331,7 +335,7 @@ The environment is the operator seam — the only way in a timer has:
 | --- | --- |
 | `OUTSEND_OPERATOR_COUNTRY` | ISO 3166 alpha-2; resolves the operator's clock — the sending window for a lead with no `timezone`, and the midnight the daily cap rolls at |
 | `OUTSEND_OPERATOR_TIMEZONE` | an IANA zone (`Atlantic/Canary`) that overrides the country's first zone; a name the tz database doesn't know stops the run |
-| `OUTSEND_AI_MODEL` | a pydantic-ai `provider:model` id, e.g. `anthropic:claude-sonnet-4-5-20250929` |
+| `OUTSEND_AI_MODEL` | a pydantic-ai `provider:model` id, e.g. `anthropic:claude-haiku-5-5` |
 | `OUTSEND_LLM_API_KEY` / `OUTSEND_LLM_API_BASE` | credentials for it; pinged once per run before any mail moves |
 | `OUTSEND_PRODUCT_DOCS` / `OUTSEND_CAMPAIGN_TARGET` / `OUTSEND_BOOKING_LINK` | what a message is written from; the first two are required |
 | `OUTSEND_OPERATOR_NAME` / `OUTSEND_OPERATOR_EMAIL` | who signs the mail, and the address every send is blind-copied to (blank for none) |

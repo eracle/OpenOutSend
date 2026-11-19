@@ -1,6 +1,6 @@
 # Prompt Context Reference
 
-This describes what the outreach agent is given. Every call has two parts: the **frame**, `core/templates/prompts/frame.j2`, as the system prompt, with its variables assembled in **`core/agents/prompt.py`** (`base_context`); and the **user message**, built in `core/agents/outreach.py` (`conversation`): the history with the lead, then the prompt for this email.
+This describes what the outreach agent is given. Every call has two parts: the **frame**, `core/templates/prompts/frame.j2`, as the system prompt, with its variables assembled in **`core/agents/prompt.py`** (`base_context`); then the **history** with the lead as the call's message history, and last the **user message**, the prompt for this email (`core/agents/outreach.py`, `write_email`).
 
 There is **no Voyager profile dict**: the browser/scraping channel was removed. Lead context comes from the licensed Lead Finder payload that was stored at discovery, not from a live fetch.
 
@@ -19,8 +19,8 @@ A step file (`core/sequences.py`) is rendered before the model reads it, with th
 
 ## The history
 
-`core/agents/history.py:history(lead, now)`: every turn in every thread of every deal the lead is in, oldest first and verbatim. Each of our sends shows the prompt it was written from and the email as sent, each of theirs shows their words, and a `[NO REPLY for N business days]` marker follows each of our sends that went unanswered. Empty on a first touch, so an opener is written from its prompt alone.
+`core/agents/history.py:history(lead, now)`: every turn in every thread of every deal the lead is in, oldest first and verbatim, as Pydantic AI messages. Each of our sends is a turn of the model's own, the email as sent; each of theirs is their words; a `[no reply for N business days]` line follows each of our sends that went unanswered. The prompts our emails were written from are never in it. Empty on a first touch, so an opener is written from its prompt alone.
 
 ## Output
 
-`OutreachDecision{action, subject?, message?, outcome?}` for every message. `subject` is required on an opener and omitted in thread; `outcome` is required with `mark_completed`. There is no `follow_up_hours`: nothing is scheduled, so the agent is never asked when to speak next.
+A step returns an `Email{subject?, message}` (`core/agents/outreach.py`): `subject` is required on an opener and omitted in thread. A conversation's turn returns a `DealTurn{to, message?, outcome?}` (`leads/conversing.py`): `message` when it answers and stays in `conversing`, `outcome` when it ends the deal. Neither says when to speak next: nothing is scheduled by the model.

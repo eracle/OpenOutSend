@@ -21,7 +21,8 @@ awaiting_E<k>  ── the step's day comes ──▶  sending_E<k>  ── a box
                           .prompt.j2: write_email(deal, prompt, opener=)          conversation prompt, returns a DealTurn
                             ← core/agents/outreach.py                               ← leads/conversing.py
                             system: frame.j2                                        to=conversing + message: sent, stays
-                            user: history + "Write this email now" + prompt         to=completed + outcome: nothing sent
+                            message_history: the history                            to=completed + outcome: nothing sent
+                            user: "Write this email now" + prompt
 
   emails/mail_pass.py:run_mail_pass — on its own interval: sync mirrors each box into
   the mail log, classify reads the stored bytes, project acts on the reading.
@@ -40,18 +41,18 @@ awaiting_E<k>  ── the step's day comes ──▶  sending_E<k>  ── a box
 
 ## The history
 
-A step is written after every turn in every thread of every deal the lead is in, oldest first and verbatim, with no cap. A conversation's turn reads the turns of its own deal's thread, in the same form:
+The model is handed the history as the conversation itself: Pydantic AI's `message_history` (`core/agents/history.py`), each email we sent one of its own turns and each email they sent one of theirs, oldest first and verbatim, with no cap. A step is written after every turn in every thread of every deal the lead is in; a conversation's turn reads the turns of its own deal's thread. The prompt for the email at hand comes after it:
 
 ```
-[2026-10-01] PROMPT YOU WERE GIVEN:   the step's prompt, as rendered when it was sent
-[2026-10-01] YOU SENT (subject "…"):  the email, as sent
-[NO REPLY for 3 business days]
-[2026-10-06] PROMPT YOU WERE GIVEN:   the next step's prompt
-[2026-10-06] YOU SENT (subject "…"):
-[2026-10-07] THEY WROTE:              their reply, quoted history stripped
+user        Every email with them so far, oldest first.
+assistant   the E0 email, as sent
+user        [no reply for 3 business days]
+assistant   the E1 email, as sent
+user        their reply, quoted history stripped
+user        the prompt for this message
 ```
 
-Each send records its rendered prompt on the `Message` (`prompt`, `prompt_path`, `step`), so the history replays what the model was actually asked even after a step file is edited. Bounces and out-of-office mail are facts about the thread, not turns, and never reach the model.
+**What was said, never what we were told.** Each send records its rendered prompt on the `Message` (`prompt`, `prompt_path`, `step`), for whoever reads the mail log, but the model never reads it again: an old step's instructions would sit beside today's and disagree with them. Bounces and out-of-office mail are facts about the thread, not turns, and never reach the model. A session deciding in the model's place has no message history, so its brief carries the same history written out as text (`transcript`).
 
 ## What each call returns
 
