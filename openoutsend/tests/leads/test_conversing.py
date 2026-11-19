@@ -338,14 +338,18 @@ def test_nobody_owed_an_answer_is_closed_for_silence(deal):
 
 
 def given_to_the_model(deal) -> str:
-    """The prompt the turn's model is asked with, the model stubbed to answer."""
+    """The thread and the prompt the turn's model is given, written out, the model stubbed
+    to answer. The thread reaches the model as its message history (``test_machines.py``)."""
+    given = []
 
     def answer(turn, prompt, entity, schema):
+        given.append(ModelTurn.written_out(entity, prompt))
         return schema.model_validate({"to": "conversing", "message": "Noted."})
 
-    with model_saying(), patch.object(ModelTurn,"ask", autospec=True, side_effect=answer) as ask:
+    with model_saying(), patch.object(ModelTurn, "ask", autospec=True, side_effect=answer):
         machine_of(deal).fire(deal.pk)
-    return ask.call_args.args[1]
+    (prompt,) = given
+    return prompt
 
 
 def test_the_model_is_given_the_frame_the_whole_thread_and_the_built_in_prompt(deal):
@@ -355,7 +359,7 @@ def test_the_model_is_given_the_frame_the_whole_thread_and_the_built_in_prompt(d
 
     assert render_frame(deal) in prompt
     assert OPENER in prompt
-    assert "THEY WROTE:\nThe third one, she left that company." in prompt
+    assert "THEY WROTE:\n[" in prompt and "]\nThe third one, she left that company." in prompt
     assert prompt.endswith(conversing.BUILT_IN_PROMPT)
     assert prompt.index(OPENER) < prompt.index("THEY WROTE:") < prompt.index(render_frame(deal))
 

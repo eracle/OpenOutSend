@@ -101,13 +101,13 @@ class MailMachine(Machine):
         with self._as_running():
             return super().progress(entity_id)
 
-    def progress_all(self, tag: str | None = None, *, limit: int | None = None):
+    def progress_all(self, tag: str | None = None, **options):
         with self._as_running():
-            return super().progress_all(tag, limit=limit)
+            return super().progress_all(tag, **options)
 
-    def due(self, tag: str | None = None):
+    def due(self, tag: str | None = None, **options):
         with self._as_running():
-            return super().due(tag)
+            return super().due(tag, **options)
 
     # ── The wait ──
 
@@ -143,8 +143,14 @@ class MailMachine(Machine):
             return None
         return channel.incoming(self.name, self.key(entity))
 
+    def conversation(self, entity) -> list:
+        """Every turn in *entity*'s threads, as the model's message history."""
+        from openoutsend.core.agents.history import messages
+
+        return messages(channel.turns_of(self.name, self.key(entity)), now())
+
     def transcript(self, entity) -> str:
-        """Every turn in *entity*'s threads, as the model reads them."""
+        """Every turn in *entity*'s threads as text, for a session reading a brief."""
         from openoutsend.core.agents.history import transcript
 
         return transcript(channel.turns_of(self.name, self.key(entity)), now())

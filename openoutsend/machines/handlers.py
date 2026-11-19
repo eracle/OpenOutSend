@@ -12,7 +12,7 @@ from pydantic_ai import Agent
 from openoutsend.errors import OutsendError
 
 TURN_INSTRUCTIONS = """\
-You are handling one email conversation. Read the thread, then the instructions for it, and decide the next move.
+You are handling one email conversation. The emails so far are the conversation above: yours are the ones you sent, theirs are what they wrote. Read them, then the instructions that come last, and decide the next move.
 
 - To answer and keep the conversation open, set `to` to `{state}` and write `message`: the plain text of the email, with no subject line and no signature.
 - To end the conversation, set `to` to one of the other states. Nothing is sent then.
@@ -20,7 +20,7 @@ You are handling one email conversation. Read the thread, then the instructions 
 You can only send email in this thread. Never claim to have done anything outside it."""
 
 FOLLOW_UP_INSTRUCTIONS = """\
-You are handling one email conversation. Nothing has arrived since the last message in the thread. Read the thread, then the instructions for it, and write the next follow-up.
+You are handling one email conversation. The emails so far are the conversation above: yours are the ones you sent, theirs are what they wrote. Nothing has arrived since the last one. Read them, then the instructions that come last, and write the next follow-up.
 
 Set `to` to `{state}` and write `message`: the plain text of the email, with no subject line and no signature.
 
@@ -235,14 +235,12 @@ class Recheck(Wait):
         return self._turns[state, follow_up]
 
     def _model_prompt(self, entity, follow_up: int | None) -> str:
-        from openoutsend.machines.machine import running
-
+        """What the model is asked now, after the thread it is handed as its message history."""
         asked = self.prompt_for(entity)
         if follow_up:
             asked += (f"\n\nNothing has arrived since the last message above. "
                       f"Write follow-up {follow_up} of {len(self.follow_ups)}.")
-        thread = running().transcript(entity) or "Nothing has been sent to them through this thread yet."
-        return f"## Everything so far\n\n{thread}\n\n## Decide now\n\n{asked}"
+        return f"## Decide now\n\n{asked}"
 
     def _sent(self, entity, decision, state) -> None:
         """Send what *decision* wrote in *state*, then run the conversation's own effect."""
@@ -282,9 +280,12 @@ class ModelTurn(Decide):
         return f"llm:{model.system}:{model.model_name}"
 
     def ask(self, prompt, entity, schema):
+        """Put *prompt* to the install's model, after the entity's thread as its message history."""
         from openoutsend.core.llm import get_llm_model, run_agent_sync
+        from openoutsend.machines.machine import running
 
         run = self.agent.run(prompt, deps=entity, output_type=schema, model=get_llm_model(),
+                             message_history=running().conversation(entity) or None,
                              model_settings={"timeout": 60})
         return run_agent_sync(run).output
 
@@ -295,7 +296,21 @@ class ModelTurn(Decide):
         return self._logged(super().parse(answer, self._offered(targets)))
 
     def brief(self, entity, state, targets: tuple):
-        return super().brief(entity, state, self._offered(targets))
+        """The brief, with the thread written out before the prompt: a session has no message history."""
+        from dataclasses import replace
+
+        brief = super().brief(entity, state, self._offered(targets))
+        if brief.prompt is None:
+            return brief
+        return replace(brief, prompt=self.written_out(entity, brief.prompt))
+
+    @staticmethod
+    def written_out(entity, prompt: str) -> str:
+        """*prompt* after the entity's thread as text: what a session reads in the model's place."""
+        from openoutsend.machines.machine import running
+
+        thread = running().transcript(entity) or "Nothing has been sent to them through this thread yet."
+        return f"## Everything so far\n\n{thread}\n\n{prompt}"
 
     def _offered(self, targets: tuple) -> tuple:
         return (self.state,) if self.follow_up else targets

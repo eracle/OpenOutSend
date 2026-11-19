@@ -128,9 +128,11 @@ returns when the conversations are open, whether that takes four minutes or span
 firing a bare `outsend send` remains the other way to run it, and the two do not conflict — the pass is
 the same either way, and nothing here is state a lost process would strand.
 
-**Every email is written from the whole history with that person.** The model reads every earlier
-prompt, every email sent, every reply and how long each silence lasted, verbatim, and then the prompt
-for the email at hand. The first email's prompt is a file, `openoutsend/sequences/cold/E0-opener.prompt.j2`;
+**Every email is written from the whole history with that person.** The model is handed it as the
+conversation itself (Pydantic AI's `message_history`): every email sent as its own turn, every reply
+and how long each silence lasted as theirs, verbatim, and then the prompt for the email at hand. The
+prompts earlier emails were written from are kept in the mail log and never shown again, so an old
+step's instructions never sit beside the current one's. The first email's prompt is a file, `openoutsend/sequences/cold/E0-opener.prompt.j2`;
 a copy of the `cold/` folder at `~/.openoutsend/sequences/cold/` replaces it whole.
 
 **A sequence is a machine, and a deal's state is where it is in it.** Each step is two states: the

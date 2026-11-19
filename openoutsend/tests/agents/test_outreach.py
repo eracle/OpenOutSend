@@ -82,27 +82,64 @@ class TestTheFrame:
 
 class TestTheConversation:
     def test_a_first_email_is_its_prompt_alone(self, deal):
-        from openoutsend.core.agents.outreach import conversation
+        from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-        message = conversation(deal, "Say hello.")
+        seen = []
 
-        assert message == "## Write this email now\n\nSay hello."
+        def model(messages, info: AgentInfo):
+            seen.extend(messages)
+            return _email_call(info)
 
-    def test_the_prompt_comes_after_everything_so_far(self, deal):
-        from openoutsend.core.agents.outreach import conversation
+        with _the_model(FunctionModel(model)):
+            write_email_to(deal, "Say hello.")
+
+        (request,) = seen
+        assert [part.content for part in request.parts if part.part_kind == "user-prompt"] == [
+            "## Write this email now\n\nSay hello."]
+
+    def test_the_prompt_comes_after_the_history_handed_as_messages_with_no_old_prompt(self, deal):
+        from pydantic_ai.messages import ModelResponse
+        from pydantic_ai.models.function import AgentInfo, FunctionModel
 
         box = maillog.mailbox()
         deal.thread = Thread.objects.create(mailbox=box)
         deal.save()
         maillog.outbound(box, thread=deal.thread, body="Hello Anna.", step=0,
-                         prompt="Say hello.", sent_at=timezone.now() - timedelta(days=1))
+                         prompt="Say hello, and name the price.", sent_at=timezone.now() - timedelta(days=1))
         maillog.inbound(box, thread=deal.thread, body="Hi, who is this?")
+        seen = []
 
-        message = conversation(deal, "Answer them.")
+        def model(messages, info: AgentInfo):
+            seen.extend(messages)
+            return _email_call(info)
 
-        assert message.index("Hello Anna.") < message.index("Hi, who is this?") \
-            < message.index("Answer them.")
-        assert message.endswith("Answer them.")
+        with _the_model(FunctionModel(model)):
+            write_email_to(deal, "Answer them.")
+
+        ours = [message for message in seen if isinstance(message, ModelResponse)]
+        assert "Hello Anna." in ours[0].parts[0].content
+        text = repr(seen)
+        assert text.index("Hello Anna.") < text.index("Hi, who is this?") < text.index("Answer them.")
+        assert "price" not in text
+
+
+def write_email_to(deal, prompt):
+    from openoutsend.core.agents.outreach import write_email
+
+    return write_email(deal, prompt)
+
+
+def _email_call(info):
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+
+    tool = info.output_tools[0]
+    return ModelResponse(parts=[ToolCallPart(tool.name, {"message": "Hi."})])
+
+
+def _the_model(model):
+    from unittest.mock import patch
+
+    return patch("openoutsend.core.agents.outreach.get_llm_model", return_value=model)
 
 
 # ── The call ──────────────────────────────────────────────────────

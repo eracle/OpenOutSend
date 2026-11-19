@@ -233,6 +233,31 @@ def test_the_model_answers_and_the_turn_is_a_move_from_the_state_to_itself(reque
     assert requests.incoming(requests.load("1")) is None
 
 
+def test_the_model_is_handed_the_thread_as_its_message_history_and_never_an_old_prompt(requests):
+    from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    thread = asked(requests)
+    thread.messages.filter(direction="out").update(prompt="Ask in Italian, and name the price.")
+    they_wrote(thread)
+    seen = []
+
+    def model(messages, info: AgentInfo):
+        seen.extend(messages)
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"to": "asked", "message": "Thanks."})])
+
+    with patch("openoutsend.core.llm.get_llm_model", return_value=FunctionModel(model)):
+        requests.progress(1)
+
+    ours = [message for message in seen if isinstance(message, ModelResponse)]
+    theirs = [part.content for message in seen if isinstance(message, ModelRequest)
+              for part in message.parts if part.part_kind == "user-prompt"]
+    assert "Which country do you sell in?" in ours[0].parts[0].content
+    assert theirs[-2].endswith("\nItaly, mostly.")
+    assert theirs[-1].endswith(HOW_TO_ANSWER)
+    assert "price" not in repr(seen)
+
+
 def test_the_model_reads_the_whole_thread_and_the_conversations_prompt(requests):
     thread = asked(requests)
     they_wrote(thread, body="Italy, mostly.")
@@ -240,7 +265,7 @@ def test_the_model_reads_the_whole_thread_and_the_conversations_prompt(requests)
     brief = requests.brief(1)
 
     assert "Which country do you sell in?" in brief.prompt
-    assert "THEY WROTE:\nItaly, mostly." in brief.prompt
+    assert "THEY WROTE:\n[" in brief.prompt and "]\nItaly, mostly." in brief.prompt
     assert brief.prompt.endswith(HOW_TO_ANSWER)
     assert "set `to` to `asked`" in brief.instructions[0]
     assert [value for value, _ in brief.choices] == ["asked", "accepted", "dropped"]

@@ -416,7 +416,9 @@ def _turn_answering(message: str):
     prompts = []
 
     def ask(turn, prompt, entity, schema):
-        prompts.append(prompt)
+        from openoutsend.machines.handlers import ModelTurn
+
+        prompts.append(ModelTurn.written_out(entity, prompt))
         return schema.model_validate({"to": CONVERSING, "message": message})
 
     with patch("openoutsend.machines.handlers.ModelTurn.ask", autospec=True, side_effect=ask), \

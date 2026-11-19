@@ -2,8 +2,9 @@
 """The outreach agent: one call that writes one email of a sequence.
 
 Every step written from a prompt is the same call: the frame (``frame.j2``) as the
-system prompt, then the whole history with this lead (``core/agents/history.py``), then
-the step's prompt as rendered (``core/sequences.py``; cold's opener is
+system prompt, the whole history with this lead as the call's message history
+(``core/agents/history.py``: what was said, never the prompts earlier steps were written
+from), then the step's prompt as rendered (``core/sequences.py``; cold's opener is
 ``sequences/cold/E0-opener.prompt.j2``). ``emails/steps/send.py`` sends what comes back.
 
 **It writes and decides nothing.** Which step a deal is owed is its state and when it
@@ -64,7 +65,8 @@ def write_email(deal, prompt: str, *, opener: bool = False) -> Email:
         # No temperature: the current Claude models reject one that isn't their default.
         model_settings={"timeout": 60},
     )
-    email = run_agent_sync(agent.run(conversation(deal, prompt))).output
+    so_far = history(deal.lead, timezone.now())
+    email = run_agent_sync(agent.run(asked(prompt), message_history=so_far or None)).output
     if email is None:
         raise RuntimeError(f"LLM returned unparseable response for outreach to {public_id}")
     if opener and not email.subject:
@@ -79,10 +81,6 @@ def render_frame(deal) -> str:
                   today=timezone.now().strftime("%Y-%m-%d"))
 
 
-def conversation(deal, prompt: str) -> str:
-    """The user message: the history with this lead, then the prompt for this email."""
-    so_far = history(deal.lead, timezone.now())
-    now = f"## Write this email now\n\n{prompt}"
-    if not so_far:
-        return now
-    return f"## Everything so far\n\n{so_far}\n\n{now}"
+def asked(prompt: str) -> str:
+    """The user message that follows the history: the prompt for this email."""
+    return f"## Write this email now\n\n{prompt}"
