@@ -200,11 +200,6 @@ class Message(models.Model):
     def is_outbound(self) -> bool:
         return self.direction == Direction.OUTBOUND
 
-    @property
-    def is_pending(self) -> bool:
-        """Stored, not yet acted on — the third state ``processed_at`` exists to name."""
-        return self.processed_at is None
-
 
 class DeliveryEvent(models.Model):
     """One thing the world said about one of our sends.

@@ -60,12 +60,6 @@ def operator_country() -> str:
     return getattr(settings, "OUTSEND_OPERATOR_COUNTRY", "") or ""
 
 
-def seller_name() -> str:
-    """The seller's first name as the LLM knows it, with a username fallback."""
-    user = get_active_user()
-    return (user.first_name or "").strip() or user.username
-
-
 def seller_full_name() -> str:
     """The seller's full name for the prompt's identity binding."""
     user = get_active_user()
