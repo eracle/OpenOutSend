@@ -2,17 +2,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
 
-from openoutsend.core.business_time import add_business_days, business_days_between
-from openoutsend.core.sequences import Sequence, Step, key
+from openoutsend.core.sending_window import operator_timezone
 from openoutsend.emails.models import Kind, Thread
-from openoutsend.leads.lifecycle import opening_step
 from openoutsend.leads.models import Outcome
 from openoutsend.leads.states import COMPLETED, CONVERSING, awaiting, machine_name, sending
 from openoutsend.planner import (
@@ -26,7 +22,7 @@ from openoutsend.planner import (
     waiting_to_open,
 )
 from openoutsend.tests.emails import maillog
-from openoutsend.tests.factories import DealFactory, LeadFactory, put_in_state
+from openoutsend.tests.factories import DealFactory, LeadFactory, put_in_state, sequence_folder
 
 pytestmark = pytest.mark.django_db
 
@@ -36,16 +32,6 @@ def _due(*, email="lead@acme.com", since=None, **kwargs):
     deal = DealFactory(lead=LeadFactory(email=email), **kwargs)
     put_in_state(deal, sending(0), at=since)
     return deal
-
-
-@pytest.fixture
-def two_steps(tmp_path):
-    """A two-step folder, for a deal whose later step is due, under the key a deal records."""
-    folder = tmp_path / "two-steps"
-    folder.mkdir()
-    (folder / "E0-open.prompt.j2").write_text("Open.", encoding="utf-8")
-    (folder / "E1-3d-steer.prompt.j2").write_text("Steer.", encoding="utf-8")
-    return key(str(folder))
 
 
 def _in_thread(box, sequence, state, *, email="lead@acme.com", since=None, **kwargs):
@@ -209,52 +195,6 @@ def test_conversations_waiting_answers_the_oldest_reply_first():
     assert conversations_waiting() == [waited, fresh]
 
 
-# ── A deal's opening step ─────────────────────────────────────────
-#
-# Fixed dates, because the rule is in business days: 2026-10-05 is a Monday.
-
-
-def _three_steps() -> Sequence:
-    return Sequence(name="s", steps=tuple(
-        Step(number=n, days=days, name=f"e{n}", path=Path(f"E{n}-e{n}.prompt.j2"), source="")
-        for n, days in enumerate((2, 3, 5))
-    ))
-
-
-def _enrolled(start: str, arrived: str = "2026-10-05T09:00:00+00:00", zone: str = ""):
-    return SimpleNamespace(start_at=datetime.fromisoformat(start),
-                           created_at=datetime.fromisoformat(arrived),
-                           lead=SimpleNamespace(timezone=zone))
-
-
-def test_e0_is_due_its_days_after_start_at():
-    step, due = opening_step(_enrolled("2026-10-05T09:00:00+00:00"), _three_steps())
-
-    assert step.number == 0
-    assert due == datetime.fromisoformat("2026-10-07T00:00:00+00:00")
-
-
-def test_an_e0_past_its_grace_on_arrival_is_skipped_and_e1_counts_from_its_due_time():
-    """E0 was due Wednesday 30 September, three business days before the lead arrived."""
-    step, due = opening_step(_enrolled("2026-09-28T09:00:00+00:00"), _three_steps())
-
-    assert step.number == 1
-    assert due == datetime.fromisoformat("2026-10-05T00:00:00+00:00")
-
-
-def test_a_lead_arriving_after_every_step_was_due_opens_with_nothing():
-    assert opening_step(_enrolled("2026-08-03T09:00:00+00:00"), _three_steps()) is None
-
-
-def test_waiting_in_our_own_queue_never_skips_a_step():
-    """Lateness is measured against the arrival, not today: the queue is ours."""
-    deal = _enrolled("2026-08-03T09:00:00+00:00", arrived="2026-08-03T09:00:00+00:00")
-
-    step, _ = opening_step(deal, _three_steps())
-
-    assert step.number == 0
-
-
 # ── One queue, longest due first ──────────────────────────────────
 #
 # Friday 2026-10-09 at noon. A deal is due from the moment it came to rest in its
@@ -327,12 +267,10 @@ def test_a_pass_narrowed_to_a_sequence_queues_only_its_deals(site_config, two_st
 
 def test_an_agent_drafting_pass_queues_no_step_written_from_a_prompt(site_config, tmp_path):
     """A prompt step is the calling agent's to write; an email step has nothing to draft."""
-    folder = tmp_path / "as-written"
-    folder.mkdir()
-    (folder / "E0-hello.email.j2").write_text("Subject: Hello\n\nHi.", encoding="utf-8")
+    as_written = sequence_folder(tmp_path, "as-written", {"E0-hello.email.j2": "Subject: Hello\n\nHi."})
     maillog.mailbox(daily_limit=50)
     _opener_due_since("2026-10-05T09:00:00+00:00")
-    written = _due(email="written@acme.com", sequence=key(str(folder)))
+    written = _due(email="written@acme.com", sequence=as_written)
 
     with _open_window():
         assert [deal for deal, _ in sends_due(agent_drafted=True)] == [written]
@@ -400,12 +338,10 @@ def test_the_wait_is_for_the_earliest_morning_among_the_waiting_leads(site_confi
 
 def test_no_first_email_is_worth_waking_for_before_the_earliest_is_due(site_config, tmp_path):
     """A deal enrolled Friday for `E0-2d` is due Tuesday 00:00, so the wait is Tuesday 08:00."""
-    folder = tmp_path / "in-two-days"
-    folder.mkdir()
-    (folder / "E0-2d-open.prompt.j2").write_text("Open.", encoding="utf-8")
+    in_two_days = sequence_folder(tmp_path, "in-two-days", {"E0-2d-open.prompt.j2": "Open."})
     maillog.mailbox(daily_limit=50)
     DealFactory(lead=LeadFactory(email="rome@acme.com", timezone="Europe/Rome"),
-                sequence=key(str(folder)), start_at=FRIDAY_NOON, created_at=FRIDAY_NOON)
+                sequence=in_two_days, start_at=FRIDAY_NOON, created_at=FRIDAY_NOON)
 
     assert next_first_email_at(FRIDAY_NOON) == datetime.fromisoformat("2026-10-13T06:00:00+00:00")
 
@@ -521,68 +457,87 @@ def test_the_spacing_clock_is_read_again_for_each_send(site_config, two_steps):
         assert free_thread_box(deal) is None
 
 
-# ── Business days forward ─────────────────────────────────────────
+# ── When the pool could next open a conversation ──────────────────
+#
+# The guards `free_for_first_email` enforces, read as a clock rather than as a boolean,
+# which is what lets a bounded run wait for them.
 
 
-def test_add_business_days_steps_over_the_weekend():
-    friday = datetime.fromisoformat("2026-10-09T15:00:00+00:00")
-
-    assert add_business_days(friday, 1) == datetime.fromisoformat("2026-10-12T00:00:00+00:00")
-    assert business_days_between(friday, add_business_days(friday, 3)) == 3
-
-
-def test_add_business_days_of_zero_is_the_start_itself():
-    friday = datetime.fromisoformat("2026-10-09T15:00:00+00:00")
-
-    assert add_business_days(friday, 0) == friday
+def _window_held_open():
+    """Ask the clock with the window held open, so one gate is tested at a time."""
+    return patch("openoutsend.core.sending_window.next_window_open",
+                 side_effect=lambda moment, zone=None: moment)
 
 
-def test_with_the_weekend_pause_off_every_day_counts(settings):
-    """An operator who sends at weekends waits in calendar days: Friday + 1 is Saturday."""
-    settings.OUTSEND_ENFORCE_WEEKEND_PAUSE = False
-    friday = datetime.fromisoformat("2026-10-09T15:00:00+00:00")
-    monday = datetime.fromisoformat("2026-10-12T09:00:00+00:00")
-
-    assert add_business_days(friday, 1) == datetime.fromisoformat("2026-10-10T00:00:00+00:00")
-    assert add_business_days(friday, 3) == datetime.fromisoformat("2026-10-12T00:00:00+00:00")
-    assert business_days_between(friday, monday) == 3
-    assert business_days_between(friday, friday + timedelta(days=15)) == 15
+def test_no_mailbox_is_the_one_answer_no_clock_resolves():
+    """None, not a time: waiting cannot connect a box, so a run must stop instead."""
+    assert next_first_email_at() is None
 
 
-def test_working_days_are_counted_on_the_leads_calendar(settings):
-    """Friday 22:00 UTC is already Saturday 09:00 in Sydney, so the next working day
-    there is Monday in Sydney — Sunday 13:00 UTC — and Thursday evening UTC to Friday
-    morning UTC is no working day at all in Sydney, where both are Friday."""
-    from zoneinfo import ZoneInfo
+def test_a_free_box_could_send_now():
+    maillog.mailbox()
+    now = timezone.now()
 
-    settings.OUTSEND_ENFORCE_WEEKEND_PAUSE = True
-    sydney = ZoneInfo("Australia/Sydney")
-    friday_night = datetime.fromisoformat("2026-10-09T22:00:00+00:00")
-
-    assert add_business_days(friday_night, 1, sydney) == datetime.fromisoformat("2026-10-11T13:00:00+00:00")
-    assert add_business_days(friday_night, 1) == datetime.fromisoformat("2026-10-12T00:00:00+00:00")
-
-    thursday_evening = datetime.fromisoformat("2026-10-08T20:00:00+00:00")
-    friday_morning = datetime.fromisoformat("2026-10-09T10:00:00+00:00")
-    assert business_days_between(thursday_evening, friday_morning, sydney) == 0
-    assert business_days_between(thursday_evening, friday_morning) == 1
+    with _window_held_open():
+        assert next_first_email_at(now) == now
 
 
-def test_a_sydney_leads_opener_skips_the_sydney_weekend(settings):
-    """Enrolled Friday 22:00 UTC (Saturday in Sydney) with E0 two working days out:
-    Tuesday 00:00 in Sydney, not Tuesday 00:00 UTC."""
-    settings.OUTSEND_ENFORCE_WEEKEND_PAUSE = True
-    deal = _enrolled("2026-10-09T22:00:00+00:00", arrived="2026-10-09T22:00:00+00:00",
-                     zone="Australia/Sydney")
+def test_a_spaced_box_is_free_when_its_clock_elapses():
+    now = timezone.now()
+    maillog.mailbox(next_send_at=now + timedelta(minutes=4))
 
-    _, due = opening_step(deal, _three_steps())
-
-    assert due == datetime.fromisoformat("2026-10-12T13:00:00+00:00")
+    with _window_held_open():
+        assert next_first_email_at(now) == now + timedelta(minutes=4)
 
 
-def test_with_the_weekend_pause_on_friday_to_monday_is_one_day(settings):
-    settings.OUTSEND_ENFORCE_WEEKEND_PAUSE = True
-    friday = datetime.fromisoformat("2026-10-09T15:00:00+00:00")
+def test_an_elapsed_clock_does_not_answer_in_the_past():
+    """A `next_send_at` from yesterday means *now*, not a moment already gone."""
+    now = timezone.now()
+    maillog.mailbox(next_send_at=now - timedelta(hours=3))
 
-    assert business_days_between(friday, datetime.fromisoformat("2026-10-12T09:00:00+00:00")) == 1
-    assert business_days_between(friday, friday + timedelta(days=15)) == 10
+    with _window_held_open():
+        assert next_first_email_at(now) == now
+
+
+def test_a_free_box_waits_for_the_earliest_opener_to_fall_due():
+    """A lead enrolled for later is not worth waking for now, however free the box."""
+    now = timezone.now()
+    maillog.mailbox()
+    DealFactory(lead=LeadFactory(email="later@acme.com"),
+                start_at=now + timedelta(hours=5), created_at=now)
+
+    with _window_held_open():
+        assert next_first_email_at(now) == now + timedelta(hours=5)
+
+
+def test_the_soonest_box_wins():
+    """One free box is all a send needs, so the pool answers with its earliest."""
+    now = timezone.now()
+    maillog.mailbox("early@acme.com", next_send_at=now + timedelta(minutes=2))
+    maillog.mailbox("late@acme.com", next_send_at=now + timedelta(hours=2))
+
+    with _window_held_open():
+        assert next_first_email_at(now) == now + timedelta(minutes=2)
+
+
+def test_a_box_at_its_ceiling_is_asked_about_tomorrow():
+    """Headroom is a per-day ledger, so a capped box is free when the day rolls — the
+    difference between waiting four minutes and waiting for the morning."""
+    now = timezone.now()
+    maillog.mailbox(daily_limit=0)
+
+    with _window_held_open(), patch(
+            "openoutsend.emails.models.mailbox._local_midnight",
+            return_value=now.replace(hour=0, minute=0, second=0, microsecond=0)):
+        assert next_first_email_at(now).date() > now.date()
+
+
+def test_the_window_is_applied_on_top_of_the_spacing_clock():
+    """A box whose spacing elapses at 21:00 is not free at 21:00."""
+    now = timezone.now()
+    maillog.mailbox(next_send_at=now + timedelta(minutes=4))
+
+    with patch("openoutsend.core.sending_window.next_window_open") as window:
+        next_first_email_at(now)
+
+    window.assert_called_once_with(now + timedelta(minutes=4), operator_timezone())

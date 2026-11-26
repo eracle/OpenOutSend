@@ -9,7 +9,6 @@ from unittest.mock import patch
 
 import pytest
 
-from openoutsend.core.sequences import key
 from openoutsend.emails.classify import classify_pending
 from openoutsend.emails.filing import file_message
 from openoutsend.emails.models import Kind, Message, Thread
@@ -20,7 +19,7 @@ from openoutsend.leads.states import CONVERSING, awaiting, machine_name
 from openoutsend.planner import conversations_waiting
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.emails.fake_imap import FakeIMAP, auto_reply, message
-from openoutsend.tests.factories import DealFactory, LeadFactory
+from openoutsend.tests.factories import DealFactory, LeadFactory, sequence_folder
 
 SENDER = "s@infra.com"
 CUSTOMER = "p@corp.com"
@@ -47,10 +46,8 @@ def _deal(box, *, lead=None, sequence="cold", created_at=None, state=CONVERSING)
 @pytest.fixture
 def sample_to_order(tmp_path):
     """A second sequence the same lead is enrolled in."""
-    folder = tmp_path / "sample-to-order"
-    folder.mkdir()
-    (folder / "E0-sample.email.j2").write_text("Subject: Ten leads\n\nHere they are.\n")
-    return key(str(folder))
+    return sequence_folder(tmp_path, "sample-to-order", {
+        "E0-sample.email.j2": "Subject: Ten leads\n\nHere they are.\n"})
 
 
 def _received(box, *rows) -> Message:

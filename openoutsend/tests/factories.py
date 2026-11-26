@@ -50,6 +50,33 @@ class DealFactory(factory.django.DjangoModelFactory):
                 put_in_state(deal, extracted)
 
 
+# ── Sequence folders and the model ──
+
+
+def sequence_folder(parent, name: str, files: dict) -> str:
+    """A sequence folder *name* under *parent* holding *files* (name → body), under the
+    key `--sequence` gives it."""
+    from openoutsend.core.sequences import key
+
+    folder = parent / name
+    folder.mkdir()
+    for filename, body in files.items():
+        (folder / filename).write_text(body, encoding="utf-8")
+    return key(str(folder))
+
+
+def model_saying(**fields):
+    """The install's model, answering every call with *fields*."""
+    from unittest.mock import patch
+
+    from pydantic_ai.models.test import TestModel
+
+    return patch("openoutsend.core.llm.get_llm_model", return_value=TestModel(custom_output_args=fields))
+
+
+# ── The clock and the state ──
+
+
 def let_days_pass(days: int) -> None:
     """Age everything a due time is read from, as if *days* calendar days had gone by.
 

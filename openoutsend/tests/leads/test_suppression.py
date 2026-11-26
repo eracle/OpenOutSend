@@ -9,7 +9,7 @@ from openoutsend.leads.lifecycle import machine_of
 from openoutsend.leads.models import Lead, Outcome, Suppression
 from openoutsend.leads.states import COMPLETED, CONVERSING, awaiting, sending
 from openoutsend.leads.suppression import is_suppressed, suppress_email
-from openoutsend.tests.factories import DealFactory, put_in_state
+from openoutsend.tests.factories import DealFactory, put_in_state, sequence_folder
 
 pytestmark = pytest.mark.django_db
 
@@ -23,10 +23,7 @@ def deal():
 @pytest.fixture
 def relaunch(tmp_path):
     """A second sequence folder, under the key `--sequence` gives it."""
-    folder = tmp_path / "relaunch"
-    folder.mkdir()
-    (folder / "E0-a.prompt.j2").write_text("Write to them.", encoding="utf-8")
-    return sequences.key(str(folder))
+    return sequence_folder(tmp_path, "relaunch", {"E0-a.prompt.j2": "Write to them."})
 
 
 def test_suppressing_ends_the_open_deals(deal):

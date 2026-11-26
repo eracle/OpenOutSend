@@ -25,10 +25,9 @@ from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
-from pydantic_ai.models.test import TestModel
 
 from openoutsend.core.agents.outreach import Email
-from openoutsend.core.sequences import cold, key
+from openoutsend.core.sequences import cold
 from openoutsend.emails.mail_pass import run_mail_pass
 from openoutsend.emails.models import Mailbox, Thread
 from openoutsend.emails.sender import (
@@ -47,7 +46,7 @@ from openoutsend.leads.states import COMPLETED, CONVERSING, awaiting, machine_na
 from openoutsend.leads.suppression import suppress_email
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.emails.fake_imap import RECEIVED_AT, FakeIMAP, message
-from openoutsend.tests.factories import DealFactory, LeadFactory
+from openoutsend.tests.factories import DealFactory, LeadFactory, model_saying, sequence_folder
 
 SENDER = "s@infra.com"
 ALIAS = "s+unsub@infra.com"
@@ -214,12 +213,11 @@ def _reply(body, uid=7):
 @pytest.fixture
 def three_steps(tmp_path):
     """A sequence of three emails, so a deal can be answered between its steps."""
-    folder = tmp_path / "launch"
-    folder.mkdir()
-    (folder / "E0-first.email.j2").write_text("Subject: Hi\n\nFirst.\n")
-    (folder / "E1-2d-second.email.j2").write_text("Second.\n")
-    (folder / "E2-3d-third.email.j2").write_text("Third.\n")
-    return key(str(folder))
+    return sequence_folder(tmp_path, "launch", {
+        "E0-first.email.j2": "Subject: Hi\n\nFirst.\n",
+        "E1-2d-second.email.j2": "Second.\n",
+        "E2-3d-third.email.j2": "Third.\n",
+    })
 
 
 def _model_turn(answer=None):
@@ -237,19 +235,12 @@ def _model_turn(answer=None):
 
 
 @pytest.mark.django_db
-class TestTheOptOutWord:
-    """The reply-line asks for one word, and code honours it before any model is consulted."""
+class TestTheOptOutWordInAPass:
+    """The reply-line asks for one word, and code honours it before any model is consulted.
 
-    @pytest.mark.parametrize("body", ["stop", "Stop", "STOP", "please stop emailing me"])
-    def test_a_reply_carrying_the_word_suppresses_its_sender(self, body):
-        box = _box()
-        deal = _written_to(box)
-
-        assert _read(box, FakeIMAP([_reply(body)])) == 1
-
-        deal.refresh_from_db()
-        assert suppressed(deal.lead)
-        assert (deal.state, deal.outcome) == (COMPLETED, Outcome.UNSUBSCRIBED)
+    How the word is read, and that an out-of-office or a bounce carrying it suppresses
+    nobody, is the projection's (``test_project.py``); this is the mail pass around it.
+    """
 
     @pytest.mark.parametrize("state", [awaiting(1), sending(1), awaiting(2), sending(2), CONVERSING])
     def test_it_is_honoured_on_whichever_step_it_answers(self, three_steps, state):
@@ -299,31 +290,6 @@ class TestTheOptOutWord:
         assert not suppressed(deal.lead)
         assert (deal.state, deal.outcome) == (COMPLETED, Outcome.NOT_INTERESTED)
 
-    def test_an_out_of_office_carrying_the_word_suppresses_nobody(self):
-        box = _box()
-        deal = _written_to(box)
-        away = message(7, to=SENDER, sender="p@corp.com", subject="Automatic reply: Hi",
-                       in_reply_to=f"<{ROOT}>", body="I am away. Please stop by on Monday.",
-                       headers=("Auto-Submitted: auto-replied",))
-
-        assert _read(box, FakeIMAP([away])) == 0
-
-        assert not suppressed(deal.lead)
-        assert deal.state == CONVERSING
-
-    def test_a_bounce_carrying_the_word_suppresses_nobody(self):
-        box = _box()
-        deal = _written_to(box)
-        report = message(7, to=SENDER, sender="mailer-daemon@googlemail.com",
-                         subject="Delivery Status Notification (Delay)",
-                         message_id="<ndr7@googlemail.com>", in_reply_to=f"<{ROOT}>",
-                         body="Delivery is delayed. We will stop trying in 3 days.\r\n")
-
-        assert _read(box, FakeIMAP([report])) == 0
-
-        assert not suppressed(deal.lead)
-        assert deal.state == CONVERSING
-
 
 # ── Detection: the worded unsubscribe (the conversation) ──────────
 
@@ -335,19 +301,15 @@ def _in_conversation(email="p@corp.com", body="Please take me off your list."):
     return deal
 
 
-def model_saying(**fields):
-    """The install's model, taking the turn with *fields* (as ``tests/test_machines.py`` does)."""
-    return patch("openoutsend.core.llm.get_llm_model",
-                 return_value=TestModel(custom_output_args=fields))
-
-
 def _take_turn(deal):
     return machine_of(deal).fire(deal.pk, entity=deal)
 
 
 @pytest.mark.django_db
 class TestWordedUnsubscribe:
-    """Any wording but the footer's own is read by the model, once the deal converses."""
+    """Any wording but the footer's own is read by the model, once the deal converses.
+
+    The turn's own move and the other outcomes are ``leads/test_conversing.py``'s."""
 
     def test_a_turn_ending_unsubscribed_lists_the_address_and_closes_the_deal(self, site_config):
         deal = _in_conversation()
@@ -366,27 +328,6 @@ class TestWordedUnsubscribe:
         send.assert_not_called()
         elsewhere.refresh_from_db()
         assert (elsewhere.state, elsewhere.outcome) == (COMPLETED, Outcome.UNSUBSCRIBED)
-
-    def test_the_deal_is_ended_once_by_the_turn_itself(self, site_config):
-        """The suppression ends the lead's *other* deals; this one leaves by its own move."""
-        deal = _in_conversation()
-
-        with model_saying(to=COMPLETED, outcome="unsubscribed"):
-            _take_turn(deal)
-
-        moves = machine_of(deal).history(deal.pk)
-        assert [move.decided_by for move in moves if move.to_state == COMPLETED] == ["llm:test:test"]
-
-    def test_an_ordinary_ending_still_completes(self, site_config):
-        """The reading above must not swallow the other seven outcomes."""
-        deal = _in_conversation(body="Not for us, thanks.")
-
-        with model_saying(to=COMPLETED, outcome="not_interested"):
-            assert _take_turn(deal).to_state == COMPLETED
-
-        deal.refresh_from_db()
-        assert deal.outcome == Outcome.NOT_INTERESTED
-        assert not suppressed(deal.lead)
 
     def test_the_deal_closes_even_when_the_address_matches_nothing(self, site_config):
         """``suppress_email`` is keyed on the address, the move on the deal. A lead

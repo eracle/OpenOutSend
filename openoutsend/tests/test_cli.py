@@ -55,9 +55,22 @@ def test_the_two_verbs_that_are_not_on_the_pipe(verb):
     assert _parse_args([verb]).command == verb
 
 
-def test_an_unknown_verb_is_refused():
+@pytest.mark.parametrize("argv", [
+    pytest.param(["export"], id="an unknown verb"),
+    pytest.param(["reply"], id="reply, which `send` answers in the conversation"),
+    pytest.param(["send", "0"], id="a goal of no conversations"),
+    pytest.param(["send", "-1"], id="a negative goal"),
+    pytest.param(["send", "some"], id="a goal that is not a number"),
+    pytest.param(["check", "5"], id="a count, which belongs to send"),
+    pytest.param(["check", "--sequence", "s"], id="a sequence for check"),
+    pytest.param(["send", "5", "--agent-draft"], id="agent-draft with a count"),
+    pytest.param(["send", "--subject", "Hi", "--body", "there"], id="subject and body without agent-draft"),
+    pytest.param(["send", "--agent-draft", "--subject", "Hi"], id="a subject without a body"),
+])
+def test_the_parser_refuses(argv):
+    """Silently ignoring part of a command is worse than saying so."""
     with pytest.raises(SystemExit):
-        _parse_args(["export"])
+        _parse_args(argv)
 
 
 def test_a_bare_send_has_no_count_and_is_one_pass():
@@ -69,12 +82,6 @@ def test_send_takes_a_goal_as_its_object():
     assert _parse_args(["send", "5"]).count == 5
 
 
-@pytest.mark.parametrize("count", ["0", "-1", "some"])
-def test_a_goal_that_is_not_a_number_of_conversations_is_refused(count):
-    with pytest.raises(SystemExit):
-        _parse_args(["send", count])
-
-
 @pytest.mark.parametrize("word", ["all", "ALL"])
 def test_the_pool_itself_can_be_the_goal(word):
     """`send all` spares the operator looking up a count that goes stale as they type it."""
@@ -83,23 +90,12 @@ def test_the_pool_itself_can_be_the_goal(word):
     assert _parse_args(["send", word]).count == ALL
 
 
-def test_a_count_belongs_to_send():
-    """`outsend check 5` means nothing, and silently ignoring the 5 is worse than saying so."""
-    with pytest.raises(SystemExit):
-        _parse_args(["check", "5"])
-
-
 # ── --sequence ────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("argv", [["--sequence", "s"], ["send", "--sequence", "s"]])
 def test_the_pipe_and_send_take_a_sequence(argv):
     assert _parse_args(argv).sequence == "s"
-
-
-def test_check_takes_no_sequence():
-    with pytest.raises(SystemExit):
-        _parse_args(["check", "--sequence", "s"])
 
 
 def test_send_passes_the_sequence_folder_as_its_key(connected, tmp_path):
@@ -138,35 +134,8 @@ def test_agent_draft_parses():
     assert _parse_args(["send", "--agent-draft"]).agent_draft is True
 
 
-def test_agent_draft_with_a_count_is_refused():
-    with pytest.raises(SystemExit):
-        _parse_args(["send", "5", "--agent-draft"])
-
-
-def test_subject_and_body_need_agent_draft():
-    with pytest.raises(SystemExit):
-        _parse_args(["send", "--subject", "Hi", "--body", "there"])
-
-
 def test_a_body_alone_answers_a_later_step():
     assert _parse_args(["send", "--agent-draft", "--body", "More."]).body == "More."
-
-
-def test_subject_without_a_body_is_refused():
-    with pytest.raises(SystemExit):
-        _parse_args(["send", "--agent-draft", "--subject", "Hi"])
-
-
-# ── reply ─────────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize("argv", [["reply"], ["reply", "--body", "Which ones?"]])
-def test_reply_is_no_longer_a_verb(argv, capsys):
-    """A reply is answered by `send`, in the deal's conversation: the parser refuses the verb."""
-    with pytest.raises(SystemExit):
-        _parse_args(argv)
-
-    assert "invalid choice: 'reply'" in capsys.readouterr().err
 
 
 # ── file ──────────────────────────────────────────────────────────
@@ -326,14 +295,3 @@ def test_agent_draft_never_needs_an_llm_key(site_config):
         _send(_args(agent_draft=True))
 
     run.assert_called_once()
-
-
-def test_a_terminal_is_not_asked_either(db, capsys):
-    """A TTY changes nothing: this program is the right of a pipe, and it never prompts."""
-    with patch("openoutsend.send_pass.run_send_pass") as run, \
-            patch("sys.stdin.isatty", return_value=True), \
-            patch("builtins.input", side_effect=AssertionError("asked a question")), \
-            pytest.raises(OutsendError, match=MESSAGE_ENV["product_docs"]):
-        _send(_args())
-
-    run.assert_not_called()

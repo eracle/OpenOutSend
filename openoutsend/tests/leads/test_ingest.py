@@ -11,13 +11,13 @@ from unittest.mock import patch
 import pytest
 from django.utils import timezone
 
-from openoutsend.core.sequences import SequenceError, key
+from openoutsend.core.sequences import SequenceError
 from openoutsend.leads.ingest import ingest
 from openoutsend.leads.lifecycle import machine_of
 from openoutsend.leads.models import Deal, Lead, Outcome
 from openoutsend.leads.states import COMPLETED, CONVERSING, awaiting, sending
 from openoutsend.leads.suppression import suppress_email
-from openoutsend.tests.factories import put_in_state
+from openoutsend.tests.factories import put_in_state, sequence_folder
 
 pytestmark = pytest.mark.django_db
 
@@ -25,11 +25,8 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture
 def relaunch(tmp_path):
     """A second sequence folder, under the key `--sequence` gives it."""
-    folder = tmp_path / "relaunch"
-    folder.mkdir()
-    (folder / "E0-a.prompt.j2").write_text("Write to them.", encoding="utf-8")
-    (folder / "E1-2d-b.prompt.j2").write_text("Write again.", encoding="utf-8")
-    return key(str(folder))
+    return sequence_folder(tmp_path, "relaunch", {
+        "E0-a.prompt.j2": "Write to them.", "E1-2d-b.prompt.j2": "Write again."})
 
 
 def record(**overrides) -> dict:

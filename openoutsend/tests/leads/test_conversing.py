@@ -2,6 +2,8 @@
 
 Every step of the deal's sequence has gone and it rests in `conversing`. The lead writes
 back, and the model (or a session in its place) answers in the thread or ends the deal.
+What every `Recheck` does (nothing incoming, a turn's validation, silence counted from
+the last turn) is tested once, in ``machines/test_machines.py``; this is the deal's own.
 Days are fixed dates of November 2026 (the 13th is a Friday) on a UTC clock with the
 weekend pause on.
 """
@@ -10,12 +12,10 @@ from unittest.mock import patch
 
 import pytest
 from agentic_fsm import TransitionError
-from agentic_fsm.backends.django.models import LogEntry
-from pydantic_ai.models.test import TestModel
 
 from openoutsend.core import sequences
 from openoutsend.core.agents.outreach import render_frame
-from openoutsend.core.sequences import SequenceError, key
+from openoutsend.core.sequences import SequenceError
 from openoutsend.emails.models import Thread
 from openoutsend.leads import conversing
 from openoutsend.leads.lifecycle import machine_of
@@ -24,7 +24,7 @@ from openoutsend.leads.states import COMPLETED, CONVERSING, awaiting, machine_na
 from openoutsend.leads.suppression import is_suppressed
 from openoutsend.machines.handlers import ModelTurn
 from openoutsend.tests.emails import maillog
-from openoutsend.tests.factories import DealFactory, LeadFactory, put_in_state
+from openoutsend.tests.factories import DealFactory, LeadFactory, model_saying, put_in_state, sequence_folder
 
 pytestmark = pytest.mark.django_db
 
@@ -36,11 +36,7 @@ OWN_PROMPT = "Answer {{ first_name }} about {{ product }}. End it once they name
 
 def _folder(tmp_path, name: str, **files) -> str:
     """A one-step sequence folder named *name*, with *files* beside the step, as its key."""
-    folder = tmp_path / name
-    folder.mkdir()
-    for filename, body in {**STEP, **files}.items():
-        (folder / filename).write_text(body, encoding="utf-8")
-    return key(str(folder))
+    return sequence_folder(tmp_path, name, {**STEP, **files})
 
 
 @pytest.fixture(autouse=True)
@@ -85,10 +81,6 @@ def they_wrote(deal, body="The third one, she left that company."):
     return maillog.inbound(deal.mailbox, thread=deal.thread, sender=deal.lead.email, body=body)
 
 
-def model_saying(**fields):
-    return patch("openoutsend.core.llm.get_llm_model", return_value=TestModel(custom_output_args=fields))
-
-
 def november(day: int, hour: int = 12) -> datetime:
     return datetime(2026, 11, day, hour, tzinfo=UTC)
 
@@ -98,28 +90,12 @@ def on(moment: datetime):
     return patch("openoutsend.machines.machine.now", return_value=moment)
 
 
-def last_move_was_at(deal, moment: datetime) -> None:
-    """Date the deal's newest move: it has rested since *moment*."""
-    newest = LogEntry.objects.filter(machine=machine_name(deal.sequence), entity=str(deal.pk)).order_by("pk").last()
-    newest.at = moment
-    newest.save()
-
-
 def sent_in(deal) -> list:
     """What we sent in the deal's thread, oldest first."""
     return list(deal.thread.messages.filter(direction="out").order_by("pk"))
 
 
 # ── A turn ──
-
-
-def test_with_nothing_incoming_the_turn_says_not_now(deal):
-    machine = machine_of(deal)
-
-    assert machine.incoming(deal) is None
-    assert machine.fire(deal.pk) is None
-    assert machine.progress(deal.pk) == []
-    assert len(sent_in(deal)) == 1
 
 
 def test_the_models_answer_is_sent_in_the_deals_thread(deal):
@@ -186,15 +162,6 @@ def test_an_outcome_that_is_not_the_models_to_give_is_refused(deal):
     assert deal.state == CONVERSING
 
 
-def test_staying_with_nothing_to_send_is_refused(deal):
-    they_wrote(deal)
-
-    with pytest.raises(TransitionError, match="message is required"):
-        machine_of(deal).fire(deal.pk, answer={"to": "conversing"})
-
-    assert len(sent_in(deal)) == 1
-
-
 # ── A request to stop ──
 
 
@@ -238,17 +205,6 @@ def test_any_other_ending_leaves_the_leads_other_deals_open(deal, lead, tmp_path
 # ── A session in the model's place ──
 
 
-def test_a_sessions_answer_is_sent_and_logged_as_decided_by_the_agent(deal):
-    reply = they_wrote(deal)
-
-    move = machine_of(deal).fire(deal.pk, answer={"to": "conversing", "message": "Where did she go?"})
-
-    _, answer = sent_in(deal)
-    assert (move.from_state, move.to_state, move.decided_by) == ("conversing", "conversing", "agent")
-    assert move.decision == {"to": "conversing", "message": "Where did she go?", "outcome": None}
-    assert (answer.body_text, answer.in_reply_to) == ("Where did she go?", reply.message_id)
-
-
 def test_a_session_ends_the_conversation_as_the_model_would(deal):
     they_wrote(deal, body="Booked for Tuesday.")
 
@@ -280,22 +236,6 @@ def test_silence_closes_it_unresponsive_after_the_built_in_gap(deal):
     assert len(sent_in(deal)) == 1
 
 
-def test_silence_is_counted_from_the_last_turn(deal):
-    """In the conversation since the 2nd, answered on the 13th: it closes on the 20th."""
-    put_in_state(deal, CONVERSING, at=november(2))
-    they_wrote(deal)
-    machine = machine_of(deal)
-    machine.fire(deal.pk, answer={"to": "conversing", "message": "Where did she go?"})
-    last_move_was_at(deal, november(13))
-
-    with on(november(19, 23)):
-        assert machine.fire(deal.pk) is None
-    with on(november(20, 1)):
-        assert machine.fire(deal.pk).to_state == "completed"
-
-    assert Deal.objects.get(pk=deal.pk).outcome == Outcome.UNRESPONSIVE
-
-
 def test_a_folders_own_gap_closes_its_conversation(box, lead, tmp_path):
     """Seven business days from Friday the 13th run out as Tuesday the 24th begins."""
     name = _folder(tmp_path, "relaunch", **{"conversation-7d.prompt.j2": "Answer them."})
@@ -323,23 +263,12 @@ def test_a_folders_prompt_naming_no_gap_closes_after_the_built_in_one(box, lead,
         assert machine.fire(deal.pk).to_state == "completed"
 
 
-def test_nobody_owed_an_answer_is_closed_for_silence(deal):
-    put_in_state(deal, CONVERSING, at=november(2))
-    they_wrote(deal)
-
-    with on(november(30)), model_saying(to="conversing", message="Sorry for the wait. Where did she go?"):
-        move = machine_of(deal).fire(deal.pk)
-
-    deal.refresh_from_db()
-    assert (move.to_state, deal.state, deal.outcome) == (CONVERSING, CONVERSING, "")
-
-
 # ── What the model answers from ──
 
 
 def given_to_the_model(deal) -> str:
     """The thread and the prompt the turn's model is given, written out, the model stubbed
-    to answer. The thread reaches the model as its message history (``test_machines.py``)."""
+    to answer. The thread reaches the model as its message history (``machines/test_machines.py``)."""
     given = []
 
     def answer(turn, prompt, entity, schema):

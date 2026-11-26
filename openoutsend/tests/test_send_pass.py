@@ -15,12 +15,12 @@ import pytest
 from django.utils import timezone
 
 from openoutsend.core.agents.outreach import Email
-from openoutsend.core.sequences import COLD, key
+from openoutsend.core.sequences import COLD
 from openoutsend.emails.models import DeliveryEvent, Direction, Mailbox, Message, Thread
 from openoutsend.emails.steps.send import send_step as really_send
 from openoutsend.leads.models import Deal, Outcome, Suppression
 from openoutsend.leads.states import COMPLETED, CONVERSING, awaiting, machine_name, sending
-from openoutsend.send_pass import PassResult, _what_is_holding, run_send_pass
+from openoutsend.send_pass import _what_is_holding, run_send_pass
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.factories import DealFactory, LeadFactory, put_in_state
 
@@ -60,16 +60,6 @@ def steps(site_config):
         send_step.side_effect = send
         yield SimpleNamespace(mail=mail, measure=measure, turn=turn, send=send_step,
                               deliver=deliver, order=order)
-
-
-@pytest.fixture
-def two_steps(tmp_path):
-    """A two-step folder, for a deal whose later step is due, under the key a deal records."""
-    folder = tmp_path / "two-steps"
-    folder.mkdir()
-    (folder / "E0-open.prompt.j2").write_text("Open.", encoding="utf-8")
-    (folder / "E1-3d-steer.prompt.j2").write_text("Steer.", encoding="utf-8")
-    return key(str(folder))
 
 
 def _waiting(address="lead@acme.com", **kwargs):
@@ -197,6 +187,7 @@ def test_a_wait_that_ran_out_rests_as_due_when_no_box_is_free(steps):
         result = run_send_pass()
 
     assert result.opened == 0
+    steps.send.assert_not_called()
     assert deal.state == sending(0)
 
 
@@ -298,15 +289,6 @@ def test_a_conversation_gone_quiet_is_closed_and_counted(steps):
     assert steps.order == ["read", "measure"]
 
 
-def test_a_conversation_is_not_closed_inside_its_closing_gap(steps):
-    deal = _in_thread(maillog.mailbox(), CONVERSING)
-
-    result = run_send_pass()
-
-    assert result.gave_up == 0
-    assert deal.state == CONVERSING
-
-
 def test_a_pass_narrowed_to_a_sequence_still_answers_every_conversation(steps, two_steps):
     """Whoever wrote in is answered in whichever pass reads the mail; only the sends are narrowed."""
     box = maillog.mailbox()
@@ -340,8 +322,9 @@ def test_a_lead_answered_this_pass_is_sent_no_step_besides_it(steps, two_steps):
 
 
 def test_one_conversation_is_opened_per_free_box(steps):
-    """The guard is the bound: the box takes itself out of the pool as it sends."""
-    box = maillog.mailbox()
+    """The guard is the bound: the box takes itself out of the pool as it sends, and
+    that ends the pass rather than a wait for it — waiting is `send_job.py`'s."""
+    maillog.mailbox()
     _waiting()
     _waiting("second@acme.com")
 
@@ -444,16 +427,6 @@ def test_an_undeliverable_address_does_not_stop_the_openers_behind_it(steps):
     assert result.ok
     assert (dead.state, dead.outcome) == (COMPLETED, Outcome.UNDELIVERABLE)
     assert alive.state == CONVERSING
-
-
-def test_no_free_box_means_no_openers(steps):
-    _waiting()
-
-    with patch("openoutsend.planner.free_for_first_email", return_value=None):
-        result = run_send_pass()
-
-    assert result.opened == 0
-    steps.send.assert_not_called()
 
 
 # ── The line it prints ────────────────────────────────────────────
@@ -569,42 +542,3 @@ def test_an_answer_goes_outside_the_sending_window_and_past_a_spent_box(steps):
         result = run_send_pass()
 
     assert result.answered == 1
-
-
-# ── The pass does not wait ────────────────────────────────────────
-
-
-class TestAPassNeverSleeps:
-    """The waiting belongs to `send_job.py`, which owns the whole pass while it waits.
-
-    Keeping it out of here is what leaves the pass firable by a timer — and what lets a
-    goal wait out the *window* and the day's headroom as well, which a sleep buried in
-    one step of the pass could not do without holding the mail pass hostage for hours.
-    """
-
-    def test_a_closed_pool_ends_the_pass_rather_than_waiting_for_a_box(self, steps):
-        """The box takes itself out of the pool on its way past, and that ends the pass
-        — whether the wait is worth taking is the job's question, asked one level up."""
-        box = maillog.mailbox()
-        _waiting()
-        _waiting("second@acme.com")
-
-        with _free(box):
-            result = run_send_pass()
-
-        assert result.opened == 1
-
-    def test_the_module_has_no_clock_to_sleep_on(self):
-        """A regression guard with teeth: the loop that slept in here is gone, and so is
-        the `time` import it slept with."""
-        import openoutsend.send_pass as module
-
-        assert not hasattr(module, "time")
-
-
-# ── The verdict ───────────────────────────────────────────────────
-
-
-def test_a_pass_with_nothing_failing_is_ok():
-    assert PassResult().ok is True
-    assert PassResult(failed=1).ok is False

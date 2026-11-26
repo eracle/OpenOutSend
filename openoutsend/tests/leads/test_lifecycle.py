@@ -5,22 +5,24 @@ November 2026 (the 13th is a Friday) read on a UTC clock with the weekend pause 
 gap in business days can be told from one in calendar days.
 """
 from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 from agentic_fsm import TransitionError
 
 from openoutsend.core import sequences
-from openoutsend.core.sequences import SequenceError, key
+from openoutsend.core.sequences import Sequence, SequenceError, Step
 from openoutsend.emails.models import Message, Thread
 from openoutsend.emails.steps.send import Plan
 from openoutsend.leads import lifecycle
-from openoutsend.leads.lifecycle import machine_for, machine_of
+from openoutsend.leads.lifecycle import machine_for, machine_of, opening_step
 from openoutsend.leads.models import Deal, Outcome, Suppression
 from openoutsend.leads.states import COMPLETED, CONVERSING, awaiting, machine_name, sending
 from openoutsend.planner import due_deals
 from openoutsend.tests.emails import maillog
-from openoutsend.tests.factories import DealFactory, LeadFactory, put_in_state
+from openoutsend.tests.factories import DealFactory, LeadFactory, put_in_state, sequence_folder
 
 pytestmark = pytest.mark.django_db
 
@@ -30,22 +32,15 @@ STEPS = {
     "E2-5d-last.email.j2": "Last note, {{ first_name }}.",
 }
 
+ONE_STEP = {"E0-a.prompt.j2": "Write."}
+
 OPEN_STATES = [awaiting(0), sending(0), awaiting(1), sending(1), awaiting(2), sending(2), CONVERSING]
-
-
-def _folder(tmp_path, name: str, steps: dict = STEPS) -> str:
-    """A sequence folder named *name* holding *steps*, under the key `--sequence` gives it."""
-    folder = tmp_path / name
-    folder.mkdir()
-    for filename, body in steps.items():
-        (folder / filename).write_text(body, encoding="utf-8")
-    return key(str(folder))
 
 
 @pytest.fixture
 def relaunch(tmp_path):
     """The three-step folder's name."""
-    return _folder(tmp_path, "relaunch")
+    return sequence_folder(tmp_path, "relaunch", STEPS)
 
 
 @pytest.fixture
@@ -128,15 +123,8 @@ def test_every_state_has_its_one_handler_and_its_edges(machine):
     ])
 
 
-def test_every_open_state_can_be_ended_and_nothing_leaves_completed(machine):
-    edges = machine.graph().edges
-
-    assert sorted(source for source, target in edges if target == "completed") == sorted(OPEN_STATES)
-    assert not [edge for edge in edges if edge[0] == "completed"]
-
-
 def test_a_one_step_folder_has_no_later_step_to_open_with(tmp_path):
-    single = machine_for(sequences.named(_folder(tmp_path, "single", {"E0-a.prompt.j2": "Write."})))
+    single = machine_for(sequences.named(sequence_folder(tmp_path, "single", ONE_STEP)))
 
     graph = single.graph()
 
@@ -234,6 +222,7 @@ def test_the_first_step_waits_its_days_counted_from_start_at(machine, relaunch):
 
     assert (move.from_state, move.to_state, move.decided_by) == ("awaiting_E0", "sending_E0", "code")
     assert deal.state == sending(0)
+    assert not Message.objects.exists()
 
 
 def test_a_later_step_waits_its_business_days_from_the_move_that_sent_the_one_before(
@@ -251,15 +240,6 @@ def test_a_later_step_waits_its_business_days_from_the_move_that_sent_the_one_be
         move = machine.fire(deal.pk)
 
     assert (move.from_state, move.to_state) == ("awaiting_E1", "sending_E1")
-
-
-def test_a_wait_running_out_sends_nothing(machine, relaunch):
-    deal = _deal(relaunch, start_at=november(13), created_at=november(13))
-
-    with on(november(17, 1)):
-        machine.fire(deal.pk)
-
-    assert not Message.objects.exists()
 
 
 # ── The send ──
@@ -414,6 +394,35 @@ def test_progress_carries_a_late_deal_to_the_step_it_opens_with(machine, relaunc
     assert deal.state == sending(2)
 
 
+def _steps_of(*days) -> Sequence:
+    return Sequence(name="s", steps=tuple(
+        Step(number=n, days=gap, name=f"e{n}", path=Path(f"E{n}-e{n}.prompt.j2"), source="")
+        for n, gap in enumerate(days)
+    ))
+
+
+def _enrolled(start: datetime, arrived: datetime, zone: str = ""):
+    return SimpleNamespace(start_at=start, created_at=arrived, lead=SimpleNamespace(timezone=zone))
+
+
+def test_waiting_in_our_own_queue_never_skips_a_step():
+    """Lateness is measured against the arrival, not today: the queue is ours."""
+    step, _ = opening_step(_enrolled(november(2), arrived=november(2)), _steps_of(2, 3, 5))
+
+    assert step.number == 0
+
+
+def test_a_leads_opener_skips_the_weekend_on_their_own_calendar():
+    """Enrolled Friday 22:00 UTC (Saturday in Sydney) with E0 two working days out:
+    Tuesday 00:00 in Sydney, not Tuesday 00:00 UTC."""
+    friday_night = november(13, 22)
+    deal = _enrolled(friday_night, arrived=friday_night, zone="Australia/Sydney")
+
+    _, due = opening_step(deal, _steps_of(2))
+
+    assert due == datetime(2026, 11, 16, 13, tzinfo=UTC)
+
+
 # ── Ending a suppressed or stopped deal ──
 
 
@@ -485,7 +494,7 @@ def test_an_ended_deal_cannot_be_ended_again(machine, relaunch):
 
 
 def test_two_folders_are_two_machines_under_two_names(tmp_path, relaunch):
-    event = _folder(tmp_path, "event", {"E0-a.prompt.j2": "Write."})
+    event = sequence_folder(tmp_path, "event", ONE_STEP)
 
     one, other = machine_for(sequences.named(relaunch)), machine_for(sequences.named(event))
 
@@ -495,7 +504,7 @@ def test_two_folders_are_two_machines_under_two_names(tmp_path, relaunch):
 
 
 def test_a_deal_of_one_folder_is_not_seen_by_the_other(tmp_path, relaunch):
-    event = _folder(tmp_path, "event", {"E0-a.prompt.j2": "Write."})
+    event = sequence_folder(tmp_path, "event", ONE_STEP)
     one, other = machine_for(sequences.named(relaunch)), machine_for(sequences.named(event))
     deal = _deal(relaunch, stop=True)
 
@@ -508,8 +517,8 @@ def test_a_deal_of_one_folder_is_not_seen_by_the_other(tmp_path, relaunch):
 
 
 def test_a_lead_in_two_folders_has_a_state_in_each(tmp_path, relaunch):
-    event = _folder(tmp_path, "event", {"E0-a.prompt.j2": "Write."})
-    lead = LeadFactory(email="asha@example.com")
+    event = sequence_folder(tmp_path, "event", ONE_STEP)
+    lead =LeadFactory(email="asha@example.com")
     in_relaunch, in_event = _deal(relaunch, lead=lead, state=sending(1)), _deal(event, lead=lead)
 
     assert (in_relaunch.state, in_event.state) == (sending(1), awaiting(0))

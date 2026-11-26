@@ -1,8 +1,9 @@
 # openoutsend/tests/emails/test_send.py
-"""The send path: the per-box cap and spacing, the deals whose step is due, and the step.
+"""The send path: the per-box cap, what a sent email carries, and the step.
 
 A step is cold volume, so it is sent under a cap and spaced out — an answer in a
-conversation is exempt (see ``test_machines.py``)."""
+conversation is exempt (see ``machines/test_machines.py``). Which box is free and which
+deal is due are the planner's (``test_planner.py``)."""
 import logging
 
 import pytest
@@ -20,8 +21,8 @@ from openoutsend.emails.sender import (
     send_email,
 )
 from openoutsend.emails.steps.send import Plan, send_step, step_fields
-from openoutsend.leads.states import COMPLETED, CONVERSING, awaiting, sending
-from openoutsend.planner import due_deals, free_for_first_email
+from openoutsend.leads.states import CONVERSING, sending
+from openoutsend.planner import free_for_first_email
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.factories import DealFactory, LeadFactory, put_in_state
 
@@ -95,40 +96,6 @@ class TestMailboxCap:
     def test_remaining_today_zero_with_no_boxes(self):
         assert Mailbox.objects.remaining_today() == 0
 
-
-@pytest.mark.django_db
-class TestPickingABox:
-    def test_picks_the_box_with_most_headroom(self):
-        light = _box("light@b.com", daily_limit=10)
-        heavy = _box("heavy@b.com", daily_limit=10)
-        for _ in range(4):
-            _record_send(_ready(), heavy)
-        with patch("openoutsend.core.sending_window.within_sending_window", return_value=True):
-            assert free_for_first_email() == light
-
-    def test_none_when_every_box_is_capped(self):
-        box = _box(daily_limit=1)
-        _record_send(_ready(), box)
-        assert free_for_first_email() is None
-
-    def test_a_box_still_spacing_out_is_not_free(self):
-        """The 3-minute floor between two cold emails, per box."""
-        from datetime import timedelta
-
-        box = _box(daily_limit=10)
-        box.next_send_at = timezone.now() + timedelta(minutes=3)
-        box.save(update_fields=["next_send_at"])
-        assert free_for_first_email() is None
-
-    def test_a_box_past_its_spacing_is_free_again(self):
-        from datetime import timedelta
-
-        box = _box(daily_limit=10)
-        box.next_send_at = timezone.now() - timedelta(seconds=1)
-        box.save(update_fields=["next_send_at"])
-        with patch("openoutsend.core.sending_window.within_sending_window", return_value=True):
-            assert free_for_first_email() == box
-
     def test_the_daily_ledger_starts_at_the_operators_midnight(self):
         """Not the server's UTC midnight, which for a US operator falls at 19:00 —
         inside the window, so the cap would reset an hour before the day ends."""
@@ -140,42 +107,6 @@ class TestPickingABox:
         with patch("openoutsend.emails.models.mailbox.operator_timezone", return_value=zone):
             midnight = _local_midnight()
         assert midnight.astimezone(zone).hour == 0
-
-    def test_no_box_is_free_outside_the_sending_window(self):
-        """Out of hours nothing opens a conversation, however much headroom is left."""
-        _box(daily_limit=10)
-        with patch("openoutsend.core.sending_window.within_sending_window", return_value=False):
-            assert free_for_first_email() is None
-
-
-# ── The deals whose step is due ───────────────────────────────────
-
-
-@pytest.mark.django_db
-class TestDueDeals:
-    def test_returns_only_deals_whose_step_is_due(self):
-        ready = _ready()
-        DealFactory(lead=LeadFactory(email="waiting@c.com"), state=awaiting(0))
-        DealFactory(lead=LeadFactory(email="written@c.com"), state=CONVERSING)
-        DealFactory(lead=LeadFactory(email="over@c.com"), state=COMPLETED)
-
-        (due,) = due_deals()
-
-        assert due == ready
-        assert due.due_step == cold().first
-
-    def test_excludes_a_lead_with_no_address(self):
-        """A row can arrive without one — an address is an enrichment, not a promise."""
-        _ready(email="")
-        assert due_deals() == []
-
-    def test_longest_due_first(self):
-        from datetime import timedelta
-
-        newly_due = _ready("first@c.com")
-        long_due = _ready("second@c.com")
-        put_in_state(long_due, sending(0), at=timezone.now() - timedelta(days=1))
-        assert due_deals() == [long_due, newly_due]
 
 
 @pytest.mark.django_db

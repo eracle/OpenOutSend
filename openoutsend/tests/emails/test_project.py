@@ -15,7 +15,7 @@ from openoutsend.emails.models import DeliveryEvent, Kind, Message
 from openoutsend.emails.project import asks_to_stop, project_pending
 from openoutsend.emails.sync import mirror
 from openoutsend.leads.models import Deal, Outcome, Suppression
-from openoutsend.leads.states import COMPLETED, CONVERSING, awaiting, sending
+from openoutsend.leads.states import COMPLETED, CONVERSING
 from openoutsend.leads.suppression import is_suppressed
 from openoutsend.tests.emails import maillog
 from openoutsend.tests.emails.fake_imap import FakeIMAP, bounce, message
@@ -205,8 +205,9 @@ class TestTheOptOutWord:
     """The one wording every footer asks for is honoured by code, whichever step it answers.
 
     No model is consulted: the mail pass that reads the reply suppresses the address.
-    Any other wording of the same wish is read in the deal's conversation
-    (``test_unsubscribe.py``).
+    That it is honoured mid-sequence, and that no model is asked, is tested through the
+    whole pass, and any other wording of the same wish is read in the deal's
+    conversation (both ``test_unsubscribe.py``).
     """
 
     def _written_to(self, box, *, state=CONVERSING, email="p@corp.com"):
@@ -230,16 +231,6 @@ class TestTheOptOutWord:
         assert reply.kind == Kind.HUMAN_REPLY
         assert is_suppressed("p@corp.com")
         assert Suppression.objects.get().reason == 'replied "stop"'
-        deal.refresh_from_db()
-        assert (deal.state, deal.outcome) == (COMPLETED, Outcome.UNSUBSCRIBED)
-
-    @pytest.mark.parametrize("state", [awaiting(0), sending(0), CONVERSING])
-    def test_it_is_honoured_wherever_the_deal_rests(self, state):
-        box = _box()
-        deal = self._written_to(box, state=state)
-
-        self._they_reply(box, "Stop")
-
         deal.refresh_from_db()
         assert (deal.state, deal.outcome) == (COMPLETED, Outcome.UNSUBSCRIBED)
 
@@ -316,11 +307,11 @@ class TestPendingIsAState:
             mirror(box)
 
         row = Message.objects.get(direction="in")
-        assert row.is_pending                     # held, not yet interpreted
+        assert row.processed_at is None           # held, not yet interpreted
         classify_pending()
         project_pending()
         row.refresh_from_db()
-        assert not row.is_pending
+        assert row.processed_at is not None
 
     def test_projection_is_not_redone_for_a_message_already_handled(self):
         box = _box()

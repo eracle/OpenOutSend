@@ -14,7 +14,7 @@ from unittest.mock import patch
 import pytest
 
 from openoutsend.core.config import MESSAGE_ENV, SiteConfig
-from openoutsend.tests.factories import UserFactory
+from openoutsend.tests.factories import UserFactory, sequence_folder
 
 PRODUCT_DOCS = "A self-hosted lead finder that writes down why each lead fits."
 CAMPAIGN_TARGET = "Founders and heads of growth at small B2B software companies."
@@ -77,3 +77,10 @@ def site_config(db, operator, monkeypatch):
     monkeypatch.setenv(MESSAGE_ENV["product_docs"], PRODUCT_DOCS)
     monkeypatch.setenv(MESSAGE_ENV["campaign_target"], CAMPAIGN_TARGET)
     return SiteConfig.load()
+
+
+@pytest.fixture
+def two_steps(tmp_path):
+    """A two-step folder of prompts, for a deal whose later step is due."""
+    return sequence_folder(tmp_path, "two-steps", {
+        "E0-open.prompt.j2": "Open.", "E1-3d-steer.prompt.j2": "Steer."})
