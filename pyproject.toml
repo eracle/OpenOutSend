@@ -65,7 +65,7 @@ dependencies = [
     "tenacity>=8,<10",
     # The deal machine (`leads/lifecycle.py`): a deal's state and the log of its moves
     # are kept in the library's Django tables, in this store.
-    "agentic-fsm[django]>=0.1.18",
+    "agentic-fsm[django]>=0.1.20",
 ]
 
 [project.optional-dependencies]
