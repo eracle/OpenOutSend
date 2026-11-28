@@ -9,8 +9,9 @@ argument-hint: [N|all]
 
 OpenOutSend is a self-hosted CLI sender — the right-hand side of a pipe. It stores leads a finder
 piped in, writes the opener with an LLM, and sends from a connected mailbox under three guards it
-owns: measured warm capacity, per-box send pacing, and a sending window read in each lead's own
-`timezone` (the operator's for a lead piped in without one).
+owns: a daily cap per box (100 first contacts, or the measured warmup ramp with
+`OUTSEND_ENFORCE_WARM_CAPACITY=on`), per-box send pacing, and a sending window read in each lead's
+own `timezone` (the operator's for a lead piped in without one).
 
 **It finds nobody.** Leads arrive already qualified from [OpenOutFind](https://github.com/eracle/OpenOutFind)
 (or [OpenOutreach](https://github.com/eracle/OpenOutreach), which bundles both). If the user wants

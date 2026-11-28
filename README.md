@@ -233,7 +233,7 @@ four commands that run it.
 | Replies | read over IMAP and answered | with `OUTSEND_REPLY_TO`, polled from Resend Inbound and answered; without it, not read — they go wherever the domain forwards them |
 | Bounces, complaints | read from the inbox | polled from Resend's email list every pass |
 | Opt-out | *Reply "stop"*, and a `mailto:` header | the line's `unsubscribe_url`, in the footer and a one-click `List-Unsubscribe` |
-| Daily cap | measured from the Sent folder, ramping from 5 | declared: `OUTSEND_DAILY_CAP`, 50 by default |
+| Daily cap | 100; with `OUTSEND_ENFORCE_WARM_CAPACITY=on`, measured from the Sent folder, ramping from 5 | declared: `OUTSEND_DAILY_CAP`, 50 by default |
 
 Spacing and the sending window apply to both.
 
@@ -345,6 +345,7 @@ The environment is the operator seam — the only way in a timer has:
 | `OUTSEND_TRANSPORT` | `mailbox` (the default) or `resend` — see *Sending through Resend* |
 | `OUTSEND_RESEND_API_KEY` | a resend install's **full-access** key, in place of `OUTSEND_MAILBOX_PASSWORD` |
 | `OUTSEND_DAILY_CAP` | a resend install's first contacts per day; 50 by default |
+| `OUTSEND_ENFORCE_WARM_CAPACITY` | `on` holds a mailbox to the warmup ramp: 5 first contacts a day, then ×1.25 a day above what its Sent folder shows it carried; off by default, and a mailbox may then make 100 a day |
 | `OUTSEND_REPLY_TO` | a resend install's reply address, on a domain whose MX is Resend Inbound; unset, replies are not read |
 | `OUTSEND_CONVERSATIONS` | `on` ends every sequence in a conversation, where the model answers whoever wrote back; off by default, and a sequence then ends with its last step |
 | `OUTSEND_HOME` / `OUTSEND_DB` | where the store lives |

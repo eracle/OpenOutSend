@@ -247,12 +247,16 @@ class Mailbox(models.Model):
     def capacity(self) -> int:
         """First contacts this box may make today.
 
-        A mailbox's is measured (``daily_limit``, ``emails/warmth.py``); a resend box
-        has nothing to measure, so its cap is the declared one, read fresh each run.
+        A mailbox's is measured (``daily_limit``, ``emails/warmth.py``), or the rail
+        when the ramp is off; a resend box has nothing to measure, so its cap is the
+        declared one, read fresh each run.
         """
-        from openoutsend.core.conf import resend_daily_cap
+        from openoutsend.core.conf import WARM_CEILING_SENDS, resend_daily_cap
+        from openoutsend.emails import warmth
 
-        return resend_daily_cap() if self.is_resend else self.daily_limit
+        if self.is_resend:
+            return resend_daily_cap()
+        return self.daily_limit if warmth.enforced() else WARM_CEILING_SENDS
 
     @property
     def is_resend(self) -> bool:

@@ -39,6 +39,13 @@ def conversations_on(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def warm_capacity_on(settings):
+    """The suite's capacity tests are about the measured ramp, which an install turns on
+    (``OUTSEND_ENFORCE_WARM_CAPACITY``). A test about the rail turns it off."""
+    settings.OUTSEND_ENFORCE_WARM_CAPACITY = True
+
+
+@pytest.fixture(autouse=True)
 def forget_sequence_folders():
     """Each test is its own run, so it starts knowing no `--sequence` folder.
 

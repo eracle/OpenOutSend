@@ -39,6 +39,14 @@ class TestAppSettings:
         assert settings["OUTSEND_ENFORCE_WORK_HOURS"] is True
         assert settings["OUTSEND_ENFORCE_WEEKEND_PAUSE"] is False
 
+    def test_the_warm_capacity_ramp_defaults_off(self, monkeypatch):
+        monkeypatch.delenv("OUTSEND_ENFORCE_WARM_CAPACITY", raising=False)
+        assert app_settings()["OUTSEND_ENFORCE_WARM_CAPACITY"] is False
+
+    def test_the_warm_capacity_ramp_can_be_switched_on(self, monkeypatch):
+        monkeypatch.setenv("OUTSEND_ENFORCE_WARM_CAPACITY", "on")
+        assert app_settings()["OUTSEND_ENFORCE_WARM_CAPACITY"] is True
+
 
 class TestDatabase:
     def test_unset_it_is_the_sqlite_file_under_the_state_dir(self, monkeypatch, tmp_path):

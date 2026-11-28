@@ -236,3 +236,34 @@ class TestMeasurementCadence:
                    return_value=_history(20, 20, 20)) as read:
             measure_pool()
         assert read.call_count == 2
+
+
+@pytest.mark.django_db
+class TestRampOff:
+    """With ``OUTSEND_ENFORCE_WARM_CAPACITY`` off, a mailbox sends up to the rail and its
+    Sent folder is never read."""
+
+    @pytest.fixture(autouse=True)
+    def ramp_off(self, settings):
+        settings.OUTSEND_ENFORCE_WARM_CAPACITY = False
+
+    def test_a_floor_box_may_send_up_to_the_rail(self):
+        box = _box(daily_limit=WARM_FLOOR_SENDS)
+        assert box.capacity() == WARM_CEILING_SENDS
+        assert box.headroom_today() == WARM_CEILING_SENDS
+
+    def test_no_box_is_measured(self):
+        _box(daily_limit=WARM_FLOOR_SENDS)
+        with patch("openoutsend.emails.warmth.read_sent_history") as read:
+            measure_pool()
+        assert not read.called
+
+    def test_a_paused_box_still_has_no_headroom(self):
+        box = _box(daily_limit=WARM_FLOOR_SENDS)
+        with patch.object(Mailbox, "paused_today", return_value=True):
+            assert box.headroom_today() == 0
+
+    def test_a_resend_box_keeps_its_declared_cap(self, monkeypatch):
+        monkeypatch.setenv("OUTSEND_DAILY_CAP", "7")
+        box = _box(transport="resend")
+        assert box.capacity() == 7

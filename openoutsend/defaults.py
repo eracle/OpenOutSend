@@ -102,6 +102,12 @@ def app_settings() -> dict:
         # go out, which the combined flag could not express.
         "OUTSEND_ENFORCE_WORK_HOURS": env_flag("OUTSEND_ENFORCE_WORK_HOURS"),
         "OUTSEND_ENFORCE_WEEKEND_PAUSE": env_flag("OUTSEND_ENFORCE_WEEKEND_PAUSE"),
+        # The measured warmup ramp on a mailbox's daily first contacts
+        # (`emails/warmth.py`), **off unless set**. Off, a mailbox may make up to the
+        # rail (`conf.WARM_CEILING_SENDS`) a day and its Sent folder is not read; on,
+        # it starts at the floor and climbs. A resend box's cap is `OUTSEND_DAILY_CAP`
+        # either way.
+        "OUTSEND_ENFORCE_WARM_CAPACITY": env_flag("OUTSEND_ENFORCE_WARM_CAPACITY", default=False),
     }
 
 

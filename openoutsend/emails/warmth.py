@@ -55,6 +55,15 @@ logger = logging.getLogger(__name__)
 
 IMAP_TIMEOUT_SECONDS = 30
 
+
+def enforced() -> bool:
+    """Whether a mailbox's daily first contacts follow the measured ramp
+    (``OUTSEND_ENFORCE_WARM_CAPACITY``, default off)."""
+    from django.conf import settings
+
+    return getattr(settings, "OUTSEND_ENFORCE_WARM_CAPACITY", False)
+
+
 def measure_pool() -> None:
     """Re-measure every box that has not been measured today.
 
@@ -67,10 +76,13 @@ def measure_pool() -> None:
     costs one IMAP timeout a day rather than one per pass.
 
     A resend box is never measured: it has no Sent folder, and its cap is declared
-    (``Mailbox.capacity``).
+    (``Mailbox.capacity``). With the ramp off (``enforced``) no box is, since nothing
+    reads the measurement.
     """
     from openoutsend.emails.models import Mailbox, Transport
 
+    if not enforced():
+        return
     for mailbox in (Mailbox.objects.exclude(measured_on=timezone.localdate())
                     .exclude(transport=Transport.RESEND)):
         refresh_capacity(mailbox)

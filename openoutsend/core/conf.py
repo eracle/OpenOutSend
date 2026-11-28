@@ -17,7 +17,8 @@ PROMPTS_DIR = Path(__file__).parent / "templates" / "prompts"
 
 # ----------------------------------------------------------------------
 # Warm capacity (emails/warmth.py) — the per-box daily send ceiling, *measured*
-# rather than declared. A fixed number can only ever be wrong in one of two
+# rather than declared. Only with ``OUTSEND_ENFORCE_WARM_CAPACITY`` on: off (the
+# default), a mailbox's ceiling is the rail, ``WARM_CEILING_SENDS``. A fixed number can only ever be wrong in one of two
 # directions: it throttles a box that has been carrying more for months, or it
 # hands a box connected an hour ago the volume of a seasoned one. So the box
 # tells us instead — its own Sent folder is the record of what it has actually
